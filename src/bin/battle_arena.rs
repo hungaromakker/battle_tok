@@ -69,6 +69,8 @@ use battle_tok_engine::render::{
     BuildingBlockManager, BuildingBlockShape, BuildingBlock,
     MergeWorkflowManager, MergedMesh,
     SculptingManager,
+    // Building physics (Phase 5)
+    BuildingPhysics,
 };
 
 // Import fullscreen for F11 toggle
@@ -99,7 +101,9 @@ use battle_tok_engine::game::{
     // Mesh generators
     generate_rotated_box, generate_sphere,
     // UI
-    StartOverlay, TerrainEditorUI,
+    StartOverlay, TerrainEditorUI, TopBar,
+    // Game state
+    GameState,
     // Render
     SHADER_SOURCE, create_test_walls,
     generate_hex_grid_overlay, calculate_ghost_color, GHOST_PREVIEW_COLOR, generate_block_preview_mesh,
@@ -194,9 +198,10 @@ struct BattleArenaApp {
     builder_mode: BuilderMode,
     // Ghost and grid rendering uses dynamic_mesh buffer for simplicity
     
-    // New building block system (Phase 2-4)
+    // New building block system (Phase 2-5)
     build_toolbar: BuildToolbar,
     block_manager: BuildingBlockManager,
+    block_physics: BuildingPhysics,
     merge_workflow: MergeWorkflowManager,
     _sculpting: SculptingManager,
     merged_mesh_buffers: Vec<MergedMeshBuffers>,
@@ -227,6 +232,9 @@ struct BattleArenaApp {
     // Terrain editor UI (on-screen sliders)
     terrain_ui: TerrainEditorUI,
     terrain_needs_rebuild: bool,
+
+    // Game state (economy, population, day cycle)
+    game_state: GameState,
 
     // Timing
     start_time: Instant,
@@ -280,6 +288,7 @@ impl BattleArenaApp {
             builder_mode: BuilderMode::default(),
             build_toolbar: BuildToolbar::default(),
             block_manager: BuildingBlockManager::new(),
+            block_physics: BuildingPhysics::new(),
             merge_workflow: MergeWorkflowManager::new(),
             _sculpting: SculptingManager::new(),
             merged_mesh_buffers: Vec::new(),
@@ -300,6 +309,7 @@ impl BattleArenaApp {
             debris_particles: Vec::new(),
             terrain_ui: TerrainEditorUI::default(),
             terrain_needs_rebuild: false,
+            game_state: GameState::new(),
             start_time: Instant::now(),
             last_frame: Instant::now(),
             frame_count: 0,
@@ -907,6 +917,13 @@ impl BattleArenaApp {
     }
 
     fn update(&mut self, delta_time: f32) {
+        // Update game state (day cycle, economy, population)
+        let new_day = self.game_state.update(delta_time);
+        if new_day {
+            // Day changed - could trigger notifications here
+            println!("Day {} has begun!", self.game_state.day_cycle.day());
+        }
+
         // Check if terrain needs rebuilding
         if self.terrain_needs_rebuild {
             self.rebuild_terrain();
@@ -1430,11 +1447,14 @@ impl BattleArenaApp {
         let shape = self.build_toolbar.get_selected_shape();
         let block = BuildingBlock::new(shape, position, self.build_toolbar.selected_material);
         let block_id = self.block_manager.add_block(block);
-        
-        println!("[Build] Placed {} at ({:.1}, {:.1}, {:.1}) ID={}", 
+
+        // Register with physics system
+        self.block_physics.register_block(block_id);
+
+        println!("[Build] Placed {} at ({:.1}, {:.1}, {:.1}) ID={}",
             SHAPE_NAMES[self.build_toolbar.selected_shape],
             position.x, position.y, position.z, block_id);
-        
+
         self.regenerate_block_mesh();
     }
     
@@ -1578,71 +1598,52 @@ impl BattleArenaApp {
             
             let shape = BuildingBlockShape::Cube { half_extents };
             let block = BuildingBlock::new(shape, pos, self.build_toolbar.selected_material);
-            self.block_manager.add_block(block);
+            let block_id = self.block_manager.add_block(block);
+            // Register with physics system
+            self.block_physics.register_block(block_id);
         }
-        
+
         println!("[Bridge] Bridge created between blocks {} and {}", first.block_id, second.block_id);
         self.regenerate_block_mesh();
     }
     
-    /// Check physics support for all blocks - unsupported blocks fall
+    /// Update building physics - blocks fall with gravity and disintegrate if unsupported
     fn check_physics_support(&mut self) {
-        // Collect blocks that need to fall
-        let mut blocks_to_fall: Vec<(u32, Vec3, u8)> = Vec::new();
-        
-        // Ground level threshold
-        let ground_threshold = 0.1;
-        
-        // First pass: identify unsupported blocks
+        // Update physics simulation
+        self.block_physics.update(0.016, &mut self.block_manager); // ~60fps timestep
+
+        // Get blocks that need to be removed (disintegrated)
+        let blocks_to_remove = self.block_physics.take_blocks_to_remove();
+
+        // Remove disintegrated blocks and spawn debris
+        for block_id in &blocks_to_remove {
+            if let Some(block) = self.block_manager.get_block(*block_id) {
+                let position = block.position;
+                let material = block.material;
+
+                // Create debris particles for visual effect
+                let debris = spawn_debris(position, material, 8);
+                self.debris_particles.extend(debris);
+
+                println!("[Physics] Block {} disintegrated!", block_id);
+
+                // Unregister from physics
+                self.block_physics.unregister_block(*block_id);
+            }
+
+            self.block_manager.remove_block(*block_id);
+        }
+
+        // Check for blocks that are currently falling and create visual effects
+        let mut needs_mesh_update = !blocks_to_remove.is_empty();
         for block in self.block_manager.blocks() {
-            let aabb = block.aabb();
-            let bottom_y = aabb.min.y;
-            
-            // Check if block is on ground
-            let ground_height = terrain_height_at(block.position.x, block.position.z, 0.0);
-            if bottom_y <= ground_height + ground_threshold {
-                continue; // On ground, supported
-            }
-            
-            // Check if block is supported by another block
-            let mut has_support = false;
-            let _check_pos = Vec3::new(block.position.x, aabb.min.y - 0.1, block.position.z);
-            
-            for other_block in self.block_manager.blocks() {
-                if other_block.id == block.id {
-                    continue;
-                }
-                let other_aabb = other_block.aabb();
-                
-                // Check if other block is below and overlapping
-                if other_aabb.max.y >= aabb.min.y - 0.2 && other_aabb.max.y < aabb.min.y + 0.1 {
-                    // Check XZ overlap
-                    if aabb.min.x < other_aabb.max.x && aabb.max.x > other_aabb.min.x &&
-                       aabb.min.z < other_aabb.max.z && aabb.max.z > other_aabb.min.z {
-                        has_support = true;
-                        break;
-                    }
-                }
-            }
-            
-            if !has_support {
-                blocks_to_fall.push((block.id, block.position, block.material));
+            if self.block_physics.is_falling(block.id) {
+                needs_mesh_update = true;
             }
         }
-        
-        // Remove unsupported blocks and create falling prisms
-        for (block_id, position, material) in blocks_to_fall {
-            self.block_manager.remove_block(block_id);
-            
-            // Create a falling prism for visual effect
-            let falling = FallingPrism::new((0, 0, 0), position, material);
-            self.falling_prisms.push(falling);
-            
-            println!("[Physics] Block {} lost support and is falling!", block_id);
-        }
-        
-        // Regenerate mesh if any blocks fell
-        if !self.falling_prisms.is_empty() {
+
+        // Regenerate mesh if physics changed anything
+        if needs_mesh_update {
             self.regenerate_block_mesh();
         }
     }
@@ -2824,9 +2825,61 @@ impl BattleArenaApp {
                 }
             }
         }
-        
+
         // ============================================
-        // PASS 6: Start Overlay (Windows focus)
+        // PASS 6: Top Bar (resources, day, population)
+        // ============================================
+        if self.game_state.top_bar.visible && !self.start_overlay.visible {
+            if let (Some(ui_pipeline), Some(ui_bg)) = (&self.ui_pipeline, &self.ui_bind_group) {
+                let config = self.surface_config.as_ref().unwrap();
+                let (resources, day_cycle, population) = self.game_state.ui_data();
+                let top_bar_mesh = self.game_state.top_bar.generate_ui_mesh(
+                    config.width as f32,
+                    config.height as f32,
+                    resources,
+                    day_cycle,
+                    population,
+                );
+
+                if !top_bar_mesh.vertices.is_empty() {
+                    let top_bar_vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Top Bar Vertex Buffer"),
+                        contents: bytemuck::cast_slice(&top_bar_mesh.vertices),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+                    let top_bar_ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Top Bar Index Buffer"),
+                        contents: bytemuck::cast_slice(&top_bar_mesh.indices),
+                        usage: wgpu::BufferUsages::INDEX,
+                    });
+
+                    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("Top Bar Pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+
+                    render_pass.set_pipeline(ui_pipeline);
+                    render_pass.set_bind_group(0, ui_bg, &[]);
+                    render_pass.set_vertex_buffer(0, top_bar_vb.slice(..));
+                    render_pass.set_index_buffer(top_bar_ib.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.draw_indexed(0..top_bar_mesh.indices.len() as u32, 0, 0..1);
+                }
+            }
+        }
+
+        // ============================================
+        // PASS 7: Start Overlay (Windows focus)
         // ============================================
         if self.start_overlay.visible {
             if let (Some(ui_pipeline), Some(ui_bg)) = (&self.ui_pipeline, &self.ui_bind_group) {

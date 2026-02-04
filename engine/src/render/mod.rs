@@ -6,6 +6,7 @@
 pub mod adaptive_step;
 pub mod binding_validator;
 pub mod building_blocks;
+pub mod building_physics;
 pub mod compute_pipelines;
 pub mod marching_cubes;
 pub mod sdf_operations;
@@ -143,6 +144,11 @@ pub use building_blocks::{
     sdf_box, sdf_cylinder, sdf_sphere, sdf_dome, sdf_arch, sdf_wedge,
     // SDF operations
     sdf_smooth_union, sdf_union, sdf_intersection, sdf_subtraction,
+};
+
+// Re-export building physics types (Phase 5: Realistic Building Physics)
+pub use building_physics::{
+    BuildingPhysics, BlockPhysicsState, PhysicsConfig,
 };
 
 // Re-export Marching Cubes types (Phase 3: SDF-to-Mesh Conversion)
