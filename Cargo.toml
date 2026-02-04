@@ -1,0 +1,40 @@
+[package]
+name = "battle_tok"
+version = "0.1.0"
+edition = "2024"
+description = "Hexagon-based strategy game - reunite the world after collapse"
+
+[lib]
+name = "battle_tok_engine"
+path = "engine/src/lib.rs"
+
+[[bin]]
+name = "hex-planet"
+path = "src/bin/hex_planet.rs"
+
+[[bin]]
+name = "battle_arena"
+path = "src/bin/battle_arena.rs"
+
+[dependencies]
+# Graphics
+wgpu = "27"
+glam = { version = "0.31", features = ["serde"] }
+bytemuck = { version = "1.14", features = ["derive"] }
+winit = "0.30"
+
+# Async runtime (for wgpu)
+pollster = "0.4"
+
+# Compile-time assertions
+static_assertions = "1.1"
+
+[dev-dependencies]
+naga = { version = "27", features = ["wgsl-in"] }
+
+[profile.dev]
+opt-level = 1 # Enable some optimization in dev for shader compilation speed
+
+[profile.release]
+opt-level = 3
+lto = true

@@ -1,0 +1,12 @@
+# Battle Tök Progress
+
+## Session: Initial Setup
+- Created project structure
+- Copied engine and scenes from magic_engine
+- Set up Cargo.toml with minimal dependencies
+- Created idea documentation
+
+## Next Steps
+- Run /prd to generate Product Requirements Document
+- Define detailed game mechanics
+- Start implementing core gameplay loop

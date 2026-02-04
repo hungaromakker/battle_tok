@@ -1,0 +1,38 @@
+# Rust
+target/
+Cargo.lock
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+.env
+.env.local
+
+# Node
+node_modules/
+bun.lockb
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+
+# Logs
+*.log
+logs/
+
+# MagicM runtime state
+.magicm/
+
+# Chat files (local sessions)
+chat/
