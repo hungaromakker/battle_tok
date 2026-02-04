@@ -48,6 +48,7 @@ pub use builder::{screen_to_ray, determine_hit_face, calculate_adjacent_block_po
 pub use builder::{check_block_support, calculate_bridge_segments, PlacementResult};
 pub use ui::{StartOverlay, TerrainEditorUI, UISlider, TopBar, TOP_BAR_HEIGHT, add_quad, draw_text, get_char_bitmap};
 pub use render::{Uniforms, HexPrismModelUniforms, SdfCannonUniforms, SdfCannonData};
+pub use render::{TerrainParams as TerrainShaderParams, LavaParams, SkyStormParams, FogPostParams, TonemapParams};
 pub use render::{SHADER_SOURCE, MergedMeshBuffers, create_test_walls};
 pub use render::{generate_hex_grid_overlay, calculate_ghost_color, GHOST_PREVIEW_COLOR, generate_block_preview_mesh};
 pub use physics::{CollisionResult, AABB, check_capsule_aabb_collision, check_capsule_hex_collision};

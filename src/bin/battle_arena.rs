@@ -84,6 +84,8 @@ use battle_tok_engine::game::{
     Player, MovementKeys, AimingKeys, PLAYER_EYE_HEIGHT,
     // Uniforms
     Uniforms, SdfCannonUniforms, SdfCannonData,
+    // Visual upgrade uniforms (Batch 1)
+    TerrainShaderParams, LavaParams, SkyStormParams, FogPostParams, TonemapParams,
     // Builder types
     BuilderMode, BuildToolbar, SelectedFace,
     SHAPE_NAMES, BLOCK_GRID_SIZE, BLOCK_SNAP_DISTANCE, PHYSICS_CHECK_INTERVAL,

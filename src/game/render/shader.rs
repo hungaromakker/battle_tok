@@ -119,6 +119,78 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
+// ============================================================================
+// ENHANCED TERRAIN MATERIALS (height bands + slope detection)
+// ============================================================================
+
+// Material colors (tuned for natural look)
+const GRASS_COLOR: vec3<f32> = vec3<f32>(0.18, 0.32, 0.10);
+const DIRT_COLOR: vec3<f32> = vec3<f32>(0.35, 0.25, 0.15);
+const ROCK_COLOR: vec3<f32> = vec3<f32>(0.40, 0.38, 0.35);
+const SNOW_COLOR: vec3<f32> = vec3<f32>(0.95, 0.95, 0.98);
+
+// Height band thresholds (world units)
+const DIRT_START: f32 = 1.0;
+const DIRT_END: f32 = 2.5;
+const ROCK_START: f32 = 2.0;
+const ROCK_END: f32 = 4.5;
+const SNOW_START: f32 = 4.0;
+const SNOW_END: f32 = 6.0;
+
+fn terrain_noise(p: vec2<f32>) -> f32 {
+    let h = dot(p, vec2<f32>(127.1, 311.7));
+    return fract(sin(h) * 43758.5453);
+}
+
+fn terrain_fbm(p: vec2<f32>) -> f32 {
+    var value = 0.0;
+    var amplitude = 0.5;
+    var pos = p;
+    for (var i = 0; i < 3; i++) {
+        let i_p = floor(pos);
+        let f_p = fract(pos);
+        let a = terrain_noise(i_p);
+        let b = terrain_noise(i_p + vec2<f32>(1.0, 0.0));
+        let c = terrain_noise(i_p + vec2<f32>(0.0, 1.0));
+        let d = terrain_noise(i_p + vec2<f32>(1.0, 1.0));
+        let u = f_p * f_p * (3.0 - 2.0 * f_p);
+        value += amplitude * mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+        pos *= 2.0;
+        amplitude *= 0.5;
+    }
+    return value;
+}
+
+fn get_terrain_material(world_pos: vec3<f32>, normal: vec3<f32>, vertex_color: vec3<f32>) -> vec3<f32> {
+    let h = world_pos.y;
+    let up = vec3<f32>(0.0, 1.0, 0.0);
+    
+    // Slope detection (0 = flat, 1 = cliff)
+    let slope = 1.0 - clamp(dot(normalize(normal), up), 0.0, 1.0);
+    
+    // Height-based material transitions
+    let dirt_t = smoothstep(DIRT_START, DIRT_END, h);
+    let rock_t = smoothstep(ROCK_START, ROCK_END, h);
+    let snow_t = smoothstep(SNOW_START, SNOW_END, h);
+    
+    // Blend by height
+    var col = mix(GRASS_COLOR, DIRT_COLOR, dirt_t);
+    col = mix(col, ROCK_COLOR, rock_t);
+    col = mix(col, SNOW_COLOR, snow_t);
+    
+    // Steep slopes become rocky
+    col = mix(col, ROCK_COLOR, slope * 0.85);
+    
+    // Add noise variation
+    let noise = terrain_fbm(world_pos.xz * 0.25) * 0.12 - 0.06;
+    col = col + vec3<f32>(noise, noise * 0.5, noise * 0.3);
+    
+    // Blend with vertex color (60% height-based, 40% vertex color for artist control)
+    col = mix(col, vertex_color, 0.4);
+    
+    return col;
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let normal = normalize(in.normal);
@@ -126,8 +198,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let view_dir = normalize(uniforms.camera_pos - in.world_pos);
     let half_dir = normalize(view_dir + sun_dir);
 
-    // Base color from vertex (terrain colors already in linear space)
-    let albedo = in.color.rgb;
+    // Enhanced terrain color with height bands + slope detection
+    let albedo = get_terrain_material(in.world_pos, normal, in.color.rgb);
     
     // Detect grass/vegetation by green channel dominance
     let is_grass = albedo.g > albedo.r * 1.3 && albedo.g > albedo.b * 1.5;
@@ -212,9 +284,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Distance fog with height modulation
     let fog_amount = (1.0 - exp(-dist * uniforms.fog_density * height_factor)) * 0.85;
     
-    // Fog color varies with distance (blue haze)
-    let fog_near = vec3<f32>(0.55, 0.65, 0.80);
-    let fog_far = vec3<f32>(0.45, 0.50, 0.60);
+    // Fog color varies with distance (stormy purple atmosphere)
+    let fog_near = vec3<f32>(0.55, 0.48, 0.65);  // Purple-tinted near
+    let fog_far = vec3<f32>(0.40, 0.35, 0.55);   // Deeper purple far
     let fog_blend = clamp(dist / 100.0, 0.0, 1.0);
     let final_fog_color = mix(fog_near, fog_far, fog_blend);
     
