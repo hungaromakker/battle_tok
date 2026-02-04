@@ -335,8 +335,13 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 // FRAGMENT SHADER
 // ============================================================================
 
+struct FragmentOutput {
+    @location(0) color: vec4<f32>,
+    @builtin(frag_depth) depth: f32,
+}
+
 @fragment
-fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(input: VertexOutput) -> FragmentOutput {
     let uv = input.uv;
 
     // Get ray origin and direction
@@ -362,5 +367,13 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let fog_amount = 1.0 - exp(-distance * uniforms.fog_density);
     color = mix(color, uniforms.fog_color, fog_amount);
 
-    return vec4<f32>(color, 1.0);
+    // Calculate proper depth value for depth buffer interaction
+    // Transform hit position to clip space to get correct depth
+    let clip_pos = uniforms.view_proj * vec4<f32>(result.position, 1.0);
+    let ndc_depth = clip_pos.z / clip_pos.w;  // Normalized device coordinates depth
+    
+    var output: FragmentOutput;
+    output.color = vec4<f32>(color, 1.0);
+    output.depth = ndc_depth;  // Write depth for proper occlusion
+    return output;
 }

@@ -150,8 +150,20 @@ pub fn terrain_normal_at(x: f32, z: f32, base_y: f32) -> Vec3 {
     tangent_z.cross(tangent_x).normalize()
 }
 
-/// Check if a point is inside a hexagon (circular approximation)
+/// Check if point (dx, dz) is inside a regular pointy-top hexagon
+/// 
+/// For a pointy-top hexagon with circumradius (center-to-vertex distance) = radius:
+/// - Vertices are at angles 0°, 60°, 120°, 180°, 240°, 300° from center
+/// - The apothem (center-to-edge) = radius * cos(30°) = radius * sqrt(3)/2
+/// 
+/// Uses 6-fold symmetry: work with absolute values and check 2 constraints:
+/// 1. |z| <= radius (top/bottom vertex constraint)
+/// 2. sqrt(3)*|x| + |z| <= sqrt(3)*radius (diagonal edge constraint)
 pub fn is_inside_hexagon(dx: f32, dz: f32, radius: f32) -> bool {
-    let dist_sq = dx * dx + dz * dz;
-    dist_sq <= radius * radius
+    let ax = dx.abs();
+    let az = dz.abs();
+    const SQRT3: f32 = 1.732050808;
+    
+    // Pointy-top hexagon boundary test
+    az <= radius && (SQRT3 * ax + az) <= SQRT3 * radius
 }

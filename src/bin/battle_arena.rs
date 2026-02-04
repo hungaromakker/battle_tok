@@ -94,6 +94,7 @@ use battle_tok_engine::game::{
     // Terrain
     TerrainParams, get_terrain_params, set_terrain_params,
     terrain_height_at, generate_elevated_hex_terrain, generate_water_plane,
+    generate_bridge, BridgeConfig,
     // Trees
     PlacedTree, generate_trees_on_terrain, generate_all_trees_mesh,
     // Destruction
@@ -715,10 +716,16 @@ impl BattleArenaApp {
         // Create static mesh (terrain platforms with procedural elevation)
         let mut static_mesh = Mesh::new();
 
+        // Island positions - separated to create a gap for the bridge
+        // With radius 30 and centers 90 units apart, the gap is ~30 meters
+        const ATTACKER_CENTER: Vec3 = Vec3::new(0.0, 0.0, 45.0);
+        const DEFENDER_CENTER: Vec3 = Vec3::new(0.0, 0.0, -45.0);
+        const ISLAND_RADIUS: f32 = 30.0;
+        
         // Attacker hex platform (where cannon is) - detailed mountainous terrain
         let attacker_platform = generate_elevated_hex_terrain(
-            Vec3::new(0.0, 0.0, 25.0),
-            30.0,
+            ATTACKER_CENTER,
+            ISLAND_RADIUS,
             [0.4, 0.5, 0.3, 1.0], // Color determined dynamically by height
             64, // High subdivision for detailed mountains
         );
@@ -726,15 +733,15 @@ impl BattleArenaApp {
         
         // Water plane for attacker platform
         let attacker_water = generate_water_plane(
-            Vec3::new(0.0, 0.0, 25.0),
-            30.0,
+            ATTACKER_CENTER,
+            ISLAND_RADIUS,
         );
         static_mesh.merge(&attacker_water);
 
         // Defender hex platform (target) - detailed mountainous terrain
         let defender_platform = generate_elevated_hex_terrain(
-            Vec3::new(0.0, 0.0, -25.0),
-            30.0,
+            DEFENDER_CENTER,
+            ISLAND_RADIUS,
             [0.5, 0.4, 0.35, 1.0], // Color determined dynamically by height
             64, // High subdivision for detailed mountains
         );
@@ -742,10 +749,47 @@ impl BattleArenaApp {
         
         // Water plane for defender platform
         let defender_water = generate_water_plane(
-            Vec3::new(0.0, 0.0, -25.0),
-            30.0,
+            DEFENDER_CENTER,
+            ISLAND_RADIUS,
         );
         static_mesh.merge(&defender_water);
+        
+        // Generate bridge connecting the two islands
+        // Find actual terrain edge vertices by scanning the generated meshes
+        
+        // Find the attacker terrain vertex closest to the defender (smallest Z, near X=0)
+        let mut bridge_start = Vec3::new(0.0, 0.0, ATTACKER_CENTER.z);
+        let mut best_dist_start = f32::MAX;
+        for v in &attacker_platform.vertices {
+            let vx = v.position[0];
+            let vz = v.position[2];
+            // Looking for vertex near X=0 with smallest Z (toward defender)
+            let dist = vx.abs() + (vz - (ATTACKER_CENTER.z - ISLAND_RADIUS)).abs() * 0.5;
+            if dist < best_dist_start && vz < ATTACKER_CENTER.z {
+                best_dist_start = dist;
+                bridge_start = Vec3::new(v.position[0], v.position[1], v.position[2]);
+            }
+        }
+        
+        // Find the defender terrain vertex closest to the attacker (largest Z, near X=0)
+        let mut bridge_end = Vec3::new(0.0, 0.0, DEFENDER_CENTER.z);
+        let mut best_dist_end = f32::MAX;
+        for v in &defender_platform.vertices {
+            let vx = v.position[0];
+            let vz = v.position[2];
+            // Looking for vertex near X=0 with largest Z (toward attacker)
+            let dist = vx.abs() + ((DEFENDER_CENTER.z + ISLAND_RADIUS) - vz).abs() * 0.5;
+            if dist < best_dist_end && vz > DEFENDER_CENTER.z {
+                best_dist_end = dist;
+                bridge_end = Vec3::new(v.position[0], v.position[1], v.position[2]);
+            }
+        }
+        
+        println!("[Bridge] Connecting from {:?} to {:?}", bridge_start, bridge_end);
+        
+        let bridge_config = BridgeConfig::default();
+        let bridge_mesh = generate_bridge(bridge_start, bridge_end, &bridge_config);
+        static_mesh.merge(&bridge_mesh);
         
         println!("[Builder Mode] Generated detailed terrain with mountains, rocks, and water");
         
@@ -754,13 +798,13 @@ impl BattleArenaApp {
         // ============================================
         // Generate trees on both platforms using noise-based distribution
         self.trees_attacker = generate_trees_on_terrain(
-            Vec3::new(0.0, 0.0, 25.0),
+            ATTACKER_CENTER,
             28.0, // Slightly smaller than terrain
             0.3,  // Density threshold (higher = more trees)
             0.0,  // Seed offset
         );
         self.trees_defender = generate_trees_on_terrain(
-            Vec3::new(0.0, 0.0, -25.0),
+            DEFENDER_CENTER,
             28.0,
             0.35, // Slightly more trees on defender side
             100.0, // Different seed for variety
@@ -1948,13 +1992,18 @@ impl BattleArenaApp {
         let device = self.device.as_ref().expect("Device not initialized");
         let _queue = self.queue.as_ref().expect("Queue not initialized");
         
+        // Island positions - must match initial generation
+        const ATTACKER_CENTER: Vec3 = Vec3::new(0.0, 0.0, 45.0);
+        const DEFENDER_CENTER: Vec3 = Vec3::new(0.0, 0.0, -45.0);
+        const ISLAND_RADIUS: f32 = 30.0;
+        
         // Regenerate terrain mesh
         let mut static_mesh = Mesh::new();
         
         // Attacker platform
         let attacker_platform = generate_elevated_hex_terrain(
-            Vec3::new(0.0, 0.0, 25.0),
-            30.0,
+            ATTACKER_CENTER,
+            ISLAND_RADIUS,
             [0.4, 0.5, 0.3, 1.0],
             64,
         );
@@ -1963,14 +2012,14 @@ impl BattleArenaApp {
         // Water for attacker
         let params = get_terrain_params();
         if params.water > 0.01 {
-            let attacker_water = generate_water_plane(Vec3::new(0.0, 0.0, 25.0), 30.0);
+            let attacker_water = generate_water_plane(ATTACKER_CENTER, ISLAND_RADIUS);
             static_mesh.merge(&attacker_water);
         }
         
         // Defender platform
         let defender_platform = generate_elevated_hex_terrain(
-            Vec3::new(0.0, 0.0, -25.0),
-            30.0,
+            DEFENDER_CENTER,
+            ISLAND_RADIUS,
             [0.5, 0.4, 0.35, 1.0],
             64,
         );
@@ -1978,9 +2027,38 @@ impl BattleArenaApp {
         
         // Water for defender
         if params.water > 0.01 {
-            let defender_water = generate_water_plane(Vec3::new(0.0, 0.0, -25.0), 30.0);
+            let defender_water = generate_water_plane(DEFENDER_CENTER, ISLAND_RADIUS);
             static_mesh.merge(&defender_water);
         }
+        
+        // Generate bridge - find actual terrain edge vertices
+        let mut bridge_start = Vec3::new(0.0, 0.0, ATTACKER_CENTER.z);
+        let mut best_dist_start = f32::MAX;
+        for v in &attacker_platform.vertices {
+            let vx = v.position[0];
+            let vz = v.position[2];
+            let dist = vx.abs() + (vz - (ATTACKER_CENTER.z - ISLAND_RADIUS)).abs() * 0.5;
+            if dist < best_dist_start && vz < ATTACKER_CENTER.z {
+                best_dist_start = dist;
+                bridge_start = Vec3::new(v.position[0], v.position[1], v.position[2]);
+            }
+        }
+        
+        let mut bridge_end = Vec3::new(0.0, 0.0, DEFENDER_CENTER.z);
+        let mut best_dist_end = f32::MAX;
+        for v in &defender_platform.vertices {
+            let vx = v.position[0];
+            let vz = v.position[2];
+            let dist = vx.abs() + ((DEFENDER_CENTER.z + ISLAND_RADIUS) - vz).abs() * 0.5;
+            if dist < best_dist_end && vz > DEFENDER_CENTER.z {
+                best_dist_end = dist;
+                bridge_end = Vec3::new(v.position[0], v.position[1], v.position[2]);
+            }
+        }
+        
+        let bridge_config = BridgeConfig::default();
+        let bridge_mesh = generate_bridge(bridge_start, bridge_end, &bridge_config);
+        static_mesh.merge(&bridge_mesh);
         
         // Update buffers
         self.static_vertex_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -2003,10 +2081,10 @@ impl BattleArenaApp {
         
         // Also regenerate trees (they depend on terrain height)
         self.trees_attacker = generate_trees_on_terrain(
-            Vec3::new(0.0, 0.0, 25.0), 28.0, 0.3, 0.0,
+            ATTACKER_CENTER, 28.0, 0.3, 0.0,
         );
         self.trees_defender = generate_trees_on_terrain(
-            Vec3::new(0.0, 0.0, -25.0), 28.0, 0.35, 100.0,
+            DEFENDER_CENTER, 28.0, 0.35, 100.0,
         );
         
         let mut all_trees = self.trees_attacker.clone();
@@ -2074,8 +2152,8 @@ impl BattleArenaApp {
         
         // Otherwise, raycast against the terrain (both hex platforms)
         // Use an iterative approach to find where the ray intersects the terrain
-        let attacker_center = Vec3::new(0.0, 0.0, 25.0);
-        let defender_center = Vec3::new(0.0, 0.0, -25.0);
+        let attacker_center = Vec3::new(0.0, 0.0, 45.0);
+        let defender_center = Vec3::new(0.0, 0.0, -45.0);
         let platform_radius = 30.0;
         
         // March along the ray to find terrain intersection
