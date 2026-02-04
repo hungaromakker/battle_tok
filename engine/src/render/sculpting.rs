@@ -18,9 +18,9 @@
 //! 3. SDF deformation creates smooth transitions
 //! 4. Bake to mesh when done editing
 
-use glam::{Vec3, Quat};
+use glam::Vec3;
 
-use super::building_blocks::{BuildingBlock, BuildingBlockShape, BuildingBlockManager, AABB};
+use super::building_blocks::{BuildingBlock, BuildingBlockShape, BuildingBlockManager};
 
 // ============================================================================
 // SELECTION TYPES

@@ -2,7 +2,7 @@
 //!
 //! UI panel for adjusting terrain generation parameters in real-time.
 
-use crate::game::types::{Mesh, Vertex};
+use crate::game::types::Mesh;
 use crate::game::terrain::{TerrainParams, get_terrain_params, set_terrain_params};
 use super::slider::UISlider;
 use super::text::{add_quad, draw_text};

@@ -475,6 +475,7 @@ fn generate_hex_sphere(radius: f32, subdivisions: u32) -> (Vec<HexVertex>, Vec<u
 // ============================================================================
 
 /// Generate a floating island with tapered rock base and grass top
+#[allow(dead_code)]
 fn generate_floating_island(center: Vec3, size: Vec3) -> Mesh {
     let mut mesh = Mesh::new();
     
@@ -488,6 +489,7 @@ fn generate_floating_island(center: Vec3, size: Vec3) -> Mesh {
 }
 
 /// Generate the rock base of a floating island (sphere with flat top, tapered bottom)
+#[allow(dead_code)]
 fn generate_island_rock(mesh: &mut Mesh, center: Vec3, size: Vec3) {
     let base_idx = mesh.vertices.len() as u32;
     let segments = 24;
@@ -554,6 +556,7 @@ fn generate_island_rock(mesh: &mut Mesh, center: Vec3, size: Vec3) {
 }
 
 /// Generate grass plane on top of island
+#[allow(dead_code)]
 fn generate_grass_plane(mesh: &mut Mesh, center: Vec3, width: f32, depth: f32) {
     let base_idx = mesh.vertices.len() as u32;
     let grass_color = [0.35, 0.55, 0.25, 1.0];
@@ -599,6 +602,7 @@ fn generate_grass_plane(mesh: &mut Mesh, center: Vec3, width: f32, depth: f32) {
 // ============================================================================
 
 /// Generate complete fortress complex
+#[allow(dead_code)]
 fn generate_fortress(center: Vec3) -> Mesh {
     let mut mesh = Mesh::new();
     
@@ -622,6 +626,7 @@ fn generate_fortress(center: Vec3) -> Mesh {
 }
 
 /// Generate circular wall with crenellations
+#[allow(dead_code)]
 fn generate_wall_ring(mesh: &mut Mesh, center: Vec3, radius: f32, thickness: f32, height: f32) {
     let base_idx = mesh.vertices.len() as u32;
     let segments = 32;
@@ -695,6 +700,7 @@ fn generate_wall_ring(mesh: &mut Mesh, center: Vec3, radius: f32, thickness: f32
 }
 
 /// Generate crenellations (merlons) on wall top
+#[allow(dead_code)]
 fn generate_crenellations(mesh: &mut Mesh, center: Vec3, radius: f32, wall_height: f32, count: u32) {
     let merlon_color = [0.52, 0.50, 0.47, 1.0];
     let merlon_height = 4.0;
@@ -708,6 +714,7 @@ fn generate_crenellations(mesh: &mut Mesh, center: Vec3, radius: f32, wall_heigh
 }
 
 /// Generate a tower with cone roof
+#[allow(dead_code)]
 fn generate_tower(mesh: &mut Mesh, center: Vec3, radius: f32, height: f32) {
     let base_idx = mesh.vertices.len() as u32;
     let segments = 16;
@@ -775,6 +782,7 @@ fn generate_tower(mesh: &mut Mesh, center: Vec3, radius: f32, height: f32) {
 }
 
 /// Generate central keep structure
+#[allow(dead_code)]
 fn generate_keep(mesh: &mut Mesh, center: Vec3, size: Vec3) {
     let keep_color = [0.5, 0.47, 0.43, 1.0];
     generate_box(mesh, center + Vec3::Y * size.y * 0.5, size, keep_color);
@@ -785,6 +793,7 @@ fn generate_keep(mesh: &mut Mesh, center: Vec3, size: Vec3) {
 }
 
 /// Generate crystal pit with glowing crystals
+#[allow(dead_code)]
 fn generate_crystal_pit(mesh: &mut Mesh, center: Vec3, radius: f32) {
     // Pit depression (dark ring)
     let pit_color = [0.1, 0.08, 0.08, 1.0];
@@ -827,6 +836,7 @@ fn generate_crystal_pit(mesh: &mut Mesh, center: Vec3, radius: f32) {
 }
 
 /// Generate a crystal spike (4-sided pyramid)
+#[allow(dead_code)]
 fn generate_crystal_spike(mesh: &mut Mesh, base: Vec3, height: f32, width: f32, color: [f32; 4]) {
     let base_idx = mesh.vertices.len() as u32;
     let apex = base + Vec3::Y * height;
@@ -861,6 +871,7 @@ fn generate_crystal_spike(mesh: &mut Mesh, base: Vec3, height: f32, width: f32, 
 }
 
 /// Generate a simple box
+#[allow(dead_code)]
 fn generate_box(mesh: &mut Mesh, center: Vec3, size: Vec3, color: [f32; 4]) {
     let half = size * 0.5;
     
@@ -909,6 +920,7 @@ fn generate_box(mesh: &mut Mesh, center: Vec3, size: Vec3, color: [f32; 4]) {
 // ============================================================================
 
 /// Generate a trebuchet (simple placeholder)
+#[allow(dead_code)]
 fn generate_trebuchet(center: Vec3) -> Mesh {
     let mut mesh = Mesh::new();
     let wood_color = [0.4, 0.3, 0.2, 1.0];
@@ -927,6 +939,7 @@ fn generate_trebuchet(center: Vec3) -> Mesh {
 }
 
 /// Generate soldier (simple capsule placeholder)
+#[allow(dead_code)]
 fn generate_soldier(center: Vec3) -> Mesh {
     let mut mesh = Mesh::new();
     let armor_color = [0.4, 0.4, 0.45, 1.0];
@@ -967,6 +980,7 @@ fn generate_soldier(center: Vec3) -> Mesh {
 }
 
 /// Generate distant castle silhouette on small rock
+#[allow(dead_code)]
 fn generate_distant_castle(center: Vec3) -> Mesh {
     let mut mesh = Mesh::new();
     

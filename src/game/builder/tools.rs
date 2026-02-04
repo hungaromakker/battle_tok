@@ -24,7 +24,7 @@ pub struct SelectedFace {
     /// Face center position in world space
     pub position: Vec3,
     /// Face normal direction
-    pub normal: Vec3,
+    pub _normal: Vec3,
     /// Face size (width, height)
     pub size: (f32, f32),
 }

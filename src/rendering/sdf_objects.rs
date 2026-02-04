@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn test_sdf_object_creation() {
-        let mut obj = SdfObject::new();
+        let obj = SdfObject::new();
         assert!(obj.primitives.is_empty());
         assert!(obj.operations.is_empty());
         assert!(obj.is_valid());

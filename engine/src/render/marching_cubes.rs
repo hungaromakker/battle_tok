@@ -21,7 +21,6 @@
 //! let mesh = mc.generate_mesh(&sdf, min_bounds, max_bounds);
 //! ```
 
-use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 use std::collections::HashMap;
 

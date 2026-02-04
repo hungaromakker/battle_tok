@@ -47,7 +47,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-// bytemuck used by wgpu
+use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 use battle_tok_engine::render::HexPrismGrid;
 use battle_tok_engine::render::hex_prism::{DEFAULT_HEX_HEIGHT, DEFAULT_HEX_RADIUS};
@@ -66,7 +66,7 @@ use battle_tok_engine::render::{StormySky, StormySkyConfig};
 
 // Import building block system (Phase 2-4)
 use battle_tok_engine::render::{
-    BuildingBlockManager, BuildingBlockShape, BuildingBlock,
+    BuildingBlockManager, BuildingBlockShape, BuildingBlock, BlockVertex, AABB,
     MergeWorkflowManager, MergedMesh,
     SculptingManager,
 };
@@ -74,42 +74,884 @@ use battle_tok_engine::render::{
 // Import fullscreen for F11 toggle
 use winit::window::Fullscreen;
 
-// Import game module types (modularized code)
-use battle_tok_engine::game::{
-    // Core types
-    Vertex, Mesh, Camera,
-    // Player types
-    Player, MovementKeys, AimingKeys, PLAYER_EYE_HEIGHT,
-    // Uniforms
-    Uniforms, SdfCannonUniforms, SdfCannonData,
-    // Builder types
-    BuilderMode, BuildToolbar, SelectedFace,
-    SHAPE_NAMES, BLOCK_GRID_SIZE, BLOCK_SNAP_DISTANCE, PHYSICS_CHECK_INTERVAL,
-    // Terrain
-    TerrainParams, get_terrain_params, set_terrain_params,
-    terrain_height_at, generate_elevated_hex_terrain, generate_water_plane,
-    // Trees
-    PlacedTree, generate_trees_on_terrain, generate_all_trees_mesh,
-    // Destruction
-    FallingPrism, DebrisParticle, spawn_debris, get_material_color,
-    // Mesh generators
-    generate_rotated_box, generate_sphere,
-    // UI
-    StartOverlay, TerrainEditorUI,
-    // Render
-    SHADER_SOURCE, create_test_walls,
-    // Cannon
-    ArenaCannon as Cannon, CANNON_ROTATION_SPEED,
-};
+// ============================================================================
+// DATA STRUCTURES
+// ============================================================================
 
-// Player constants not in module
-const COYOTE_TIME: f32 = 0.1;
+/// Vertex for terrain and objects
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct Vertex {
+    position: [f32; 3],
+    normal: [f32; 3],
+    color: [f32; 4],
+}
 
-// GPU-specific types (need wgpu::Buffer, can't be in module)
+/// Uniforms sent to GPU - includes projectile data
+/// Matches WGSL struct layout (std140 alignment rules):
+/// - vec3<f32> followed by f32 packs into 16 bytes
+/// - vec3<f32> followed by vec3 needs alignment padding
+/// - array<vec4> needs 16-byte alignment
+/// Total: 656 bytes
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct Uniforms {
+    view_proj: [[f32; 4]; 4],    // 64 bytes (offset 0)
+    camera_pos: [f32; 3],        // 12 bytes (offset 64)
+    time: f32,                   // 4 bytes (offset 76) - packs with camera_pos
+    sun_dir: [f32; 3],           // 12 bytes (offset 80)
+    fog_density: f32,            // 4 bytes (offset 92) - packs with sun_dir
+    fog_color: [f32; 3],         // 12 bytes (offset 96)
+    ambient: f32,                // 4 bytes (offset 108) - packs with fog_color
+    // Projectile data (up to 32 projectiles)
+    projectile_count: u32,       // 4 bytes (offset 112)
+    _pad_before_padding1: [f32; 3], // 12 bytes (offset 116) - align to 16-byte boundary
+    _padding1: [f32; 3],         // 12 bytes (offset 128)
+    _pad_before_array: f32,      // 4 bytes (offset 140) - align array to 16-byte boundary
+    projectile_positions: [[f32; 4]; 32], // 512 bytes (offset 144)
+    // Total: 656 bytes
+}
+
+impl Default for Uniforms {
+    fn default() -> Self {
+        Self {
+            view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+            camera_pos: [0.0, 0.0, 0.0],
+            time: 0.0,
+            sun_dir: [0.577, 0.577, 0.577],
+            fog_density: 0.0002,
+            fog_color: [0.7, 0.8, 0.95],
+            ambient: 0.3,
+            projectile_count: 0,
+            _pad_before_padding1: [0.0; 3],
+            _padding1: [0.0; 3],
+            _pad_before_array: 0.0,
+            projectile_positions: [[0.0; 4]; 32],
+        }
+    }
+}
+
+/// Model uniforms for hex-prism rendering (US-012)
+// Compile-time size check for Uniforms (must match WGSL shader expectation)
+const _: () = assert!(std::mem::size_of::<Uniforms>() == 656);
+
+/// Matches the ModelUniforms struct in hex_prism.wgsl
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct HexPrismModelUniforms {
+    model: [[f32; 4]; 4],           // 64 bytes - model transform
+    normal_matrix: [[f32; 3]; 3],   // 36 bytes - normal transform (3x3)
+    _padding: [f32; 3],             // 12 bytes - pad to 112 bytes total
+}
+
+impl Default for HexPrismModelUniforms {
+    fn default() -> Self {
+        Self {
+            model: Mat4::IDENTITY.to_cols_array_2d(),
+            normal_matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            _padding: [0.0; 3],
+        }
+    }
+}
+
+/// SDF Cannon Uniforms (US-013)
+/// Matches the Uniforms struct in sdf_cannon.wgsl
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct SdfCannonUniforms {
+    view_proj: [[f32; 4]; 4],       // 64 bytes
+    inv_view_proj: [[f32; 4]; 4],   // 64 bytes
+    camera_pos: [f32; 3],           // 12 bytes
+    time: f32,                      // 4 bytes
+    sun_dir: [f32; 3],              // 12 bytes
+    fog_density: f32,               // 4 bytes
+    fog_color: [f32; 3],            // 12 bytes
+    ambient: f32,                   // 4 bytes
+}
+
+impl Default for SdfCannonUniforms {
+    fn default() -> Self {
+        Self {
+            view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+            inv_view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+            camera_pos: [0.0, 0.0, 0.0],
+            time: 0.0,
+            sun_dir: [0.577, 0.577, 0.577],
+            fog_density: 0.0002,
+            fog_color: [0.7, 0.8, 0.95],
+            ambient: 0.3,
+        }
+    }
+}
+
+/// SDF Cannon Data (US-013)
+/// Matches the CannonData struct in sdf_cannon.wgsl
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct SdfCannonData {
+    world_pos: [f32; 3],            // 12 bytes
+    _pad0: f32,                     // 4 bytes
+    barrel_rotation: [f32; 4],      // 16 bytes (quaternion)
+    color: [f32; 3],                // 12 bytes
+    _pad1: f32,                     // 4 bytes
+}
+
+impl Default for SdfCannonData {
+    fn default() -> Self {
+        Self {
+            world_pos: [0.0, 0.0, 0.0],
+            _pad0: 0.0,
+            barrel_rotation: [0.0, 0.0, 0.0, 1.0], // identity quaternion
+            color: [0.4, 0.35, 0.3],               // bronze/metallic color
+            _pad1: 0.0,
+        }
+    }
+}
+
+/// Simple camera for arena view
+struct Camera {
+    position: Vec3,
+    yaw: f32,
+    pitch: f32,
+    move_speed: f32,
+    look_sensitivity: f32,
+    fov: f32,
+    near: f32,
+    far: f32,
+}
+
+impl Default for Camera {
+    fn default() -> Self {
+        Self {
+            // Start at a good viewing position for the arena
+            position: Vec3::new(0.0, 15.0, 50.0),
+            yaw: 0.0,
+            pitch: -0.2,
+            move_speed: 20.0,
+            look_sensitivity: 0.003,
+            fov: 60.0_f32.to_radians(),
+            near: 0.1,
+            far: 1000.0,
+        }
+    }
+}
+
+impl Camera {
+    fn get_forward(&self) -> Vec3 {
+        Vec3::new(
+            self.yaw.sin() * self.pitch.cos(),
+            self.pitch.sin(),
+            -self.yaw.cos() * self.pitch.cos(),
+        )
+        .normalize()
+    }
+
+    fn get_right(&self) -> Vec3 {
+        self.get_forward().cross(Vec3::Y).normalize()
+    }
+
+    fn get_view_matrix(&self) -> Mat4 {
+        let target = self.position + self.get_forward();
+        Mat4::look_at_rh(self.position, target, Vec3::Y)
+    }
+
+    fn get_projection_matrix(&self, aspect: f32) -> Mat4 {
+        Mat4::perspective_rh(self.fov, aspect, self.near, self.far)
+    }
+
+    fn handle_mouse_look(&mut self, delta_x: f32, delta_y: f32) {
+        self.yaw += delta_x * self.look_sensitivity;
+        self.pitch -= delta_y * self.look_sensitivity;
+        let pitch_limit = 89.0_f32.to_radians();
+        self.pitch = self.pitch.clamp(-pitch_limit, pitch_limit);
+    }
+
+    fn update_movement(&mut self, forward: f32, right: f32, up: f32, delta_time: f32, sprint: bool) {
+        let speed = if sprint {
+            self.move_speed * 2.5
+        } else {
+            self.move_speed
+        };
+
+        let forward_dir = self.get_forward();
+        let right_dir = self.get_right();
+
+        let forward_xz = Vec3::new(forward_dir.x, 0.0, forward_dir.z).normalize_or_zero();
+        let right_xz = Vec3::new(right_dir.x, 0.0, right_dir.z).normalize_or_zero();
+
+        self.position += forward_xz * forward * speed * delta_time;
+        self.position += right_xz * right * speed * delta_time;
+        self.position.y += up * speed * delta_time;
+    }
+
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// Movement key state
+#[derive(Default)]
+struct MovementKeys {
+    forward: bool,
+    backward: bool,
+    left: bool,
+    right: bool,
+    up: bool,
+    down: bool,
+    sprint: bool,
+}
+
+/// Cannon aiming key state (for smooth continuous movement)
+#[derive(Default)]
+struct AimingKeys {
+    aim_up: bool,
+    aim_down: bool,
+    aim_left: bool,
+    aim_right: bool,
+}
+
+// ============================================================================
+// FIRST-PERSON PLAYER CONTROLLER (Phase 1)
+// ============================================================================
+
+/// Player physics constants
+const PLAYER_EYE_HEIGHT: f32 = 1.7;      // Eye height in meters
+const PLAYER_WALK_SPEED: f32 = 5.0;      // Walking speed in m/s
+const PLAYER_SPRINT_SPEED: f32 = 10.0;   // Sprinting speed in m/s
+const PLAYER_GRAVITY: f32 = 20.0;        // Gravity in m/s²
+const PLAYER_JUMP_VELOCITY: f32 = 8.0;   // Jump velocity in m/s
+const PLAYER_ACCELERATION: f32 = 50.0;   // Acceleration in m/s²
+const PLAYER_DECELERATION: f32 = 30.0;   // Deceleration when no input
+const COYOTE_TIME: f32 = 0.1;            // Time after leaving ground where jump is still allowed
+
+/// First-person player with physics-based movement
+struct Player {
+    /// Position of player's feet in world space
+    position: Vec3,
+    /// Horizontal velocity (XZ plane)
+    velocity: Vec3,
+    /// Vertical velocity (for jumping/falling)
+    vertical_velocity: f32,
+    /// Whether player is currently on the ground
+    is_grounded: bool,
+    /// Coyote time remaining (for forgiving jump timing)
+    coyote_time_remaining: f32,
+    /// Whether jump was requested (consumed when jump happens)
+    jump_requested: bool,
+}
+
+impl Default for Player {
+    fn default() -> Self {
+        Self {
+            // Start at a reasonable position on the terrain
+            position: Vec3::new(0.0, 15.0, 30.0),
+            velocity: Vec3::ZERO,
+            vertical_velocity: 0.0,
+            is_grounded: false,
+            coyote_time_remaining: 0.0,
+            jump_requested: false,
+        }
+    }
+}
+
+impl Player {
+    /// Get the camera position (player's eye level)
+    fn get_eye_position(&self) -> Vec3 {
+        self.position + Vec3::new(0.0, PLAYER_EYE_HEIGHT, 0.0)
+    }
+    
+    /// Request a jump (will be processed in update)
+    fn request_jump(&mut self) {
+        self.jump_requested = true;
+    }
+    
+    /// Check if can currently jump
+    fn can_jump(&self) -> bool {
+        self.is_grounded || self.coyote_time_remaining > 0.0
+    }
+    
+    /// Update player physics
+    fn update(&mut self, movement: &MovementKeys, camera_yaw: f32, delta_time: f32) {
+        // Clamp delta time to prevent physics explosion
+        let dt = delta_time.clamp(0.0001, 0.1);
+        
+        // === HORIZONTAL MOVEMENT ===
+        // Calculate forward/right directions from camera yaw (XZ plane only)
+        let forward = Vec3::new(camera_yaw.sin(), 0.0, -camera_yaw.cos()).normalize();
+        let right = Vec3::new(-forward.z, 0.0, forward.x).normalize();
+        
+        // Get input direction
+        let forward_input = if movement.forward { 1.0 } else { 0.0 }
+            - if movement.backward { 1.0 } else { 0.0 };
+        let right_input = if movement.right { 1.0 } else { 0.0 }
+            - if movement.left { 1.0 } else { 0.0 };
+        
+        let input_dir = (forward * forward_input + right * right_input).normalize_or_zero();
+        
+        // Target speed based on sprint state
+        let target_speed = if movement.sprint {
+            PLAYER_SPRINT_SPEED
+        } else {
+            PLAYER_WALK_SPEED
+        };
+        
+        let target_velocity = input_dir * target_speed;
+        
+        // Accelerate or decelerate
+        let has_input = input_dir.length_squared() > 0.001;
+        if has_input {
+            // Accelerate toward target
+            let velocity_diff = target_velocity - self.velocity;
+            let accel_amount = PLAYER_ACCELERATION * dt;
+            
+            if velocity_diff.length() <= accel_amount {
+                self.velocity = target_velocity;
+            } else {
+                self.velocity += velocity_diff.normalize() * accel_amount;
+            }
+        } else {
+            // Decelerate to stop
+            let speed = self.velocity.length();
+            if speed > 0.001 {
+                let decel_amount = PLAYER_DECELERATION * dt;
+                if speed <= decel_amount {
+                    self.velocity = Vec3::ZERO;
+                } else {
+                    self.velocity -= self.velocity.normalize() * decel_amount;
+                }
+            } else {
+                self.velocity = Vec3::ZERO;
+            }
+        }
+        
+        // Apply horizontal movement
+        self.position += self.velocity * dt;
+        
+        // === VERTICAL MOVEMENT (GRAVITY & JUMPING) ===
+        
+        // Handle jump request
+        if self.jump_requested {
+            if self.can_jump() {
+                self.vertical_velocity = PLAYER_JUMP_VELOCITY;
+                self.is_grounded = false;
+                self.coyote_time_remaining = 0.0;
+            }
+            self.jump_requested = false;
+        }
+        
+        // Apply gravity
+        self.vertical_velocity -= PLAYER_GRAVITY * dt;
+        
+        // Apply vertical velocity
+        self.position.y += self.vertical_velocity * dt;
+        
+        // Update coyote time
+        if !self.is_grounded {
+            self.coyote_time_remaining = (self.coyote_time_remaining - dt).max(0.0);
+        }
+        
+        // === GROUND COLLISION ===
+        let ground_height = terrain_height_at(self.position.x, self.position.z, 0.0);
+        
+        if self.position.y <= ground_height {
+            // Landed on ground
+            self.position.y = ground_height;
+            self.vertical_velocity = 0.0;
+            
+            if !self.is_grounded {
+                self.is_grounded = true;
+                self.coyote_time_remaining = COYOTE_TIME;
+            }
+        } else {
+            // In the air
+            if self.is_grounded {
+                // Just left the ground - start coyote time
+                self.is_grounded = false;
+                self.coyote_time_remaining = COYOTE_TIME;
+            }
+        }
+    }
+}
+
+// ============================================================================
+// BUILDER MODE (Fallout 4-style building system)
+// ============================================================================
+
+/// Build commands for undo/redo system
+#[derive(Clone)]
+enum BuildCommand {
+    /// Place a single prism at coordinates
+    Place { coord: (i32, i32, i32), material: u8 },
+    /// Remove a prism from coordinates (stores material for redo)
+    Remove { coord: (i32, i32, i32), material: u8 },
+    /// Batch of commands (for paste operations)
+    Batch { commands: Vec<BuildCommand> },
+}
+
+/// Builder mode state machine for Fallout 4-style building
+struct BuilderMode {
+    /// Whether builder mode is active (B key toggles)
+    enabled: bool,
+    /// Current cursor position in axial coordinates (q, r, level)
+    cursor_coord: Option<(i32, i32, i32)>,
+    /// Currently selected material (1-8 keys)
+    selected_material: u8,
+    /// Current build height level (scroll wheel adjusts)
+    build_level: i32,
+    /// Ghost preview visibility
+    show_preview: bool,
+    
+    // Advanced features
+    /// Clipboard for copy/paste (relative coordinates)
+    clipboard: Vec<((i32, i32, i32), u8)>,
+    /// Undo stack
+    undo_stack: Vec<BuildCommand>,
+    /// Redo stack
+    redo_stack: Vec<BuildCommand>,
+    /// Rotation for paste (0, 1, 2, 3 = 0°, 60°, 120°, 180° for hex)
+    paste_rotation: u8,
+    /// Ctrl key held
+    ctrl_held: bool,
+}
+
+impl Default for BuilderMode {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            cursor_coord: None,
+            selected_material: 0, // Stone gray
+            build_level: 0,
+            show_preview: true,
+            clipboard: Vec::new(),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            paste_rotation: 0,
+            ctrl_held: false,
+        }
+    }
+}
+
+impl BuilderMode {
+    /// Toggle builder mode on/off
+    fn toggle(&mut self) {
+        self.enabled = !self.enabled;
+        if self.enabled {
+            println!("[Builder Mode] ENABLED - Left-click to place, Right-click to remove");
+            println!("  Materials: 1-8 | Scroll: height | Ctrl+Z: undo | Ctrl+C/V: copy/paste");
+        } else {
+            println!("[Builder Mode] DISABLED");
+        }
+    }
+    
+    /// Select material by index (0-7)
+    fn select_material(&mut self, material: u8) {
+        self.selected_material = material.min(7);
+        let names = ["Stone Gray", "Stone Light", "Stone Dark", "Wood Brown", 
+                     "Wood Light", "Wood Dark", "Metal Iron", "Metal Bronze"];
+        println!("[Builder Mode] Material: {} ({})", self.selected_material + 1, names[self.selected_material as usize]);
+    }
+    
+    /// Adjust build height level
+    fn adjust_level(&mut self, delta: i32) {
+        self.build_level = (self.build_level + delta).max(0);
+        println!("[Builder Mode] Build level: {}", self.build_level);
+    }
+    
+    /// Execute undo
+    fn undo(&mut self, grid: &mut battle_tok_engine::render::HexPrismGrid) {
+        if let Some(cmd) = self.undo_stack.pop() {
+            let redo_cmd = self.execute_inverse(&cmd, grid);
+            self.redo_stack.push(redo_cmd);
+            println!("[Builder Mode] Undo");
+        }
+    }
+    
+    /// Execute redo
+    fn redo(&mut self, grid: &mut battle_tok_engine::render::HexPrismGrid) {
+        if let Some(cmd) = self.redo_stack.pop() {
+            let undo_cmd = self.execute_command(&cmd, grid);
+            self.undo_stack.push(undo_cmd);
+            println!("[Builder Mode] Redo");
+        }
+    }
+    
+    /// Execute a build command and return its inverse for undo
+    fn execute_command(&self, cmd: &BuildCommand, grid: &mut battle_tok_engine::render::HexPrismGrid) -> BuildCommand {
+        match cmd {
+            BuildCommand::Place { coord, material } => {
+                let prism = battle_tok_engine::render::HexPrism::new(
+                    battle_tok_engine::render::hex_prism::DEFAULT_HEX_HEIGHT,
+                    battle_tok_engine::render::hex_prism::DEFAULT_HEX_RADIUS,
+                    *material,
+                );
+                grid.insert(coord.0, coord.1, coord.2, prism);
+                BuildCommand::Remove { coord: *coord, material: *material }
+            }
+            BuildCommand::Remove { coord, material } => {
+                grid.remove(coord.0, coord.1, coord.2);
+                BuildCommand::Place { coord: *coord, material: *material }
+            }
+            BuildCommand::Batch { commands } => {
+                let inverse_cmds: Vec<_> = commands.iter()
+                    .map(|c| self.execute_command(c, grid))
+                    .collect();
+                BuildCommand::Batch { commands: inverse_cmds }
+            }
+        }
+    }
+    
+    /// Execute inverse of a command (for undo)
+    fn execute_inverse(&self, cmd: &BuildCommand, grid: &mut battle_tok_engine::render::HexPrismGrid) -> BuildCommand {
+        match cmd {
+            BuildCommand::Place { coord, material } => {
+                grid.remove(coord.0, coord.1, coord.2);
+                BuildCommand::Place { coord: *coord, material: *material }
+            }
+            BuildCommand::Remove { coord, material } => {
+                let prism = battle_tok_engine::render::HexPrism::new(
+                    battle_tok_engine::render::hex_prism::DEFAULT_HEX_HEIGHT,
+                    battle_tok_engine::render::hex_prism::DEFAULT_HEX_RADIUS,
+                    *material,
+                );
+                grid.insert(coord.0, coord.1, coord.2, prism);
+                BuildCommand::Remove { coord: *coord, material: *material }
+            }
+            BuildCommand::Batch { commands } => {
+                // Execute in reverse order for batch
+                let inverse_cmds: Vec<_> = commands.iter().rev()
+                    .map(|c| self.execute_inverse(c, grid))
+                    .collect();
+                BuildCommand::Batch { commands: inverse_cmds }
+            }
+        }
+    }
+    
+    /// Place a prism at the cursor position
+    fn place_at_cursor(&mut self, grid: &mut battle_tok_engine::render::HexPrismGrid) -> bool {
+        if let Some(coord) = self.cursor_coord {
+            // Check if position is already occupied
+            if grid.contains(coord.0, coord.1, coord.2) {
+                return false;
+            }
+            
+            let cmd = BuildCommand::Place { coord, material: self.selected_material };
+            self.execute_command(&cmd, grid);
+            self.undo_stack.push(cmd);
+            self.redo_stack.clear(); // Clear redo on new action
+            println!("[Builder Mode] Placed prism at ({}, {}, {})", coord.0, coord.1, coord.2);
+            true
+        } else {
+            false
+        }
+    }
+    
+    /// Remove prism at cursor position  
+    fn remove_at_cursor(&mut self, grid: &mut battle_tok_engine::render::HexPrismGrid) -> bool {
+        if let Some(coord) = self.cursor_coord {
+            if let Some(prism) = grid.get(coord.0, coord.1, coord.2) {
+                let material = prism.material;
+                let cmd = BuildCommand::Remove { coord, material };
+                self.execute_command(&cmd, grid);
+                self.undo_stack.push(cmd);
+                self.redo_stack.clear();
+                println!("[Builder Mode] Removed prism at ({}, {}, {})", coord.0, coord.1, coord.2);
+                return true;
+            }
+        }
+        false
+    }
+    
+    /// Copy prisms in area around cursor to clipboard
+    fn copy_area(&mut self, grid: &battle_tok_engine::render::HexPrismGrid, radius: i32) {
+        self.clipboard.clear();
+        if let Some(center) = self.cursor_coord {
+            for (coord, prism) in grid.iter() {
+                let dq = (coord.0 - center.0).abs();
+                let dr = (coord.1 - center.1).abs();
+                if dq <= radius && dr <= radius {
+                    // Store relative coordinates
+                    let rel = (coord.0 - center.0, coord.1 - center.1, coord.2 - center.2);
+                    self.clipboard.push((rel, prism.material));
+                }
+            }
+            println!("[Builder Mode] Copied {} prisms", self.clipboard.len());
+        }
+    }
+    
+    /// Paste clipboard at cursor
+    fn paste(&mut self, grid: &mut battle_tok_engine::render::HexPrismGrid) -> bool {
+        if self.clipboard.is_empty() {
+            return false;
+        }
+        
+        if let Some(center) = self.cursor_coord {
+            let mut commands = Vec::new();
+            for (rel, material) in &self.clipboard {
+                // Apply rotation (hex rotation by 60 degrees)
+                let (rq, rr) = self.rotate_hex(*rel, self.paste_rotation);
+                let coord = (center.0 + rq, center.1 + rr, center.2 + rel.2);
+                
+                if !grid.contains(coord.0, coord.1, coord.2) {
+                    commands.push(BuildCommand::Place { coord, material: *material });
+                }
+            }
+            
+            if !commands.is_empty() {
+                let batch = BuildCommand::Batch { commands: commands.clone() };
+                for cmd in &commands {
+                    self.execute_command(cmd, grid);
+                }
+                self.undo_stack.push(batch);
+                self.redo_stack.clear();
+                println!("[Builder Mode] Pasted {} prisms", commands.len());
+                return true;
+            }
+        }
+        false
+    }
+    
+    /// Rotate hex coordinates by 60 degrees * rotation_steps
+    fn rotate_hex(&self, rel: (i32, i32, i32), steps: u8) -> (i32, i32) {
+        let mut q = rel.0;
+        let mut r = rel.1;
+        for _ in 0..(steps % 6) {
+            // Rotate 60 degrees clockwise in axial coordinates
+            // (q, r) -> (-r, q + r)
+            let new_q = -r;
+            let new_r = q + r;
+            q = new_q;
+            r = new_r;
+        }
+        (q, r)
+    }
+    
+    /// Rotate paste selection
+    fn rotate_selection(&mut self) {
+        self.paste_rotation = (self.paste_rotation + 1) % 6;
+        println!("[Builder Mode] Rotation: {}°", self.paste_rotation as i32 * 60);
+    }
+}
+
+// ============================================================================
+// BUILD TOOLBAR (Minecraft-style hotbar with shape icons)
+// ============================================================================
+
+/// Shape names for display
+const SHAPE_NAMES: [&str; 7] = ["Cube", "Cylinder", "Sphere", "Dome", "Arch", "Wedge", "Bridge"];
+
+/// Grid size for block placement snapping
+const BLOCK_GRID_SIZE: f32 = 1.0;
+/// Snap distance - blocks within this distance snap together
+const BLOCK_SNAP_DISTANCE: f32 = 0.3;
+/// Physics support check interval in seconds
+const PHYSICS_CHECK_INTERVAL: f32 = 5.0;
+
+/// Selected face for bridge tool
+#[derive(Clone, Copy, Debug)]
+struct SelectedFace {
+    /// Block ID
+    block_id: u32,
+    /// Face center position in world space
+    position: Vec3,
+    /// Face normal direction
+    normal: Vec3,
+    /// Face size (width, height)
+    size: (f32, f32),
+}
+
+/// Bridge tool state
+#[derive(Default)]
+struct BridgeTool {
+    /// First selected face
+    first_face: Option<SelectedFace>,
+    /// Second selected face (when both are set, can create bridge)
+    second_face: Option<SelectedFace>,
+    /// Whether in face selection mode
+    selecting: bool,
+}
+
+impl BridgeTool {
+    fn clear(&mut self) {
+        self.first_face = None;
+        self.second_face = None;
+    }
+    
+    fn select_face(&mut self, face: SelectedFace) {
+        if self.first_face.is_none() {
+            self.first_face = Some(face);
+            println!("[Bridge] First face selected at ({:.1}, {:.1}, {:.1})", 
+                face.position.x, face.position.y, face.position.z);
+        } else if self.second_face.is_none() {
+            self.second_face = Some(face);
+            println!("[Bridge] Second face selected - ready to create bridge!");
+        }
+    }
+    
+    fn is_ready(&self) -> bool {
+        self.first_face.is_some() && self.second_face.is_some()
+    }
+}
+
+/// Build toolbar for selecting building block shapes
+struct BuildToolbar {
+    /// Whether the toolbar is visible
+    visible: bool,
+    /// Currently selected shape index (0-6, includes Bridge)
+    selected_shape: usize,
+    /// Available shapes (Bridge is special - handled differently)
+    shapes: [BuildingBlockShape; 6],
+    /// Currently selected material (0-9)
+    selected_material: u8,
+    /// Current build height level (adjusted with scroll/middle mouse)
+    build_height: f32,
+    /// Preview position (where block will be placed)
+    preview_position: Option<Vec3>,
+    /// Whether to show the preview
+    show_preview: bool,
+    /// Bridge tool state (for shape 7)
+    bridge_tool: BridgeTool,
+    /// Time since last physics support check
+    physics_check_timer: f32,
+}
+
+impl Default for BuildToolbar {
+    fn default() -> Self {
+        Self {
+            visible: false,
+            selected_shape: 0,
+            shapes: [
+                BuildingBlockShape::Cube { half_extents: Vec3::splat(0.5) },
+                BuildingBlockShape::Cylinder { radius: 0.5, height: 1.0 },
+                BuildingBlockShape::Sphere { radius: 0.5 },
+                BuildingBlockShape::Dome { radius: 0.5 },
+                BuildingBlockShape::Arch { width: 1.0, height: 1.5, depth: 0.3 },
+                BuildingBlockShape::Wedge { size: Vec3::ONE },
+            ],
+            selected_material: 0,
+            build_height: 0.0,
+            preview_position: None,
+            show_preview: true,
+            bridge_tool: BridgeTool::default(),
+            physics_check_timer: 0.0,
+        }
+    }
+}
+
+impl BuildToolbar {
+    /// Toggle visibility
+    fn toggle(&mut self) {
+        self.visible = !self.visible;
+        if self.visible {
+            println!("=== BUILD TOOLBAR ===");
+            println!("Tab/Up/Down: Change shape | 1-7: Select shape");
+            println!("Scroll: Adjust height | Middle-click: Material");
+            println!("Left-click: Place block | Double-click: Merge");
+            println!("Shape 7 (Bridge): Click 2 faces to connect them!");
+        }
+        // Clear bridge selection when closing
+        if !self.visible {
+            self.bridge_tool.clear();
+        }
+    }
+    
+    /// Check if bridge tool is selected
+    fn is_bridge_mode(&self) -> bool {
+        self.selected_shape == 6
+    }
+    
+    /// Cycle to next shape
+    fn next_shape(&mut self) {
+        self.selected_shape = (self.selected_shape + 1) % 7;
+        self.on_shape_changed();
+    }
+    
+    /// Cycle to previous shape
+    fn prev_shape(&mut self) {
+        self.selected_shape = if self.selected_shape == 0 { 6 } else { self.selected_shape - 1 };
+        self.on_shape_changed();
+    }
+    
+    /// Select a specific shape by index (0-6)
+    fn select_shape(&mut self, index: usize) {
+        if index < 7 {
+            self.selected_shape = index;
+            self.on_shape_changed();
+        }
+    }
+    
+    /// Called when shape changes
+    fn on_shape_changed(&mut self) {
+        println!("[BuildToolbar] Selected: {}", SHAPE_NAMES[self.selected_shape]);
+        if self.is_bridge_mode() {
+            self.bridge_tool.selecting = true;
+            self.bridge_tool.clear();
+            println!("[Bridge Mode] Click on block faces to select them");
+        } else {
+            self.bridge_tool.selecting = false;
+        }
+    }
+    
+    /// Get the currently selected shape (returns Cube for Bridge mode)
+    fn get_selected_shape(&self) -> BuildingBlockShape {
+        if self.selected_shape < 6 {
+            self.shapes[self.selected_shape]
+        } else {
+            // Bridge mode - no direct shape
+            BuildingBlockShape::Cube { half_extents: Vec3::splat(0.5) }
+        }
+    }
+    
+    /// Adjust build height
+    fn adjust_height(&mut self, delta: f32) {
+        self.build_height += delta * BLOCK_GRID_SIZE;
+        println!("[BuildToolbar] Height: {:.1}", self.build_height);
+    }
+    
+    /// Reset build height to 0
+    fn reset_height(&mut self) {
+        self.build_height = 0.0;
+        println!("[BuildToolbar] Height reset to 0");
+    }
+    
+    /// Change material
+    fn next_material(&mut self) {
+        self.selected_material = (self.selected_material + 1) % 10;
+        println!("[BuildToolbar] Material: {}", self.selected_material);
+    }
+    
+    fn prev_material(&mut self) {
+        self.selected_material = if self.selected_material == 0 { 9 } else { self.selected_material - 1 };
+        println!("[BuildToolbar] Material: {}", self.selected_material);
+    }
+}
+
+// ============================================================================
+// START OVERLAY (Click to start - for Windows focus)
+// ============================================================================
+
+/// Startup overlay that grabs focus on first click
+struct StartOverlay {
+    /// Whether the overlay is visible (true until first interaction)
+    visible: bool,
+}
+
+impl Default for StartOverlay {
+    fn default() -> Self {
+        // Start visible on all platforms to capture cursor focus
+        Self {
+            visible: true,
+        }
+    }
+}
+
+// ============================================================================
+// MERGED MESH GPU BUFFERS
+// ============================================================================
+
 /// GPU buffers for a merged mesh (baked from SDF)
 struct MergedMeshBuffers {
     /// Unique ID matching the MergedMesh
-    _id: u32,
+    id: u32,
     /// Vertex buffer
     vertex_buffer: wgpu::Buffer,
     /// Index buffer
@@ -117,6 +959,2200 @@ struct MergedMeshBuffers {
     /// Number of indices
     index_count: u32,
 }
+
+/// Cannon state for aiming and firing (US-017: Cannon aiming controls)
+struct Cannon {
+    position: Vec3,
+    barrel_elevation: f32,        // Current elevation in radians (-10 to 45 degrees)
+    barrel_azimuth: f32,          // Current azimuth in radians (-45 to 45 degrees)
+    target_elevation: f32,        // Target elevation for smooth interpolation
+    target_azimuth: f32,          // Target azimuth for smooth interpolation
+    barrel_length: f32,
+    muzzle_velocity: f32,
+    projectile_mass: f32,
+}
+
+/// Smoothing factor for cannon movement (higher = faster response)
+const CANNON_SMOOTHING: f32 = 0.15;
+/// Cannon rotation speed in radians per second
+const CANNON_ROTATION_SPEED: f32 = 1.0; // ~57 degrees per second
+
+// ============================================================================
+// PHYSICS-BASED DESTRUCTION SYSTEM
+// ============================================================================
+
+/// Gravity constant (m/s²)
+const GRAVITY: f32 = 9.81;
+
+/// A hex-prism that is falling due to lost support
+#[derive(Clone)]
+struct FallingPrism {
+    /// Original grid coordinates (for tracking)
+    coord: (i32, i32, i32),
+    /// Current world position
+    position: Vec3,
+    /// Current velocity
+    velocity: Vec3,
+    /// Angular velocity for tumbling effect
+    angular_velocity: Vec3,
+    /// Current rotation angles
+    rotation: Vec3,
+    /// Material type (for rendering)
+    material: u8,
+    /// Time alive (for particle spawning on impact)
+    lifetime: f32,
+    /// Whether this prism has hit the ground
+    grounded: bool,
+}
+
+impl FallingPrism {
+    fn new(coord: (i32, i32, i32), position: Vec3, material: u8) -> Self {
+        // Add slight random velocity for natural-looking collapse
+        let rand_x = ((coord.0 as f32 * 12.9898).sin() * 43758.5453).fract() - 0.5;
+        let rand_z = ((coord.1 as f32 * 78.233).sin() * 43758.5453).fract() - 0.5;
+        
+        Self {
+            coord,
+            position,
+            velocity: Vec3::new(rand_x * 2.0, 0.0, rand_z * 2.0),
+            angular_velocity: Vec3::new(rand_x * 5.0, rand_z * 3.0, rand_x * 4.0),
+            rotation: Vec3::ZERO,
+            material,
+            lifetime: 0.0,
+            grounded: false,
+        }
+    }
+    
+    /// Update physics simulation
+    fn update(&mut self, delta_time: f32) {
+        if self.grounded {
+            return;
+        }
+        
+        self.lifetime += delta_time;
+        
+        // Apply gravity
+        self.velocity.y -= GRAVITY * delta_time;
+        
+        // Update position
+        self.position += self.velocity * delta_time;
+        
+        // Update rotation (tumbling)
+        self.rotation += self.angular_velocity * delta_time;
+        
+        // Check ground collision (simple floor at y=0 or terrain)
+        let ground_height = terrain_height_at(self.position.x, self.position.z, 0.0);
+        if self.position.y < ground_height + 0.1 {
+            self.position.y = ground_height + 0.1;
+            self.grounded = true;
+            self.velocity = Vec3::ZERO;
+        }
+    }
+}
+
+/// A debris particle from destroyed prisms
+#[derive(Clone)]
+struct DebrisParticle {
+    position: Vec3,
+    velocity: Vec3,
+    /// Size of the particle (radius)
+    size: f32,
+    /// Color from source material
+    color: [f32; 4],
+    /// Time remaining before despawn
+    lifetime: f32,
+    /// Whether grounded (stopped moving)
+    grounded: bool,
+}
+
+impl DebrisParticle {
+    fn new(position: Vec3, velocity: Vec3, material: u8) -> Self {
+        // Random size
+        let size = 0.03 + (position.x * 12.9898).sin().abs() * 0.05;
+        
+        // Color based on material
+        let color = get_material_color(material);
+        
+        Self {
+            position,
+            velocity,
+            size,
+            color,
+            lifetime: 3.0 + (position.z * 78.233).sin().abs() * 2.0, // 3-5 seconds
+            grounded: false,
+        }
+    }
+    
+    fn update(&mut self, delta_time: f32) {
+        if self.grounded {
+            self.lifetime -= delta_time;
+            return;
+        }
+        
+        self.lifetime -= delta_time;
+        
+        // Apply gravity
+        self.velocity.y -= GRAVITY * delta_time;
+        
+        // Air resistance
+        self.velocity *= 0.99;
+        
+        // Update position
+        self.position += self.velocity * delta_time;
+        
+        // Ground collision
+        let ground_height = terrain_height_at(self.position.x, self.position.z, 0.0);
+        if self.position.y < ground_height + self.size {
+            self.position.y = ground_height + self.size;
+            // Bounce with energy loss
+            if self.velocity.y.abs() > 0.5 {
+                self.velocity.y *= -0.3;
+                self.velocity.x *= 0.8;
+                self.velocity.z *= 0.8;
+            } else {
+                self.grounded = true;
+                self.velocity = Vec3::ZERO;
+            }
+        }
+    }
+    
+    fn is_alive(&self) -> bool {
+        self.lifetime > 0.0
+    }
+}
+
+/// Get material color for debris
+fn get_material_color(material: u8) -> [f32; 4] {
+    match material {
+        0 => [0.6, 0.6, 0.6, 1.0],   // Stone gray
+        1 => [0.7, 0.5, 0.3, 1.0],   // Wood brown
+        2 => [0.4, 0.4, 0.45, 1.0],  // Stone dark
+        3 => [0.8, 0.7, 0.5, 1.0],   // Sandstone
+        4 => [0.3, 0.3, 0.35, 1.0],  // Slate
+        5 => [0.6, 0.3, 0.2, 1.0],   // Brick
+        6 => [0.2, 0.4, 0.2, 1.0],   // Moss
+        7 => [0.5, 0.5, 0.6, 1.0],   // Metal
+        _ => [0.5, 0.5, 0.5, 1.0],   // Default gray
+    }
+}
+
+/// Spawn debris particles from a destroyed/falling prism
+fn spawn_debris(position: Vec3, material: u8, count: usize) -> Vec<DebrisParticle> {
+    let mut particles = Vec::with_capacity(count);
+    
+    for i in 0..count {
+        // Spread particles in a sphere
+        let angle = (i as f32 / count as f32) * std::f32::consts::TAU;
+        let height_offset = ((i as f32 * 0.618).fract() - 0.5) * 0.3;
+        let speed = 2.0 + (i as f32 * 1.618).fract() * 4.0;
+        
+        let velocity = Vec3::new(
+            angle.cos() * speed,
+            speed * 0.5 + (i as f32 * 0.414).fract() * 3.0,
+            angle.sin() * speed,
+        );
+        
+        let spawn_pos = position + Vec3::new(
+            (angle + 0.5).cos() * 0.1,
+            height_offset,
+            (angle + 0.5).sin() * 0.1,
+        );
+        
+        particles.push(DebrisParticle::new(spawn_pos, velocity, material));
+    }
+    
+    particles
+}
+
+impl Default for Cannon {
+    fn default() -> Self {
+        let default_elevation = 30.0_f32.to_radians(); // 30 degrees up
+        // Position cannon on the attacker platform - sample terrain height at that location
+        let cannon_x = 0.0;
+        let cannon_z = 25.0;
+        let cannon_y = terrain_height_at(cannon_x, cannon_z, 0.0) + 0.5; // Slightly above terrain
+        Self {
+            position: Vec3::new(cannon_x, cannon_y, cannon_z),
+            barrel_elevation: default_elevation,
+            barrel_azimuth: 0.0,
+            target_elevation: default_elevation,
+            target_azimuth: 0.0,
+            barrel_length: 4.0,
+            muzzle_velocity: 50.0, // m/s
+            projectile_mass: 5.0,  // kg
+        }
+    }
+}
+
+impl Cannon {
+    /// Get the direction the barrel is pointing
+    fn get_barrel_direction(&self) -> Vec3 {
+        // Start with forward direction (-Z in our coordinate system)
+        let base_dir = Vec3::new(0.0, 0.0, -1.0);
+
+        // Apply elevation (rotation around X)
+        let cos_elev = self.barrel_elevation.cos();
+        let sin_elev = self.barrel_elevation.sin();
+        let elevated = Vec3::new(
+            base_dir.x,
+            base_dir.y * cos_elev - base_dir.z * sin_elev,
+            base_dir.y * sin_elev + base_dir.z * cos_elev,
+        );
+
+        // Apply azimuth (rotation around Y)
+        let cos_az = self.barrel_azimuth.cos();
+        let sin_az = self.barrel_azimuth.sin();
+        Vec3::new(
+            elevated.x * cos_az + elevated.z * sin_az,
+            elevated.y,
+            -elevated.x * sin_az + elevated.z * cos_az,
+        )
+        .normalize()
+    }
+
+    /// Get the position of the barrel tip (muzzle)
+    fn get_muzzle_position(&self) -> Vec3 {
+        self.position + self.get_barrel_direction() * self.barrel_length
+    }
+
+    /// Spawn a projectile from the cannon
+    fn fire(&self) -> Projectile {
+        let muzzle_pos = self.get_muzzle_position();
+        let direction = self.get_barrel_direction();
+        Projectile::spawn(muzzle_pos, direction, self.muzzle_velocity, self.projectile_mass)
+    }
+
+    /// Adjust target elevation (smooth movement toward this target)
+    fn adjust_elevation(&mut self, delta: f32) {
+        self.target_elevation += delta;
+        let min_elev = -10.0_f32.to_radians();
+        let max_elev = 45.0_f32.to_radians();
+        self.target_elevation = self.target_elevation.clamp(min_elev, max_elev);
+    }
+
+    /// Adjust target azimuth (smooth movement toward this target)
+    fn adjust_azimuth(&mut self, delta: f32) {
+        self.target_azimuth += delta;
+        let max_az = 45.0_f32.to_radians();
+        self.target_azimuth = self.target_azimuth.clamp(-max_az, max_az);
+    }
+
+    /// Update cannon for smooth movement interpolation (call each frame)
+    fn update(&mut self, delta_time: f32) {
+        // Exponential smoothing toward target angles
+        let smoothing = 1.0 - (1.0 - CANNON_SMOOTHING).powf(delta_time * 60.0);
+        self.barrel_elevation += (self.target_elevation - self.barrel_elevation) * smoothing;
+        self.barrel_azimuth += (self.target_azimuth - self.barrel_azimuth) * smoothing;
+    }
+
+    /// Check if cannon is currently moving toward target
+    fn is_aiming(&self) -> bool {
+        let elev_diff = (self.target_elevation - self.barrel_elevation).abs();
+        let az_diff = (self.target_azimuth - self.barrel_azimuth).abs();
+        elev_diff > 0.001 || az_diff > 0.001
+    }
+}
+
+// ============================================================================
+// MESH GENERATION
+// ============================================================================
+
+struct Mesh {
+    vertices: Vec<Vertex>,
+    indices: Vec<u32>,
+}
+
+impl Mesh {
+    fn new() -> Self {
+        Self {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+        }
+    }
+
+    fn merge(&mut self, other: &Mesh) {
+        let base_idx = self.vertices.len() as u32;
+        self.vertices.extend_from_slice(&other.vertices);
+        self.indices.extend(other.indices.iter().map(|i| i + base_idx));
+    }
+}
+
+// ============================================================================
+// PROCEDURAL NOISE FOR TERRAIN (Builder Mode)
+// ============================================================================
+
+/// Simple hash function for noise generation
+fn hash_2d(x: f32, y: f32) -> f32 {
+    let n = (x * 127.1 + y * 311.7).sin() * 43758.5453;
+    n.fract()
+}
+
+/// Smoothstep interpolation
+fn smoothstep(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// 2D value noise for terrain height
+fn noise_2d(x: f32, y: f32) -> f32 {
+    let ix = x.floor();
+    let iy = y.floor();
+    let fx = x - ix;
+    let fy = y - iy;
+    
+    // Four corners
+    let v00 = hash_2d(ix, iy);
+    let v10 = hash_2d(ix + 1.0, iy);
+    let v01 = hash_2d(ix, iy + 1.0);
+    let v11 = hash_2d(ix + 1.0, iy + 1.0);
+    
+    // Bilinear interpolation with smoothstep
+    let sx = smoothstep(fx);
+    let sy = smoothstep(fy);
+    
+    let v0 = v00 + sx * (v10 - v00);
+    let v1 = v01 + sx * (v11 - v01);
+    
+    v0 + sy * (v1 - v0)
+}
+
+/// Fractal Brownian Motion noise for natural terrain
+fn fbm_noise(x: f32, z: f32, octaves: u32) -> f32 {
+    let mut value = 0.0;
+    let mut amplitude = 1.0;
+    let mut frequency = 1.0;
+    let mut max_value = 0.0;
+    
+    for _ in 0..octaves {
+        value += amplitude * noise_2d(x * frequency, z * frequency);
+        max_value += amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+    
+    value / max_value
+}
+
+/// Ridged noise for rocky mountain formations
+fn ridged_noise(x: f32, z: f32, octaves: u32) -> f32 {
+    let mut value = 0.0;
+    let mut amplitude = 1.0;
+    let mut frequency = 1.0;
+    let mut max_value = 0.0;
+    
+    for _ in 0..octaves {
+        // Ridged: take absolute value and invert
+        let n = 1.0 - noise_2d(x * frequency, z * frequency).abs();
+        value += amplitude * n * n; // Square for sharper ridges
+        max_value += amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.2; // Slightly different scaling for variety
+    }
+    
+    value / max_value
+}
+
+/// Turbulent noise for detailed rocky surfaces
+fn turbulent_noise(x: f32, z: f32, octaves: u32) -> f32 {
+    let mut value = 0.0;
+    let mut amplitude = 1.0;
+    let mut frequency = 1.0;
+    let mut max_value = 0.0;
+    
+    for _ in 0..octaves {
+        value += amplitude * noise_2d(x * frequency, z * frequency).abs();
+        max_value += amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+    
+    value / max_value
+}
+
+/// Water level constant (height below which is water)
+const WATER_LEVEL: f32 = 0.5;
+
+/// Terrain generation parameters - adjustable via UI
+/// Values scaled from 0.0 to 1.0 for UI sliders
+#[derive(Clone, Copy)]
+struct TerrainParams {
+    // Overall height multiplier (0.0 = flat, 1.0 = full height)
+    pub height_scale: f32,
+    
+    // Mountains at edges (0.0 = none, 1.0 = dramatic peaks)
+    pub mountains: f32,
+    
+    // Rocky formations (0.0 = smooth, 1.0 = very rocky)
+    pub rocks: f32,
+    
+    // Rolling hills (0.0 = flat, 1.0 = hilly)
+    pub hills: f32,
+    
+    // Surface detail (0.0 = smooth, 1.0 = detailed)
+    pub detail: f32,
+    
+    // Water level (0.0 = no water, 1.0 = high water)
+    pub water: f32,
+}
+
+impl Default for TerrainParams {
+    fn default() -> Self {
+        // User's preferred settings: H=58% M=52% R=37% L=100% D=100% W=46%
+        Self {
+            height_scale: 0.58,  // 58% of max height
+            mountains: 0.52,     // Strong mountains
+            rocks: 0.37,         // Medium rocky texture
+            hills: 1.0,          // Full rolling hills
+            detail: 1.0,         // Full surface detail
+            water: 0.46,         // 46% water level
+        }
+    }
+}
+
+/// Global terrain params - can be modified at runtime
+/// User's preferred settings: H=58% M=52% R=37% L=100% D=100% W=46%
+static mut TERRAIN_PARAMS: TerrainParams = TerrainParams {
+    height_scale: 0.58,
+    mountains: 0.52,
+    rocks: 0.37,
+    hills: 1.0,
+    detail: 1.0,
+    water: 0.46,
+};
+
+fn get_terrain_params() -> TerrainParams {
+    unsafe { TERRAIN_PARAMS }
+}
+
+// ============================================================================
+// ON-SCREEN UI SLIDER SYSTEM
+// ============================================================================
+
+/// A single UI slider for terrain editing
+#[derive(Clone, Copy)]
+struct UISlider {
+    /// Label for this slider
+    label: &'static str,
+    /// Screen position (pixels from top-left)
+    x: f32,
+    y: f32,
+    /// Slider dimensions
+    width: f32,
+    height: f32,
+    /// Current value (0.0 to 1.0)
+    value: f32,
+    /// Color of the slider bar
+    color: [f32; 4],
+}
+
+impl UISlider {
+    fn new(label: &'static str, x: f32, y: f32, value: f32, color: [f32; 4]) -> Self {
+        Self {
+            label,
+            x,
+            y,
+            width: 200.0,
+            height: 24.0,
+            value,
+            color,
+        }
+    }
+    
+    /// Check if a point is within this slider
+    fn contains(&self, px: f32, py: f32) -> bool {
+        px >= self.x && px <= self.x + self.width &&
+        py >= self.y && py <= self.y + self.height
+    }
+    
+    /// Get value from mouse X position within slider
+    fn value_from_x(&self, px: f32) -> f32 {
+        ((px - self.x) / self.width).clamp(0.0, 1.0)
+    }
+}
+
+/// The terrain editor UI panel
+struct TerrainEditorUI {
+    /// Whether the UI is visible
+    pub visible: bool,
+    /// Panel position
+    pub panel_x: f32,
+    pub panel_y: f32,
+    /// The sliders
+    pub sliders: [UISlider; 6],
+    /// Which slider is being dragged (-1 = none)
+    pub dragging_slider: i32,
+    /// Apply button bounds
+    pub apply_button: (f32, f32, f32, f32), // x, y, w, h
+}
+
+impl Default for TerrainEditorUI {
+    fn default() -> Self {
+        let params = get_terrain_params();
+        let panel_x = 20.0;
+        let panel_y = 80.0;
+        let spacing = 50.0; // More spacing to fit labels above sliders
+        
+        Self {
+            visible: false,
+            panel_x,
+            panel_y,
+            sliders: [
+                UISlider::new("Height", panel_x, panel_y, params.height_scale, [0.4, 0.7, 1.0, 1.0]),
+                UISlider::new("Mountains", panel_x, panel_y + spacing, params.mountains, [0.7, 0.5, 0.3, 1.0]),
+                UISlider::new("Rocks", panel_x, panel_y + spacing * 2.0, params.rocks, [0.6, 0.6, 0.6, 1.0]),
+                UISlider::new("Hills", panel_x, panel_y + spacing * 3.0, params.hills, [0.5, 0.8, 0.4, 1.0]),
+                UISlider::new("Detail", panel_x, panel_y + spacing * 4.0, params.detail, [0.8, 0.7, 0.3, 1.0]),
+                UISlider::new("Water", panel_x, panel_y + spacing * 5.0, params.water, [0.3, 0.6, 0.9, 1.0]),
+            ],
+            dragging_slider: -1,
+            apply_button: (panel_x, panel_y + spacing * 6.0 + 20.0, 200.0, 30.0),
+        }
+    }
+}
+
+impl TerrainEditorUI {
+    /// Toggle visibility
+    fn toggle(&mut self) {
+        self.visible = !self.visible;
+        if self.visible {
+            // Sync slider values with current terrain params
+            let params = get_terrain_params();
+            self.sliders[0].value = params.height_scale;
+            self.sliders[1].value = params.mountains;
+            self.sliders[2].value = params.rocks;
+            self.sliders[3].value = params.hills;
+            self.sliders[4].value = params.detail;
+            self.sliders[5].value = params.water;
+        }
+    }
+    
+    /// Handle mouse press, returns true if UI consumed the event
+    fn on_mouse_press(&mut self, x: f32, y: f32) -> bool {
+        if !self.visible {
+            return false;
+        }
+        
+        // Check sliders
+        for (i, slider) in self.sliders.iter_mut().enumerate() {
+            if slider.contains(x, y) {
+                self.dragging_slider = i as i32;
+                slider.value = slider.value_from_x(x);
+                return true;
+            }
+        }
+        
+        // Check apply button
+        let (bx, by, bw, bh) = self.apply_button;
+        if x >= bx && x <= bx + bw && y >= by && y <= by + bh {
+            return true; // Will trigger apply in release
+        }
+        
+        false
+    }
+    
+    /// Handle mouse release, returns true if should rebuild terrain
+    fn on_mouse_release(&mut self, x: f32, y: f32) -> bool {
+        if !self.visible {
+            return false;
+        }
+        
+        let was_dragging = self.dragging_slider >= 0;
+        self.dragging_slider = -1;
+        
+        // Check apply button
+        let (bx, by, bw, bh) = self.apply_button;
+        if x >= bx && x <= bx + bw && y >= by && y <= by + bh {
+            // Apply changes to terrain
+            self.apply_to_terrain();
+            return true; // Trigger rebuild
+        }
+        
+        was_dragging
+    }
+    
+    /// Handle mouse drag
+    fn on_mouse_move(&mut self, x: f32, _y: f32) {
+        if self.dragging_slider >= 0 && self.dragging_slider < 6 {
+            let idx = self.dragging_slider as usize;
+            self.sliders[idx].value = self.sliders[idx].value_from_x(x);
+        }
+    }
+    
+    /// Apply slider values to terrain params
+    fn apply_to_terrain(&self) {
+        let params = TerrainParams {
+            height_scale: self.sliders[0].value,
+            mountains: self.sliders[1].value,
+            rocks: self.sliders[2].value,
+            hills: self.sliders[3].value,
+            detail: self.sliders[4].value,
+            water: self.sliders[5].value,
+        };
+        set_terrain_params(params);
+        println!("Applied terrain settings: H={:.0}% M={:.0}% R={:.0}% L={:.0}% D={:.0}% W={:.0}%",
+            params.height_scale * 100.0,
+            params.mountains * 100.0,
+            params.rocks * 100.0,
+            params.hills * 100.0,
+            params.detail * 100.0,
+            params.water * 100.0);
+    }
+    
+    /// Generate mesh for UI rendering (2D quads)
+    fn generate_ui_mesh(&self, screen_width: f32, screen_height: f32) -> Mesh {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        
+        if !self.visible {
+            return Mesh { vertices, indices };
+        }
+        
+        // Helper to convert screen coords to NDC
+        let to_ndc = |x: f32, y: f32| -> [f32; 3] {
+            [
+                (x / screen_width) * 2.0 - 1.0,
+                1.0 - (y / screen_height) * 2.0, // Y is flipped
+                0.0
+            ]
+        };
+        
+        // Slider labels (names)
+        let labels = ["HEIGHT", "MOUNTAIN", "ROCKS", "HILLS", "DETAIL", "WATER"];
+        let text_color = [0.9, 0.9, 0.9, 1.0]; // Light gray text
+        let title_color = [1.0, 0.9, 0.5, 1.0]; // Gold title
+        
+        // Draw panel background (wider for labels)
+        let panel_w = 280.0;
+        let panel_h = 340.0;
+        let bg_color = [0.12, 0.12, 0.18, 1.0]; // Dark panel
+        add_quad(&mut vertices, &mut indices, 
+            to_ndc(self.panel_x - 10.0, self.panel_y - 50.0),
+            to_ndc(self.panel_x + panel_w, self.panel_y - 50.0),
+            to_ndc(self.panel_x + panel_w, self.panel_y + panel_h),
+            to_ndc(self.panel_x - 10.0, self.panel_y + panel_h),
+            bg_color);
+        
+        // Draw title "TERRAIN"
+        draw_text(&mut vertices, &mut indices, "TERRAIN", 
+            self.panel_x + 80.0, self.panel_y - 35.0, 2.5, title_color, screen_width, screen_height);
+        
+        // Draw each slider with label
+        for (i, slider) in self.sliders.iter().enumerate() {
+            // Draw label above slider
+            draw_text(&mut vertices, &mut indices, labels[i],
+                slider.x, slider.y - 18.0, 2.0, text_color, screen_width, screen_height);
+            
+            // Background track
+            let track_color = [0.25, 0.25, 0.3, 1.0];
+            add_quad(&mut vertices, &mut indices,
+                to_ndc(slider.x, slider.y),
+                to_ndc(slider.x + slider.width, slider.y),
+                to_ndc(slider.x + slider.width, slider.y + slider.height),
+                to_ndc(slider.x, slider.y + slider.height),
+                track_color);
+            
+            // Value fill
+            let fill_width = slider.width * slider.value;
+            add_quad(&mut vertices, &mut indices,
+                to_ndc(slider.x, slider.y),
+                to_ndc(slider.x + fill_width, slider.y),
+                to_ndc(slider.x + fill_width, slider.y + slider.height),
+                to_ndc(slider.x, slider.y + slider.height),
+                slider.color);
+            
+            // Handle indicator
+            let handle_x = slider.x + fill_width - 4.0;
+            let handle_color = [1.0, 1.0, 1.0, 1.0];
+            add_quad(&mut vertices, &mut indices,
+                to_ndc(handle_x, slider.y - 2.0),
+                to_ndc(handle_x + 8.0, slider.y - 2.0),
+                to_ndc(handle_x + 8.0, slider.y + slider.height + 2.0),
+                to_ndc(handle_x, slider.y + slider.height + 2.0),
+                handle_color);
+        }
+        
+        // Draw apply button
+        let (bx, by, bw, bh) = self.apply_button;
+        let button_color = [0.3, 0.7, 0.4, 1.0];
+        add_quad(&mut vertices, &mut indices,
+            to_ndc(bx, by),
+            to_ndc(bx + bw, by),
+            to_ndc(bx + bw, by + bh),
+            to_ndc(bx, by + bh),
+            button_color);
+        
+        // Draw "APPLY" text on button
+        draw_text(&mut vertices, &mut indices, "APPLY",
+            bx + 70.0, by + 8.0, 2.0, [1.0, 1.0, 1.0, 1.0], screen_width, screen_height);
+        
+        Mesh { vertices, indices }
+    }
+}
+
+impl BuildToolbar {
+    /// Generate UI mesh for the toolbar (Minecraft-style hotbar)
+    fn generate_ui_mesh(&self, screen_width: f32, screen_height: f32) -> Mesh {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        
+        if !self.visible {
+            return Mesh { vertices, indices };
+        }
+        
+        // Helper to convert screen coords to NDC
+        let to_ndc = |x: f32, y: f32| -> [f32; 3] {
+            [
+                (x / screen_width) * 2.0 - 1.0,
+                1.0 - (y / screen_height) * 2.0,
+                0.0
+            ]
+        };
+        
+        // Toolbar dimensions (7 slots now)
+        let slot_size = 44.0;
+        let slot_spacing = 6.0;
+        let toolbar_width = 7.0 * slot_size + 6.0 * slot_spacing + 20.0;
+        let toolbar_height = slot_size + 40.0; // Extra space for labels
+        let toolbar_x = (screen_width - toolbar_width) / 2.0;
+        let toolbar_y = screen_height - toolbar_height - 20.0;
+        
+        // Draw toolbar background
+        let bg_color = [0.1, 0.1, 0.15, 0.9];
+        add_quad(&mut vertices, &mut indices,
+            to_ndc(toolbar_x, toolbar_y),
+            to_ndc(toolbar_x + toolbar_width, toolbar_y),
+            to_ndc(toolbar_x + toolbar_width, toolbar_y + toolbar_height),
+            to_ndc(toolbar_x, toolbar_y + toolbar_height),
+            bg_color);
+        
+        // Draw each slot (7 shapes now)
+        for i in 0..7 {
+            let slot_x = toolbar_x + 10.0 + (i as f32) * (slot_size + slot_spacing);
+            let slot_y = toolbar_y + 10.0;
+            
+            // Slot background (highlight if selected)
+            let slot_color = if i == self.selected_shape {
+                [0.4, 0.6, 0.9, 1.0] // Blue highlight for selected
+            } else {
+                [0.2, 0.2, 0.25, 1.0] // Dark gray for unselected
+            };
+            
+            add_quad(&mut vertices, &mut indices,
+                to_ndc(slot_x, slot_y),
+                to_ndc(slot_x + slot_size, slot_y),
+                to_ndc(slot_x + slot_size, slot_y + slot_size),
+                to_ndc(slot_x, slot_y + slot_size),
+                slot_color);
+            
+            // Draw shape icon
+            let icon_color = [0.9, 0.9, 0.9, 1.0];
+            let center_x = slot_x + slot_size / 2.0;
+            let center_y = slot_y + slot_size / 2.0;
+            let icon_size = slot_size * 0.6;
+            
+            match i {
+                0 => { // Cube - square
+                    let half = icon_size / 2.0;
+                    add_quad(&mut vertices, &mut indices,
+                        to_ndc(center_x - half, center_y - half),
+                        to_ndc(center_x + half, center_y - half),
+                        to_ndc(center_x + half, center_y + half),
+                        to_ndc(center_x - half, center_y + half),
+                        icon_color);
+                }
+                1 => { // Cylinder - tall rectangle
+                    let w = icon_size * 0.4;
+                    let h = icon_size * 0.8;
+                    add_quad(&mut vertices, &mut indices,
+                        to_ndc(center_x - w/2.0, center_y - h/2.0),
+                        to_ndc(center_x + w/2.0, center_y - h/2.0),
+                        to_ndc(center_x + w/2.0, center_y + h/2.0),
+                        to_ndc(center_x - w/2.0, center_y + h/2.0),
+                        icon_color);
+                    // Top ellipse hint
+                    let ew = w * 0.8;
+                    let eh = h * 0.15;
+                    add_quad(&mut vertices, &mut indices,
+                        to_ndc(center_x - ew, center_y - h/2.0 - eh),
+                        to_ndc(center_x + ew, center_y - h/2.0 - eh),
+                        to_ndc(center_x + w/2.0, center_y - h/2.0),
+                        to_ndc(center_x - w/2.0, center_y - h/2.0),
+                        icon_color);
+                }
+                2 => { // Sphere - circle approximated by octagon
+                    let r = icon_size * 0.4;
+                    let segments = 8;
+                    for j in 0..segments {
+                        let a1 = (j as f32 / segments as f32) * std::f32::consts::TAU;
+                        let a2 = ((j + 1) as f32 / segments as f32) * std::f32::consts::TAU;
+                        add_quad(&mut vertices, &mut indices,
+                            to_ndc(center_x, center_y),
+                            to_ndc(center_x + a1.cos() * r, center_y + a1.sin() * r),
+                            to_ndc(center_x + a2.cos() * r, center_y + a2.sin() * r),
+                            to_ndc(center_x, center_y),
+                            icon_color);
+                    }
+                }
+                3 => { // Dome - half circle
+                    let r = icon_size * 0.4;
+                    let segments = 6;
+                    for j in 0..segments {
+                        let a1 = (j as f32 / segments as f32) * std::f32::consts::PI;
+                        let a2 = ((j + 1) as f32 / segments as f32) * std::f32::consts::PI;
+                        add_quad(&mut vertices, &mut indices,
+                            to_ndc(center_x, center_y + r * 0.3),
+                            to_ndc(center_x + a1.cos() * r, center_y + r * 0.3 - a1.sin() * r),
+                            to_ndc(center_x + a2.cos() * r, center_y + r * 0.3 - a2.sin() * r),
+                            to_ndc(center_x, center_y + r * 0.3),
+                            icon_color);
+                    }
+                    // Base line
+                    add_quad(&mut vertices, &mut indices,
+                        to_ndc(center_x - icon_size * 0.4, center_y + r * 0.3),
+                        to_ndc(center_x + icon_size * 0.4, center_y + r * 0.3),
+                        to_ndc(center_x + icon_size * 0.4, center_y + r * 0.3 + 3.0),
+                        to_ndc(center_x - icon_size * 0.4, center_y + r * 0.3 + 3.0),
+                        icon_color);
+                }
+                4 => { // Arch - inverted U shape
+                    let w = icon_size * 0.7;
+                    let h = icon_size * 0.8;
+                    let thickness = icon_size * 0.15;
+                    // Left pillar
+                    add_quad(&mut vertices, &mut indices,
+                        to_ndc(center_x - w/2.0, center_y - h/2.0),
+                        to_ndc(center_x - w/2.0 + thickness, center_y - h/2.0),
+                        to_ndc(center_x - w/2.0 + thickness, center_y + h/2.0),
+                        to_ndc(center_x - w/2.0, center_y + h/2.0),
+                        icon_color);
+                    // Right pillar
+                    add_quad(&mut vertices, &mut indices,
+                        to_ndc(center_x + w/2.0 - thickness, center_y - h/2.0),
+                        to_ndc(center_x + w/2.0, center_y - h/2.0),
+                        to_ndc(center_x + w/2.0, center_y + h/2.0),
+                        to_ndc(center_x + w/2.0 - thickness, center_y + h/2.0),
+                        icon_color);
+                    // Top bar
+                    add_quad(&mut vertices, &mut indices,
+                        to_ndc(center_x - w/2.0, center_y - h/2.0),
+                        to_ndc(center_x + w/2.0, center_y - h/2.0),
+                        to_ndc(center_x + w/2.0, center_y - h/2.0 + thickness),
+                        to_ndc(center_x - w/2.0, center_y - h/2.0 + thickness),
+                        icon_color);
+                }
+                5 => { // Wedge - triangle
+                    let half = icon_size * 0.4;
+                    // Draw as two triangles forming a triangle (using quads)
+                    add_quad(&mut vertices, &mut indices,
+                        to_ndc(center_x - half, center_y + half),
+                        to_ndc(center_x + half, center_y + half),
+                        to_ndc(center_x, center_y - half),
+                        to_ndc(center_x - half, center_y + half), // degenerate to make triangle
+                        icon_color);
+                }
+                6 => { // Bridge - two squares connected by a line
+                    let s = icon_size * 0.25;
+                    let gap = icon_size * 0.3;
+                    // Left square
+                    add_quad(&mut vertices, &mut indices,
+                        to_ndc(center_x - gap - s, center_y - s),
+                        to_ndc(center_x - gap, center_y - s),
+                        to_ndc(center_x - gap, center_y + s),
+                        to_ndc(center_x - gap - s, center_y + s),
+                        icon_color);
+                    // Right square
+                    add_quad(&mut vertices, &mut indices,
+                        to_ndc(center_x + gap, center_y - s),
+                        to_ndc(center_x + gap + s, center_y - s),
+                        to_ndc(center_x + gap + s, center_y + s),
+                        to_ndc(center_x + gap, center_y + s),
+                        icon_color);
+                    // Connecting line
+                    let line_h = s * 0.4;
+                    add_quad(&mut vertices, &mut indices,
+                        to_ndc(center_x - gap, center_y - line_h),
+                        to_ndc(center_x + gap, center_y - line_h),
+                        to_ndc(center_x + gap, center_y + line_h),
+                        to_ndc(center_x - gap, center_y + line_h),
+                        icon_color);
+                }
+                _ => {}
+            }
+            
+            // Draw number label below slot
+            let num_str = format!("{}", i + 1);
+            draw_text(&mut vertices, &mut indices, &num_str,
+                slot_x + slot_size / 2.0 - 3.0, slot_y + slot_size + 5.0,
+                1.5, [0.7, 0.7, 0.7, 1.0], screen_width, screen_height);
+        }
+        
+        // Draw info panel on the right
+        let info_x = toolbar_x + toolbar_width + 15.0;
+        
+        // Material indicator
+        let mat_text = format!("MAT {}", self.selected_material);
+        draw_text(&mut vertices, &mut indices, &mat_text,
+            info_x, toolbar_y + 10.0,
+            1.5, [0.8, 0.8, 0.5, 1.0], screen_width, screen_height);
+        
+        // Height indicator
+        let height_text = format!("H {:.0}", self.build_height);
+        draw_text(&mut vertices, &mut indices, &height_text,
+            info_x, toolbar_y + 28.0,
+            1.5, [0.5, 0.8, 0.5, 1.0], screen_width, screen_height);
+        
+        // Bridge mode indicator
+        if self.is_bridge_mode() {
+            let bridge_text = if self.bridge_tool.first_face.is_some() {
+                if self.bridge_tool.second_face.is_some() {
+                    "READY"
+                } else {
+                    "FACE 1"
+                }
+            } else {
+                "SELECT"
+            };
+            draw_text(&mut vertices, &mut indices, bridge_text,
+                info_x, toolbar_y + 46.0,
+                1.5, [1.0, 0.6, 0.2, 1.0], screen_width, screen_height);
+        }
+        
+        Mesh { vertices, indices }
+    }
+}
+
+impl StartOverlay {
+    /// Generate UI mesh for the start overlay
+    fn generate_ui_mesh(&self, screen_width: f32, screen_height: f32) -> Mesh {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        
+        if !self.visible {
+            return Mesh { vertices, indices };
+        }
+        
+        // Helper to convert screen coords to NDC
+        let to_ndc = |x: f32, y: f32| -> [f32; 3] {
+            [
+                (x / screen_width) * 2.0 - 1.0,
+                1.0 - (y / screen_height) * 2.0,
+                0.0
+            ]
+        };
+        
+        // Semi-transparent overlay
+        let overlay_color = [0.0, 0.0, 0.0, 0.7];
+        add_quad(&mut vertices, &mut indices,
+            to_ndc(0.0, 0.0),
+            to_ndc(screen_width, 0.0),
+            to_ndc(screen_width, screen_height),
+            to_ndc(0.0, screen_height),
+            overlay_color);
+        
+        // "CLICK TO START" text in center
+        let text = "CLICK TO START";
+        let text_width = text.len() as f32 * 6.0 * 3.0; // Approximate width
+        draw_text(&mut vertices, &mut indices, text,
+            (screen_width - text_width) / 2.0, screen_height / 2.0 - 20.0,
+            3.0, [1.0, 1.0, 1.0, 1.0], screen_width, screen_height);
+        
+        // Subtitle
+        let subtitle = "WASD MOVE  SPACE JUMP  B BUILD  V CAMERA";
+        let sub_width = subtitle.len() as f32 * 6.0 * 1.5;
+        draw_text(&mut vertices, &mut indices, subtitle,
+            (screen_width - sub_width) / 2.0, screen_height / 2.0 + 30.0,
+            1.5, [0.7, 0.7, 0.7, 1.0], screen_width, screen_height);
+        
+        Mesh { vertices, indices }
+    }
+}
+
+/// Helper to add a quad to the mesh
+fn add_quad(
+    vertices: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    tl: [f32; 3], tr: [f32; 3], br: [f32; 3], bl: [f32; 3],
+    color: [f32; 4]
+) {
+    let base = vertices.len() as u32;
+    let normal = [0.0, 0.0, 1.0];
+    
+    vertices.push(Vertex { position: tl, normal, color });
+    vertices.push(Vertex { position: tr, normal, color });
+    vertices.push(Vertex { position: br, normal, color });
+    vertices.push(Vertex { position: bl, normal, color });
+    
+    indices.push(base);
+    indices.push(base + 1);
+    indices.push(base + 2);
+    indices.push(base);
+    indices.push(base + 2);
+    indices.push(base + 3);
+}
+
+// ============================================================================
+// SIMPLE PIXEL FONT FOR UI TEXT
+// ============================================================================
+// Each character is 5x7 pixels, stored as a bitmask array
+// 1 = pixel on, 0 = pixel off
+
+fn get_char_bitmap(c: char) -> [u8; 7] {
+    match c.to_ascii_uppercase() {
+        'A' => [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
+        'B' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110],
+        'C' => [0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110],
+        'D' => [0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110],
+        'E' => [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111],
+        'G' => [0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110],
+        'H' => [0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
+        'I' => [0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
+        'K' => [0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001],
+        'L' => [0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111],
+        'M' => [0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001],
+        'N' => [0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001],
+        'O' => [0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+        'P' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000],
+        'R' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001],
+        'S' => [0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110],
+        'T' => [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100],
+        'U' => [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+        'W' => [0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b11011, 0b10001],
+        'Y' => [0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100],
+        ' ' => [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000],
+        _   => [0b11111, 0b11111, 0b11111, 0b11111, 0b11111, 0b11111, 0b11111], // Unknown = filled box
+    }
+}
+
+/// Draw text at screen position using pixel font
+fn draw_text(
+    vertices: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    text: &str,
+    x: f32,
+    y: f32,
+    scale: f32,
+    color: [f32; 4],
+    screen_width: f32,
+    screen_height: f32,
+) {
+    let to_ndc = |px: f32, py: f32| -> [f32; 3] {
+        [
+            (px / screen_width) * 2.0 - 1.0,
+            1.0 - (py / screen_height) * 2.0,
+            0.0
+        ]
+    };
+    
+    let pixel_size = scale;
+    let char_width = 6.0 * scale; // 5 pixels + 1 spacing
+    
+    for (char_idx, c) in text.chars().enumerate() {
+        let bitmap = get_char_bitmap(c);
+        let char_x = x + (char_idx as f32) * char_width;
+        
+        for (row, &row_bits) in bitmap.iter().enumerate() {
+            for col in 0..5 {
+                // Check if pixel is set (bit is 1)
+                if (row_bits >> (4 - col)) & 1 == 1 {
+                    let px = char_x + (col as f32) * pixel_size;
+                    let py = y + (row as f32) * pixel_size;
+                    
+                    add_quad(
+                        vertices, indices,
+                        to_ndc(px, py),
+                        to_ndc(px + pixel_size, py),
+                        to_ndc(px + pixel_size, py + pixel_size),
+                        to_ndc(px, py + pixel_size),
+                        color
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn set_terrain_params(params: TerrainParams) {
+    unsafe { TERRAIN_PARAMS = params; }
+}
+
+/// Sample terrain height using UI-adjustable parameters
+fn terrain_height_at(x: f32, z: f32, base_y: f32) -> f32 {
+    let params = get_terrain_params();
+    
+    // Max amplitudes (when slider = 1.0)
+    const MAX_MOUNTAIN: f32 = 8.0;  // Reduced from 15
+    const MAX_ROCK: f32 = 3.0;      // Reduced from 8
+    const MAX_HILL: f32 = 2.0;      // Reduced from 3
+    const MAX_DETAIL: f32 = 0.5;    // Reduced from 0.8
+    
+    // Distance from center for edge effects
+    let dist_from_center = (x * x + z * z).sqrt() / 30.0;
+    let edge_factor = (dist_from_center * 1.2).min(1.0);
+    
+    let mut height = 0.0;
+    
+    // Layer 1: Mountains at edges
+    if params.mountains > 0.01 {
+        let mountain_noise = ridged_noise(x * 0.04 + 100.0, z * 0.04 + 100.0, 4);
+        height += mountain_noise * MAX_MOUNTAIN * params.mountains * edge_factor;
+    }
+    
+    // Layer 2: Rocky formations
+    if params.rocks > 0.01 {
+        let rock_noise = turbulent_noise(x * 0.1 + 50.0, z * 0.1 + 50.0, 3);
+        height += rock_noise * MAX_ROCK * params.rocks;
+    }
+    
+    // Layer 3: Gentle hills
+    if params.hills > 0.01 {
+        let hill_noise = fbm_noise(x * 0.08, z * 0.08, 3);
+        height += hill_noise * MAX_HILL * params.hills;
+    }
+    
+    // Layer 4: Surface detail
+    if params.detail > 0.01 {
+        let detail_noise = fbm_noise(x * 0.3 + 200.0, z * 0.3 + 200.0, 2);
+        height += detail_noise * MAX_DETAIL * params.detail;
+    }
+    
+    // Apply global height scale
+    height *= params.height_scale;
+    
+    base_y + height
+}
+
+/// UE5-style terrain color with procedural variation
+/// Uses multi-layer blending based on height, slope, and noise
+fn terrain_color_at(height: f32, normal: Vec3, base_y: f32) -> [f32; 4] {
+    let params = get_terrain_params();
+    let relative_height = height - base_y;
+    let slope = 1.0 - normal.y.abs(); // 0 = flat, 1 = vertical
+    
+    // Water level based on params
+    let water_level = params.water * 2.0;
+    
+    // ============================================================
+    // UE5-STYLE COLOR PALETTE (photorealistic, slightly desaturated)
+    // ============================================================
+    
+    // Grass layers (with variation based on moisture)
+    let grass_dark = [0.12, 0.22, 0.06, 1.0];      // Dark grass (wet/shadowed)
+    let grass_mid = [0.18, 0.32, 0.10, 1.0];       // Medium grass
+    let grass_light = [0.28, 0.42, 0.15, 1.0];     // Grass tips (sunlit)
+    let grass_dry = [0.35, 0.33, 0.18, 1.0];       // Dry/dead grass patches
+    
+    // Rock layers
+    let rock_dark = [0.15, 0.13, 0.11, 1.0];       // Dark rock crevices
+    let rock_mid = [0.32, 0.29, 0.26, 1.0];        // Mid-tone rock
+    let rock_light = [0.48, 0.45, 0.42, 1.0];      // Exposed rock faces
+    let rock_moss = [0.20, 0.26, 0.14, 1.0];       // Mossy rock
+    
+    // Sand/dirt
+    let sand_wet = [0.30, 0.25, 0.18, 1.0];        // Wet sand (near water)
+    let sand_dry = [0.55, 0.48, 0.38, 1.0];        // Dry sand
+    let dirt_base = [0.24, 0.18, 0.12, 1.0];       // Rich soil
+    let mud_wet = [0.16, 0.13, 0.10, 1.0];         // Wet mud
+    
+    // Water
+    let water_shallow = [0.12, 0.30, 0.35, 0.90];  // Shallow water (teal)
+    let water_deep = [0.08, 0.18, 0.25, 0.95];     // Deep water
+    
+    // ============================================================
+    // PROCEDURAL VARIATION (position-based noise)
+    // ============================================================
+    // Use simple hash for variation based on world position
+    let px = (height * 7.3 + relative_height * 13.7).sin() * 0.5 + 0.5;
+    let py = (relative_height * 11.1 + slope * 17.3).cos() * 0.5 + 0.5;
+    let noise = (px + py) * 0.5; // 0-1 variation
+    
+    // ============================================================
+    // WATER RENDERING
+    // ============================================================
+    if relative_height < water_level && params.water > 0.01 {
+        let depth = (water_level - relative_height) / 2.0;
+        let water_blend = depth.clamp(0.0, 1.0);
+        return blend_colors(&water_shallow, &water_deep, water_blend);
+    }
+    
+    // ============================================================
+    // BEACH/SHORE ZONE (sand near water)
+    // ============================================================
+    let beach_width = 0.8;
+    let beach_zone = ((relative_height - water_level) / beach_width).clamp(0.0, 1.0);
+    if beach_zone < 1.0 && params.water > 0.01 {
+        // Near water: wet sand transitioning to dry
+        let sand = blend_colors(&sand_wet, &sand_dry, beach_zone);
+        // Add some mud near the very edge
+        let mud_factor = (1.0 - beach_zone) * 0.4;
+        return blend_colors(&sand, &mud_wet, mud_factor);
+    }
+    
+    // ============================================================
+    // HEIGHT AND SLOPE FACTORS
+    // ============================================================
+    let height_factor = ((relative_height - water_level) / 8.0).clamp(0.0, 1.0);
+    let slope_sharp = smooth_step(0.35, 0.65, slope); // Smooth rock transition
+    
+    // ============================================================
+    // GRASS LAYER (flat areas)
+    // ============================================================
+    // Grass with color variation
+    let grass_variation = noise;
+    let mut grass = blend_colors(&grass_dark, &grass_mid, grass_variation);
+    grass = blend_colors(&grass, &grass_light, (noise * 0.7).clamp(0.0, 1.0));
+    
+    // Add dry patches at higher elevations and steep areas
+    let dry_factor = (height_factor * 0.6 + slope * 0.3 + (noise - 0.5).abs() * 0.4).clamp(0.0, 1.0);
+    grass = blend_colors(&grass, &grass_dry, dry_factor * 0.5);
+    
+    // ============================================================
+    // ROCK LAYER (steep slopes and high altitude)
+    // ============================================================
+    // Rock with crack/variation
+    let mut rock = blend_colors(&rock_dark, &rock_mid, noise);
+    rock = blend_colors(&rock, &rock_light, ((noise - 0.3) * 2.0).clamp(0.0, 1.0));
+    
+    // Add moss on north-facing and moist rock
+    let north_facing = (-normal.z * 0.5 + 0.5).clamp(0.0, 1.0);
+    let moisture = (1.0 - height_factor) * (1.0 - slope); // Low and flat = moist
+    let moss_factor = north_facing * moisture * 0.6;
+    rock = blend_colors(&rock, &rock_moss, moss_factor);
+    
+    // ============================================================
+    // DIRT/TRANSITION LAYER
+    // ============================================================
+    let dirt = blend_colors(&dirt_base, &sand_dry, noise * 0.3);
+    
+    // ============================================================
+    // FINAL BLENDING
+    // ============================================================
+    // Steep slopes get rock
+    let mut result = blend_colors(&grass, &rock, slope_sharp);
+    
+    // High altitude gets more rock and dirt
+    let altitude_rock = (height_factor * 1.5).clamp(0.0, 1.0);
+    result = blend_colors(&result, &rock, altitude_rock * (1.0 - slope_sharp) * 0.5);
+    
+    // Very high gets dirt/sand
+    let altitude_dirt = ((height_factor - 0.6) * 2.5).clamp(0.0, 1.0);
+    result = blend_colors(&result, &dirt, altitude_dirt * 0.4);
+    
+    result
+}
+
+/// Smooth step function for natural transitions
+fn smooth_step(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Helper to blend two colors
+fn blend_colors(a: &[f32; 4], b: &[f32; 4], t: f32) -> [f32; 4] {
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+        a[3] + (b[3] - a[3]) * t,
+    ]
+}
+
+/// Compute normal from terrain height gradient
+fn terrain_normal_at(x: f32, z: f32, base_y: f32) -> Vec3 {
+    let epsilon = 0.2; // Slightly larger for smoother normals
+    let h_center = terrain_height_at(x, z, base_y);
+    let h_dx = terrain_height_at(x + epsilon, z, base_y);
+    let h_dz = terrain_height_at(x, z + epsilon, base_y);
+    
+    let tangent_x = Vec3::new(epsilon, h_dx - h_center, 0.0);
+    let tangent_z = Vec3::new(0.0, h_dz - h_center, epsilon);
+    
+    tangent_z.cross(tangent_x).normalize()
+}
+
+/// Check if a point (relative to hex center) is inside a regular hexagon
+/// Uses a simple circular approximation for smoother terrain edges
+fn is_inside_hexagon(dx: f32, dz: f32, radius: f32) -> bool {
+    // Simple circular check gives smoother terrain without jagged edges
+    // Use a slightly larger radius to ensure full coverage
+    let dist_sq = dx * dx + dz * dz;
+    dist_sq <= radius * radius
+}
+
+/// Generate an elevated hexagonal terrain with procedural mountains, rocks, and water
+/// Uses a proper subdivided plane approach with dynamic height-based coloring
+fn generate_elevated_hex_terrain(center: Vec3, radius: f32, _color: [f32; 4], subdivisions: u32) -> Mesh {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    
+    // Use higher subdivisions for detailed terrain (64 for good detail)
+    let actual_subdivisions = subdivisions.max(64);
+    
+    // Create a dense grid that covers the hex area
+    let grid_count = actual_subdivisions + 1;
+    let cell_size = (radius * 2.0) / (actual_subdivisions as f32);
+    let half_size = radius;
+    
+    // Generate vertices in a regular grid pattern with dynamic coloring
+    for gz in 0..grid_count {
+        for gx in 0..grid_count {
+            // Calculate world position relative to center
+            let local_x = (gx as f32) * cell_size - half_size;
+            let local_z = (gz as f32) * cell_size - half_size;
+            let x = center.x + local_x;
+            let z = center.z + local_z;
+            
+            // Sample terrain height and normal
+            let y = terrain_height_at(x, z, center.y);
+            let normal = terrain_normal_at(x, z, center.y);
+            
+            // Get dynamic color based on height and slope
+            let color = terrain_color_at(y, normal, center.y);
+            
+            vertices.push(Vertex {
+                position: [x, y, z],
+                normal: normal.to_array(),
+                color,
+            });
+        }
+    }
+    
+    // Generate triangles (two per quad)
+    // Each quad connects vertices: (x,z), (x+1,z), (x,z+1), (x+1,z+1)
+    for gz in 0..actual_subdivisions {
+        for gx in 0..actual_subdivisions {
+            let i00 = gz * grid_count + gx;           // bottom-left
+            let i10 = gz * grid_count + (gx + 1);     // bottom-right
+            let i01 = (gz + 1) * grid_count + gx;     // top-left
+            let i11 = (gz + 1) * grid_count + (gx + 1); // top-right
+            
+            // Calculate center of this quad to check if inside hex
+            let cx = center.x + ((gx as f32 + 0.5) * cell_size - half_size);
+            let cz = center.z + ((gz as f32 + 0.5) * cell_size - half_size);
+            let dx = cx - center.x;
+            let dz = cz - center.z;
+            
+            // Only add triangles if quad center is within the hexagonal boundary
+            if is_inside_hexagon(dx, dz, radius) {
+                // Triangle 1: bottom-left, top-left, bottom-right
+                indices.push(i00);
+                indices.push(i01);
+                indices.push(i10);
+                
+                // Triangle 2: bottom-right, top-left, top-right
+                indices.push(i10);
+                indices.push(i01);
+                indices.push(i11);
+            }
+        }
+    }
+    
+    Mesh { vertices, indices }
+}
+
+/// Generate a flat water plane at the water level
+fn generate_water_plane(center: Vec3, radius: f32) -> Mesh {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    
+    let water_color = [0.3, 0.65, 0.6, 0.85]; // Teal, slightly transparent
+    let water_y = center.y + WATER_LEVEL;
+    let normal = [0.0, 1.0, 0.0]; // Flat water pointing up
+    
+    let subdivisions = 32u32;
+    let grid_count = subdivisions + 1;
+    let cell_size = (radius * 2.0) / (subdivisions as f32);
+    let half_size = radius;
+    
+    // Generate water vertices
+    for gz in 0..grid_count {
+        for gx in 0..grid_count {
+            let local_x = (gx as f32) * cell_size - half_size;
+            let local_z = (gz as f32) * cell_size - half_size;
+            let x = center.x + local_x;
+            let z = center.z + local_z;
+            
+            vertices.push(Vertex {
+                position: [x, water_y, z],
+                normal,
+                color: water_color,
+            });
+        }
+    }
+    
+    // Generate triangles for water
+    for gz in 0..subdivisions {
+        for gx in 0..subdivisions {
+            let i00 = gz * grid_count + gx;
+            let i10 = gz * grid_count + (gx + 1);
+            let i01 = (gz + 1) * grid_count + gx;
+            let i11 = (gz + 1) * grid_count + (gx + 1);
+            
+            let cx = center.x + ((gx as f32 + 0.5) * cell_size - half_size);
+            let cz = center.z + ((gz as f32 + 0.5) * cell_size - half_size);
+            let dx = cx - center.x;
+            let dz = cz - center.z;
+            
+            if is_inside_hexagon(dx, dz, radius * 0.95) {
+                indices.push(i00);
+                indices.push(i01);
+                indices.push(i10);
+                indices.push(i10);
+                indices.push(i01);
+                indices.push(i11);
+            }
+        }
+    }
+    
+    Mesh { vertices, indices }
+}
+
+// ============================================================================
+// PROCEDURAL TREE GENERATION
+// ============================================================================
+
+/// Simple tree structure for harvesting
+#[derive(Clone)]
+struct PlacedTree {
+    position: Vec3,
+    height: f32,
+    trunk_radius: f32,
+    foliage_radius: f32,
+    harvested: bool,
+}
+
+/// Generate procedural trees on terrain using noise-based distribution
+fn generate_trees_on_terrain(center: Vec3, radius: f32, density: f32, seed_offset: f32) -> Vec<PlacedTree> {
+    let mut trees = Vec::new();
+    
+    // Use noise to determine tree placement - creates natural-looking clusters
+    let spacing = 3.0; // Minimum spacing between potential tree positions
+    let grid_size = (radius * 2.0 / spacing) as i32;
+    
+    for gz in -grid_size..=grid_size {
+        for gx in -grid_size..=grid_size {
+            let base_x = center.x + (gx as f32) * spacing;
+            let base_z = center.z + (gz as f32) * spacing;
+            
+            // Add jitter for natural look
+            let jitter_x = fbm_noise((base_x + seed_offset) * 0.5, base_z * 0.5, 2) * spacing * 0.4;
+            let jitter_z = fbm_noise(base_x * 0.5, (base_z + seed_offset) * 0.5, 2) * spacing * 0.4;
+            let x = base_x + jitter_x;
+            let z = base_z + jitter_z;
+            
+            // Check if inside hexagonal terrain boundary
+            let dx = x - center.x;
+            let dz = z - center.z;
+            // Use hexagonal check with slightly smaller radius to keep trees away from edges
+            if !is_inside_hexagon(dx, dz, radius * 0.85) {
+                continue; // Keep trees inside hex and away from edges
+            }
+            
+            // Use noise to decide if tree should be placed here
+            let tree_noise = fbm_noise((x + seed_offset * 2.0) * 0.1, z * 0.1, 3);
+            if tree_noise < density {
+                continue; // No tree at this location
+            }
+            
+            // Get terrain height
+            let terrain_y = terrain_height_at(x, z, center.y);
+            
+            // Skip if below water level - no underwater trees!
+            let relative_height = terrain_y - center.y;
+            if relative_height < WATER_LEVEL + 0.5 {
+                continue;
+            }
+            
+            // Only place trees on relatively flat areas (slope < 0.5)
+            let normal = terrain_normal_at(x, z, center.y);
+            let slope = 1.0 - normal.y.abs();
+            if slope > 0.5 {
+                continue; // No trees on steep cliffs
+            }
+            
+            // Tree size variation based on noise
+            let size_noise = fbm_noise(x * 0.2, z * 0.2, 2);
+            let height = 2.0 + size_noise * 3.0; // 2-5 meters tall
+            let trunk_radius = 0.15 + size_noise * 0.1;
+            let foliage_radius = 0.8 + size_noise * 0.6;
+            
+            trees.push(PlacedTree {
+                position: Vec3::new(x, terrain_y, z),
+                height,
+                trunk_radius,
+                foliage_radius,
+                harvested: false,
+            });
+        }
+    }
+    
+    trees
+}
+
+/// Generate mesh for a single tree (trunk + foliage cone)
+fn generate_tree_mesh(tree: &PlacedTree) -> Mesh {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    
+    let trunk_color = [0.4, 0.25, 0.15, 1.0]; // Brown
+    let foliage_color = [0.2, 0.5, 0.2, 1.0]; // Dark green
+    
+    let pos = tree.position;
+    let segments = 6; // Hexagonal cross-section for efficiency
+    
+    // === TRUNK (cylinder) ===
+    let trunk_height = tree.height * 0.4;
+    let trunk_base_idx = vertices.len() as u32;
+    
+    // Bottom ring
+    for i in 0..segments {
+        let angle = (i as f32) * 2.0 * std::f32::consts::PI / (segments as f32);
+        let nx = angle.cos();
+        let nz = angle.sin();
+        let x = pos.x + nx * tree.trunk_radius;
+        let z = pos.z + nz * tree.trunk_radius;
+        vertices.push(Vertex {
+            position: [x, pos.y, z],
+            normal: [nx, 0.0, nz],
+            color: trunk_color,
+        });
+    }
+    
+    // Top ring
+    for i in 0..segments {
+        let angle = (i as f32) * 2.0 * std::f32::consts::PI / (segments as f32);
+        let nx = angle.cos();
+        let nz = angle.sin();
+        let x = pos.x + nx * tree.trunk_radius;
+        let z = pos.z + nz * tree.trunk_radius;
+        vertices.push(Vertex {
+            position: [x, pos.y + trunk_height, z],
+            normal: [nx, 0.0, nz],
+            color: trunk_color,
+        });
+    }
+    
+    // Trunk side triangles
+    for i in 0..segments {
+        let i0 = trunk_base_idx + i as u32;
+        let i1 = trunk_base_idx + ((i + 1) % segments) as u32;
+        let i2 = trunk_base_idx + segments as u32 + i as u32;
+        let i3 = trunk_base_idx + segments as u32 + ((i + 1) % segments) as u32;
+        
+        indices.extend_from_slice(&[i0, i2, i1]);
+        indices.extend_from_slice(&[i1, i2, i3]);
+    }
+    
+    // === FOLIAGE (cone) ===
+    let foliage_base_y = pos.y + trunk_height;
+    let foliage_top_y = pos.y + tree.height;
+    let foliage_base_idx = vertices.len() as u32;
+    
+    // Foliage base ring
+    for i in 0..segments {
+        let angle = (i as f32) * 2.0 * std::f32::consts::PI / (segments as f32);
+        let nx = angle.cos();
+        let nz = angle.sin();
+        let x = pos.x + nx * tree.foliage_radius;
+        let z = pos.z + nz * tree.foliage_radius;
+        
+        // Normal points outward and upward for cone
+        let normal = Vec3::new(nx, 0.5, nz).normalize();
+        vertices.push(Vertex {
+            position: [x, foliage_base_y, z],
+            normal: normal.to_array(),
+            color: foliage_color,
+        });
+    }
+    
+    // Foliage apex (top point)
+    let apex_idx = vertices.len() as u32;
+    vertices.push(Vertex {
+        position: [pos.x, foliage_top_y, pos.z],
+        normal: [0.0, 1.0, 0.0],
+        color: foliage_color,
+    });
+    
+    // Foliage triangles (cone sides)
+    for i in 0..segments {
+        let i0 = foliage_base_idx + i as u32;
+        let i1 = foliage_base_idx + ((i + 1) % segments) as u32;
+        indices.extend_from_slice(&[i0, apex_idx, i1]);
+    }
+    
+    // Foliage bottom cap
+    let bottom_center_idx = vertices.len() as u32;
+    vertices.push(Vertex {
+        position: [pos.x, foliage_base_y, pos.z],
+        normal: [0.0, -1.0, 0.0],
+        color: foliage_color,
+    });
+    
+    for i in 0..segments {
+        let i0 = foliage_base_idx + i as u32;
+        let i1 = foliage_base_idx + ((i + 1) % segments) as u32;
+        indices.extend_from_slice(&[bottom_center_idx, i1, i0]);
+    }
+    
+    Mesh { vertices, indices }
+}
+
+/// Generate combined mesh for all trees
+fn generate_all_trees_mesh(trees: &[PlacedTree]) -> Mesh {
+    let mut combined = Mesh::new();
+    for tree in trees {
+        if !tree.harvested {
+            let tree_mesh = generate_tree_mesh(tree);
+            combined.merge(&tree_mesh);
+        }
+    }
+    combined
+}
+
+/// Generate a flat hexagonal platform (kept for reference/simple cases)
+#[allow(dead_code)]
+fn generate_hex_platform(center: Vec3, radius: f32, color: [f32; 4]) -> Mesh {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    // Center vertex
+    vertices.push(Vertex {
+        position: [center.x, center.y, center.z],
+        normal: [0.0, 1.0, 0.0],
+        color,
+    });
+
+    // 6 corner vertices
+    for i in 0..6 {
+        let angle = (i as f32) * std::f32::consts::PI / 3.0;
+        let x = center.x + radius * angle.cos();
+        let z = center.z + radius * angle.sin();
+        vertices.push(Vertex {
+            position: [x, center.y, z],
+            normal: [0.0, 1.0, 0.0],
+            color,
+        });
+    }
+
+    // 6 triangles (counter-clockwise winding for front-face when viewed from above)
+    for i in 0..6 {
+        indices.push(0);
+        indices.push(((i + 1) % 6 + 1) as u32);  // next corner first
+        indices.push((i + 1) as u32);             // current corner second
+    }
+
+    Mesh { vertices, indices }
+}
+
+/// Generate cannon mesh (simplified box + cylinder representation)
+fn generate_cannon_mesh(cannon: &Cannon) -> Mesh {
+    let mut mesh = Mesh::new();
+    let pos = cannon.position;
+    let dir = cannon.get_barrel_direction();
+    let color = [0.3, 0.3, 0.3, 1.0]; // Gray metal
+
+    // Cannon body (box)
+    let body_size = Vec3::new(1.0, 0.5, 1.5);
+    let body_mesh = generate_box(pos, body_size, color);
+    mesh.merge(&body_mesh);
+
+    // Barrel (elongated box for simplicity)
+    let barrel_center = pos + dir * (cannon.barrel_length / 2.0);
+    let barrel_up = Vec3::Y;
+    let _barrel_right = dir.cross(barrel_up).normalize();
+    let barrel_size = Vec3::new(0.3, 0.3, cannon.barrel_length);
+
+    // Generate rotated barrel
+    let barrel_mesh = generate_oriented_box(barrel_center, barrel_size, dir, barrel_up, [0.2, 0.2, 0.2, 1.0]);
+    mesh.merge(&barrel_mesh);
+
+    mesh
+}
+
+/// Generate a simple axis-aligned box
+fn generate_box(center: Vec3, half_extents: Vec3, color: [f32; 4]) -> Mesh {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    let (hx, hy, hz) = (half_extents.x, half_extents.y, half_extents.z);
+
+    // 8 corners
+    let corners = [
+        Vec3::new(-hx, -hy, -hz),
+        Vec3::new(hx, -hy, -hz),
+        Vec3::new(hx, hy, -hz),
+        Vec3::new(-hx, hy, -hz),
+        Vec3::new(-hx, -hy, hz),
+        Vec3::new(hx, -hy, hz),
+        Vec3::new(hx, hy, hz),
+        Vec3::new(-hx, hy, hz),
+    ];
+
+    // 6 faces with normals
+    let faces = [
+        ([0, 1, 2, 3], Vec3::new(0.0, 0.0, -1.0)), // Front
+        ([5, 4, 7, 6], Vec3::new(0.0, 0.0, 1.0)),  // Back
+        ([4, 0, 3, 7], Vec3::new(-1.0, 0.0, 0.0)), // Left
+        ([1, 5, 6, 2], Vec3::new(1.0, 0.0, 0.0)),  // Right
+        ([3, 2, 6, 7], Vec3::new(0.0, 1.0, 0.0)),  // Top
+        ([4, 5, 1, 0], Vec3::new(0.0, -1.0, 0.0)), // Bottom
+    ];
+
+    for (face_indices, normal) in &faces {
+        let base = vertices.len() as u32;
+        for &i in face_indices {
+            let pos = center + corners[i];
+            vertices.push(Vertex {
+                position: [pos.x, pos.y, pos.z],
+                normal: [normal.x, normal.y, normal.z],
+                color,
+            });
+        }
+        // Two triangles per face
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    Mesh { vertices, indices }
+}
+
+/// Generate an oriented box (for barrel)
+fn generate_oriented_box(
+    center: Vec3,
+    size: Vec3,
+    forward: Vec3,
+    up: Vec3,
+    color: [f32; 4],
+) -> Mesh {
+    let right = forward.cross(up).normalize();
+    let up = right.cross(forward).normalize();
+
+    let (hx, hy, hz) = (size.x / 2.0, size.y / 2.0, size.z / 2.0);
+
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    // Local to world transform
+    let transform = |local: Vec3| -> Vec3 { center + right * local.x + up * local.y + forward * local.z };
+
+    // 8 corners in local space
+    let corners = [
+        Vec3::new(-hx, -hy, -hz),
+        Vec3::new(hx, -hy, -hz),
+        Vec3::new(hx, hy, -hz),
+        Vec3::new(-hx, hy, -hz),
+        Vec3::new(-hx, -hy, hz),
+        Vec3::new(hx, -hy, hz),
+        Vec3::new(hx, hy, hz),
+        Vec3::new(-hx, hy, hz),
+    ];
+
+    // 6 faces with local normals
+    let faces = [
+        ([0, 1, 2, 3], -forward), // Back
+        ([5, 4, 7, 6], forward),  // Front
+        ([4, 0, 3, 7], -right),   // Left
+        ([1, 5, 6, 2], right),    // Right
+        ([3, 2, 6, 7], up),       // Top
+        ([4, 5, 1, 0], -up),      // Bottom
+    ];
+
+    for (face_indices, normal) in &faces {
+        let base = vertices.len() as u32;
+        for &i in face_indices {
+            let pos = transform(corners[i]);
+            vertices.push(Vertex {
+                position: [pos.x, pos.y, pos.z],
+                normal: [normal.x, normal.y, normal.z],
+                color,
+            });
+        }
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    Mesh { vertices, indices }
+}
+
+/// Generate a rotated box (for falling prisms)
+fn generate_rotated_box(center: Vec3, half_extents: Vec3, rotation: Vec3, color: [f32; 4]) -> Mesh {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    
+    // Build rotation matrix from euler angles (simple XYZ rotation)
+    let (sx, cx) = rotation.x.sin_cos();
+    let (sy, cy) = rotation.y.sin_cos();
+    let (sz, cz) = rotation.z.sin_cos();
+    
+    // Combined rotation matrix (ZYX order)
+    let rotate = |v: Vec3| -> Vec3 {
+        // Rotate around X
+        let y1 = v.y * cx - v.z * sx;
+        let z1 = v.y * sx + v.z * cx;
+        let x1 = v.x;
+        // Rotate around Y
+        let x2 = x1 * cy + z1 * sy;
+        let z2 = -x1 * sy + z1 * cy;
+        let y2 = y1;
+        // Rotate around Z
+        let x3 = x2 * cz - y2 * sz;
+        let y3 = x2 * sz + y2 * cz;
+        let z3 = z2;
+        Vec3::new(x3, y3, z3)
+    };
+    
+    let (hx, hy, hz) = (half_extents.x, half_extents.y, half_extents.z);
+    
+    // 8 corners in local space
+    let corners: [Vec3; 8] = [
+        Vec3::new(-hx, -hy, -hz),
+        Vec3::new( hx, -hy, -hz),
+        Vec3::new( hx,  hy, -hz),
+        Vec3::new(-hx,  hy, -hz),
+        Vec3::new(-hx, -hy,  hz),
+        Vec3::new( hx, -hy,  hz),
+        Vec3::new( hx,  hy,  hz),
+        Vec3::new(-hx,  hy,  hz),
+    ];
+    
+    // Transform corners to world space
+    let world_corners: Vec<Vec3> = corners.iter().map(|&c| center + rotate(c)).collect();
+    
+    // Face definitions with local normals
+    let faces: [([usize; 4], Vec3); 6] = [
+        ([0, 3, 2, 1], Vec3::new(0.0, 0.0, -1.0)), // Back
+        ([4, 5, 6, 7], Vec3::new(0.0, 0.0, 1.0)),  // Front
+        ([0, 4, 7, 3], Vec3::new(-1.0, 0.0, 0.0)), // Left
+        ([1, 2, 6, 5], Vec3::new(1.0, 0.0, 0.0)),  // Right
+        ([3, 7, 6, 2], Vec3::new(0.0, 1.0, 0.0)),  // Top
+        ([0, 1, 5, 4], Vec3::new(0.0, -1.0, 0.0)), // Bottom
+    ];
+    
+    for (face_indices, local_normal) in &faces {
+        let base = vertices.len() as u32;
+        let world_normal = rotate(*local_normal);
+        
+        for &i in face_indices {
+            let pos = world_corners[i];
+            vertices.push(Vertex {
+                position: [pos.x, pos.y, pos.z],
+                normal: [world_normal.x, world_normal.y, world_normal.z],
+                color,
+            });
+        }
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+    
+    Mesh { vertices, indices }
+}
+
+/// Generate a sphere mesh for projectiles
+fn generate_sphere(center: Vec3, radius: f32, color: [f32; 4], segments: u32) -> Mesh {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    // Generate vertices
+    for lat in 0..=segments {
+        let theta = (lat as f32) * std::f32::consts::PI / (segments as f32);
+        let sin_theta = theta.sin();
+        let cos_theta = theta.cos();
+
+        for lon in 0..=segments {
+            let phi = (lon as f32) * 2.0 * std::f32::consts::PI / (segments as f32);
+            let sin_phi = phi.sin();
+            let cos_phi = phi.cos();
+
+            let x = sin_theta * cos_phi;
+            let y = cos_theta;
+            let z = sin_theta * sin_phi;
+
+            let pos = center + Vec3::new(x, y, z) * radius;
+            vertices.push(Vertex {
+                position: [pos.x, pos.y, pos.z],
+                normal: [x, y, z],
+                color,
+            });
+        }
+    }
+
+    // Generate indices
+    for lat in 0..segments {
+        for lon in 0..segments {
+            let first = lat * (segments + 1) + lon;
+            let second = first + segments + 1;
+
+            indices.push(first);
+            indices.push(second);
+            indices.push(first + 1);
+
+            indices.push(second);
+            indices.push(second + 1);
+            indices.push(first + 1);
+        }
+    }
+
+    Mesh { vertices, indices }
+}
+
+// ============================================================================
+// WGSL SHADER
+// ============================================================================
+
+const SHADER_SOURCE: &str = r#"
+struct Uniforms {
+    view_proj: mat4x4<f32>,
+    camera_pos: vec3<f32>,
+    time: f32,
+    sun_dir: vec3<f32>,
+    fog_density: f32,
+    fog_color: vec3<f32>,
+    ambient: f32,
+    projectile_count: u32,
+    _padding1: vec3<f32>,
+    projectile_positions: array<vec4<f32>, 32>,
+}
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec4<f32>,
+}
+
+struct VertexOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) color: vec4<f32>,
+    @location(3) screen_uv: vec2<f32>,
+}
+
+// ============================================================================
+// ACES FILMIC TONEMAPPING (Unreal Engine 5 style)
+// ============================================================================
+fn aces_tonemap(x: vec3<f32>) -> vec3<f32> {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+// Gamma correction (linear to sRGB)
+fn gamma_correct(color: vec3<f32>) -> vec3<f32> {
+    return pow(color, vec3<f32>(1.0 / 2.2));
+}
+
+// Vignette effect
+fn apply_vignette(color: vec3<f32>, uv: vec2<f32>, intensity: f32) -> vec3<f32> {
+    let center = vec2<f32>(0.5, 0.5);
+    let dist = distance(uv, center);
+    let vignette = 1.0 - smoothstep(0.3, 0.9, dist * intensity);
+    return color * vignette;
+}
+
+// Film grain for cinematic feel
+fn film_grain(color: vec3<f32>, uv: vec2<f32>, time: f32, intensity: f32) -> vec3<f32> {
+    let noise = fract(sin(dot(uv + time * 0.1, vec2<f32>(12.9898, 78.233))) * 43758.5453);
+    return color + (noise - 0.5) * intensity;
+}
+
+// ============================================================================
+// PBR-LIKE LIGHTING (UE5 inspired)
+// ============================================================================
+
+// GGX Normal Distribution Function
+fn distribution_ggx(n_dot_h: f32, roughness: f32) -> f32 {
+    let a = roughness * roughness;
+    let a2 = a * a;
+    let denom = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
+    return a2 / (3.14159265 * denom * denom);
+}
+
+// Fresnel-Schlick approximation
+fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
+    return f0 + (vec3<f32>(1.0) - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
+}
+
+// Geometry Smith
+fn geometry_schlick_ggx(n_dot_v: f32, roughness: f32) -> f32 {
+    let r = roughness + 1.0;
+    let k = (r * r) / 8.0;
+    return n_dot_v / (n_dot_v * (1.0 - k) + k);
+}
+
+fn geometry_smith(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32) -> f32 {
+    let n_dot_v = max(dot(n, v), 0.0);
+    let n_dot_l = max(dot(n, l), 0.0);
+    let ggx1 = geometry_schlick_ggx(n_dot_v, roughness);
+    let ggx2 = geometry_schlick_ggx(n_dot_l, roughness);
+    return ggx1 * ggx2;
+}
+
+// Subsurface scattering approximation for vegetation
+fn sss_approx(view_dir: vec3<f32>, light_dir: vec3<f32>, normal: vec3<f32>, thickness: f32) -> f32 {
+    // Light passing through from behind
+    let sss_dot = clamp(dot(-view_dir, light_dir), 0.0, 1.0);
+    let sss = pow(sss_dot, 3.0) * thickness;
+    // Wrap lighting contribution
+    let wrap = clamp(dot(normal, light_dir) * 0.5 + 0.5, 0.0, 1.0);
+    return sss * wrap;
+}
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    out.clip_position = uniforms.view_proj * vec4<f32>(in.position, 1.0);
+    out.world_pos = in.position;
+    out.normal = in.normal;
+    out.color = in.color;
+    // Calculate screen UV for post-processing
+    out.screen_uv = (out.clip_position.xy / out.clip_position.w) * 0.5 + 0.5;
+    out.screen_uv.y = 1.0 - out.screen_uv.y;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let normal = normalize(in.normal);
+    let sun_dir = normalize(uniforms.sun_dir);
+    let view_dir = normalize(uniforms.camera_pos - in.world_pos);
+    let half_dir = normalize(view_dir + sun_dir);
+
+    // Base color from vertex (terrain colors already in linear space)
+    let albedo = in.color.rgb;
+    
+    // Detect grass/vegetation by green channel dominance
+    let is_grass = albedo.g > albedo.r * 1.3 && albedo.g > albedo.b * 1.5;
+    
+    // Material properties (vary by surface type)
+    let roughness = select(0.6, 0.85, is_grass);  // Grass is rougher
+    let metallic = 0.0;  // Terrain is non-metallic
+    let f0 = vec3<f32>(0.04);  // Dielectric base reflectivity
+    
+    // ============================================================
+    // PBR LIGHTING
+    // ============================================================
+    let n_dot_l = max(dot(normal, sun_dir), 0.0);
+    let n_dot_v = max(dot(normal, view_dir), 0.0);
+    let n_dot_h = max(dot(normal, half_dir), 0.0);
+    let h_dot_v = max(dot(half_dir, view_dir), 0.0);
+    
+    // Cook-Torrance BRDF
+    let ndf = distribution_ggx(n_dot_h, roughness);
+    let g = geometry_smith(normal, view_dir, sun_dir, roughness);
+    let f = fresnel_schlick(h_dot_v, f0);
+    
+    let numerator = ndf * g * f;
+    let denominator = 4.0 * n_dot_v * n_dot_l + 0.0001;
+    let specular = numerator / denominator;
+    
+    // Energy conservation
+    let ks = f;
+    let kd = (vec3<f32>(1.0) - ks) * (1.0 - metallic);
+    
+    // Sun light
+    let sun_color = vec3<f32>(1.0, 0.95, 0.85);  // Warm sunlight
+    let sun_intensity = 2.5;  // HDR intensity
+    let radiance = sun_color * sun_intensity;
+    
+    // Direct lighting contribution
+    var direct_light = (kd * albedo / 3.14159265 + specular) * radiance * n_dot_l;
+    
+    // ============================================================
+    // SUBSURFACE SCATTERING (grass/vegetation)
+    // ============================================================
+    if (is_grass) {
+        let sss = sss_approx(view_dir, sun_dir, normal, 0.4);
+        let sss_color = vec3<f32>(0.4, 0.55, 0.15) * 2.0;  // Bright yellow-green
+        direct_light = direct_light + sss_color * sss * albedo;
+    }
+    
+    // ============================================================
+    // AMBIENT / HEMISPHERE LIGHTING
+    // ============================================================
+    let sky_color = vec3<f32>(0.45, 0.55, 0.75);
+    let ground_color = vec3<f32>(0.25, 0.20, 0.15);
+    let sky_blend = normal.y * 0.5 + 0.5;
+    let ambient_color = mix(ground_color, sky_color, sky_blend);
+    
+    // Simple AO based on normal (facing down = more occluded)
+    let ao = normal.y * 0.3 + 0.7;
+    
+    let ambient_light = albedo * ambient_color * 0.35 * ao;
+    
+    // ============================================================
+    // RIM LIGHT (edge highlighting)
+    // ============================================================
+    let rim = pow(1.0 - n_dot_v, 4.0);
+    let rim_color = vec3<f32>(0.6, 0.7, 0.85) * rim * 0.15;
+    
+    // ============================================================
+    // COMBINE LIGHTING
+    // ============================================================
+    var color = direct_light + ambient_light + rim_color;
+    
+    // ============================================================
+    // ATMOSPHERIC FOG (UE5-style height fog)
+    // ============================================================
+    let dist = length(in.world_pos - uniforms.camera_pos);
+    let height = in.world_pos.y;
+    
+    // Height-based fog density (denser at low altitudes)
+    let height_falloff = 0.04;
+    let height_factor = exp(-max(height, 0.0) * height_falloff);
+    
+    // Distance fog with height modulation
+    let fog_amount = (1.0 - exp(-dist * uniforms.fog_density * height_factor)) * 0.85;
+    
+    // Fog color varies with distance (blue haze)
+    let fog_near = vec3<f32>(0.55, 0.65, 0.80);
+    let fog_far = vec3<f32>(0.45, 0.50, 0.60);
+    let fog_blend = clamp(dist / 100.0, 0.0, 1.0);
+    let final_fog_color = mix(fog_near, fog_far, fog_blend);
+    
+    color = mix(color, final_fog_color, fog_amount);
+    
+    // ============================================================
+    // POST-PROCESSING (Unreal-style cinematic look)
+    // ============================================================
+    
+    // ACES Tonemapping
+    color = aces_tonemap(color);
+    
+    // Subtle color grading (warm shadows, cool highlights)
+    let lift = vec3<f32>(0.015, 0.01, 0.02);
+    let gain = vec3<f32>(1.03, 1.01, 0.98);
+    color = color * gain + lift;
+    
+    // Vignette
+    color = apply_vignette(color, in.screen_uv, 1.0);
+    
+    // Very subtle film grain
+    color = film_grain(color, in.screen_uv, uniforms.time, 0.015);
+    
+    // Gamma correction
+    color = gamma_correct(color);
+    
+    return vec4<f32>(color, in.color.a);
+}
+"#;
+
+// ============================================================================
+// HEX-PRISM WALLS (US-012)
+// ============================================================================
+
+/// Create test hex-prism walls for the battle arena
+/// Creates a simple wall: 5 prisms in a row, 3 layers high on the defender hex
+#[allow(dead_code)]  // Will be used in US-012 when hex-prism rendering is integrated
+fn create_test_walls() -> HexPrismGrid {
+    let mut grid = HexPrismGrid::new();
+    // Build a wall: 5 prisms wide, 3 layers tall, material 0 = stone gray
+    grid.create_wall(0, 0, 5, 3, 0);
+    // Add variety wall with material 2 = stone dark
+    grid.create_wall(-2, 2, 3, 2, 2);
+    println!("[Battle Arena] Created hex-prism walls: {} prisms", grid.len());
+    grid
+}
+
 // ============================================================================
 // APPLICATION
 // ============================================================================
@@ -176,7 +3212,7 @@ struct BattleArenaApp {
     aiming: AimingKeys, // Cannon aiming keys (US-017)
     mouse_pressed: bool,
     left_mouse_pressed: bool, // For builder mode placement
-    _last_mouse_pos: Option<(f32, f32)>,
+    last_mouse_pos: Option<(f32, f32)>,
     current_mouse_pos: Option<(f32, f32)>, // For raycast
 
     // Builder mode (Fallout 4-style building)
@@ -187,7 +3223,7 @@ struct BattleArenaApp {
     build_toolbar: BuildToolbar,
     block_manager: BuildingBlockManager,
     merge_workflow: MergeWorkflowManager,
-    _sculpting: SculptingManager,
+    sculpting: SculptingManager,
     merged_mesh_buffers: Vec<MergedMeshBuffers>,
     block_vertex_buffer: Option<wgpu::Buffer>,
     block_index_buffer: Option<wgpu::Buffer>,
@@ -202,7 +3238,7 @@ struct BattleArenaApp {
     tree_vertex_buffer: Option<wgpu::Buffer>,
     tree_index_buffer: Option<wgpu::Buffer>,
     tree_index_count: u32,
-    _wood_harvested: u32, // Total wood collected
+    wood_harvested: u32, // Total wood collected
 
     // Cannon and projectiles
     cannon: Cannon,
@@ -264,13 +3300,13 @@ impl BattleArenaApp {
             aiming: AimingKeys::default(),
             mouse_pressed: false,
             left_mouse_pressed: false,
-            _last_mouse_pos: None,
+            last_mouse_pos: None,
             current_mouse_pos: None,
             builder_mode: BuilderMode::default(),
             build_toolbar: BuildToolbar::default(),
             block_manager: BuildingBlockManager::new(),
             merge_workflow: MergeWorkflowManager::new(),
-            _sculpting: SculptingManager::new(),
+            sculpting: SculptingManager::new(),
             merged_mesh_buffers: Vec::new(),
             block_vertex_buffer: None,
             block_index_buffer: None,
@@ -281,7 +3317,7 @@ impl BattleArenaApp {
             tree_vertex_buffer: None,
             tree_index_buffer: None,
             tree_index_count: 0,
-            _wood_harvested: 0,
+            wood_harvested: 0,
             cannon: Cannon::default(),
             projectiles: Vec::new(),
             ballistics_config: BallisticsConfig::default(),
@@ -1368,8 +4404,8 @@ impl BattleArenaApp {
             let block_center = (aabb.min + aabb.max) * 0.5;
             
             // Check if we should snap to this block's grid
-            let _dx = position.x - block_center.x;
-            let _dz = position.z - block_center.z;
+            let dx = position.x - block_center.x;
+            let dz = position.z - block_center.z;
             
             // Possible snap positions (adjacent to this block)
             let snap_positions = [
@@ -1506,7 +4542,7 @@ impl BattleArenaApp {
                         return Some(SelectedFace {
                             block_id,
                             position: face_pos,
-                            _normal: normal,
+                            normal,
                             size,
                         });
                     }
@@ -1542,11 +4578,11 @@ impl BattleArenaApp {
         // Create multiple connected blocks along the bridge
         let num_segments = (length / BLOCK_GRID_SIZE).ceil() as i32;
         let segment_length = length / num_segments as f32;
-        let _dir_normalized = direction.normalize();
+        let dir_normalized = direction.normalize();
         
         // Average the face sizes for the bridge cross-section
-        let _bridge_width = (first.size.0 + second.size.0) * 0.5;
-        let _bridge_height = (first.size.1 + second.size.1) * 0.5;
+        let bridge_width = (first.size.0 + second.size.0) * 0.5;
+        let bridge_height = (first.size.1 + second.size.1) * 0.5;
         
         println!("[Bridge] Creating bridge with {} segments, length={:.1}", num_segments, length);
         
@@ -1595,7 +4631,7 @@ impl BattleArenaApp {
             
             // Check if block is supported by another block
             let mut has_support = false;
-            let _check_pos = Vec3::new(block.position.x, aabb.min.y - 0.1, block.position.z);
+            let check_pos = Vec3::new(block.position.x, aabb.min.y - 0.1, block.position.z);
             
             for other_block in self.block_manager.blocks() {
                 if other_block.id == block.id {
@@ -1787,7 +4823,7 @@ impl BattleArenaApp {
         let player_radius = 0.3;
         
         // Iterate through nearby hex prisms
-        for ((q, r, level), _prism) in self.hex_wall_grid.iter() {
+        for ((q, r, level), prism) in self.hex_wall_grid.iter() {
             // Convert hex coordinates to world position
             let hex_x = (*q as f32) * DEFAULT_HEX_RADIUS * 1.5;
             let hex_z = (*r as f32) * DEFAULT_HEX_RADIUS * 3.0_f32.sqrt() 
@@ -1872,7 +4908,7 @@ impl BattleArenaApp {
         });
         
         self.merged_mesh_buffers.push(MergedMeshBuffers {
-            _id: merged.id,
+            id: merged.id,
             vertex_buffer,
             index_buffer,
             index_count: merged.indices.len() as u32,
@@ -1887,7 +4923,7 @@ impl BattleArenaApp {
             Some(d) => d,
             None => return,
         };
-        let _queue = match &self.queue {
+        let queue = match &self.queue {
             Some(q) => q,
             None => return,
         };
@@ -1934,7 +4970,7 @@ impl BattleArenaApp {
     
     fn rebuild_terrain(&mut self) {
         let device = self.device.as_ref().expect("Device not initialized");
-        let _queue = self.queue.as_ref().expect("Queue not initialized");
+        let queue = self.queue.as_ref().expect("Queue not initialized");
         
         // Regenerate terrain mesh
         let mut static_mesh = Mesh::new();

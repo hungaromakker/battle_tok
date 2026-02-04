@@ -2,7 +2,7 @@
 //!
 //! Initial overlay screen prompting user to click to start.
 
-use crate::game::types::{Mesh, Vertex};
+use crate::game::types::Mesh;
 use super::text::{add_quad, draw_text};
 
 /// Startup overlay that grabs focus on first click
