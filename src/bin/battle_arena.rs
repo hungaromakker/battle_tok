@@ -85,6 +85,10 @@ use battle_tok_engine::game::{
     // Builder types
     BuilderMode, BuildToolbar, SelectedFace,
     SHAPE_NAMES, BLOCK_GRID_SIZE, BLOCK_SNAP_DISTANCE, PHYSICS_CHECK_INTERVAL,
+    // Builder raycast & placement
+    screen_to_ray, determine_hit_face, calculate_adjacent_block_position,
+    snap_to_grid, find_snap_position, ray_terrain_intersection,
+    check_block_support, calculate_bridge_segments, PlacementResult,
     // Terrain
     TerrainParams, get_terrain_params, set_terrain_params,
     terrain_height_at, generate_elevated_hex_terrain, generate_water_plane,
@@ -98,6 +102,13 @@ use battle_tok_engine::game::{
     StartOverlay, TerrainEditorUI,
     // Render
     SHADER_SOURCE, create_test_walls,
+    generate_hex_grid_overlay, calculate_ghost_color, GHOST_PREVIEW_COLOR, generate_block_preview_mesh,
+    // Physics
+    CollisionResult, AABB, check_capsule_aabb_collision, check_capsule_hex_collision,
+    hex_to_world_position, world_to_hex_coords,
+    HEX_NEIGHBORS, has_support, find_unsupported_cascade, check_falling_prism_collision,
+    // Input
+    InputAction, InputContext, MovementState, AimingState, MovementKey, AimingKey, map_key_to_action,
     // Cannon
     ArenaCannon as Cannon, CANNON_ROTATION_SPEED,
 };

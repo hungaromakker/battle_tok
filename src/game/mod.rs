@@ -15,6 +15,8 @@ pub mod terrain;
 pub mod builder;
 pub mod ui;
 pub mod render;
+pub mod physics;
+pub mod input;
 
 // Legacy re-exports
 pub use battle_sphere::Cannon;
@@ -35,6 +37,13 @@ pub use terrain::{terrain_height_at, terrain_color_at, terrain_normal_at, is_ins
 pub use terrain::{generate_elevated_hex_terrain, generate_water_plane, generate_hex_platform};
 pub use builder::{BuildCommand, BuilderMode, BuildToolbar, BridgeTool, SelectedFace};
 pub use builder::{SHAPE_NAMES, BLOCK_GRID_SIZE, BLOCK_SNAP_DISTANCE, PHYSICS_CHECK_INTERVAL};
+pub use builder::{screen_to_ray, determine_hit_face, calculate_adjacent_block_position, snap_to_grid, find_snap_position, ray_terrain_intersection};
+pub use builder::{check_block_support, calculate_bridge_segments, PlacementResult};
 pub use ui::{StartOverlay, TerrainEditorUI, UISlider, add_quad, draw_text, get_char_bitmap};
 pub use render::{Uniforms, HexPrismModelUniforms, SdfCannonUniforms, SdfCannonData};
 pub use render::{SHADER_SOURCE, MergedMeshBuffers, create_test_walls};
+pub use render::{generate_hex_grid_overlay, calculate_ghost_color, GHOST_PREVIEW_COLOR, generate_block_preview_mesh};
+pub use physics::{CollisionResult, AABB, check_capsule_aabb_collision, check_capsule_hex_collision};
+pub use physics::{hex_to_world_position, world_to_hex_coords};
+pub use physics::{HEX_NEIGHBORS, has_support, find_unsupported_cascade, check_falling_prism_collision};
+pub use input::{InputAction, InputContext, MovementState, AimingState, MovementKey, AimingKey, map_key_to_action};
