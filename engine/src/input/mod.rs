@@ -7,7 +7,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use magic_engine::input::{KeyboardState, MouseState, KeyCode, MouseButton};
+//! use battle_tok_engine::input::{KeyboardState, MouseState, KeyCode, MouseButton};
 //!
 //! let mut keyboard = KeyboardState::new();
 //! let mut mouse = MouseState::new();

@@ -6,7 +6,7 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! use magic_engine::input::CursorManager;
+//! use battle_tok_engine::input::CursorManager;
 //!
 //! let mut cursor = CursorManager::new();
 //!

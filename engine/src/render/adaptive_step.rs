@@ -49,7 +49,7 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 ///
 /// # Examples
 /// ```
-/// use magic_engine::render::adaptive_step::base_step_for_distance;
+/// use battle_tok_engine::render::adaptive_step::base_step_for_distance;
 ///
 /// // Very close: high precision
 /// let step = base_step_for_distance(0.0);

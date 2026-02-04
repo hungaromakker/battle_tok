@@ -6,7 +6,7 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! use magic_engine::render::marching_cubes::MarchingCubes;
+//! use battle_tok_engine::render::marching_cubes::MarchingCubes;
 //!
 //! // Create marching cubes instance with resolution
 //! let mc = MarchingCubes::new(64);

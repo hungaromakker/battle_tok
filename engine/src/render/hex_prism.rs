@@ -14,7 +14,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use magic_engine::render::hex_prism::{HexPrism, HexPrismGrid, axial_to_world};
+//! use battle_tok_engine::render::hex_prism::{HexPrism, HexPrismGrid, axial_to_world};
 //!
 //! let mut grid = HexPrismGrid::new();
 //!

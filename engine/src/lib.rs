@@ -14,9 +14,9 @@
 //! # Example
 //!
 //! ```ignore
-//! use magic_engine::render::{RenderState, RenderConfig, TestUniforms};
-//! use magic_engine::input::{KeyboardState, MouseState, KeyCode};
-//! use magic_engine::world::GridConfig;
+//! use battle_tok_engine::render::{RenderState, RenderConfig, TestUniforms};
+//! use battle_tok_engine::input::{KeyboardState, MouseState, KeyCode};
+//! use battle_tok_engine::world::GridConfig;
 //!
 //! // Create render state with VSync off
 //! let config = RenderConfig {

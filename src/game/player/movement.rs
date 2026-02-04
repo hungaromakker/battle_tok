@@ -14,8 +14,8 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use magic_engine::game::player::movement::PlayerMovement;
-//! use magic_engine::game::player::input::{PlayerInput, MovementDirection};
+//! use battle_tok_engine::game::player::movement::PlayerMovement;
+//! use battle_tok_engine::game::player::input::{PlayerInput, MovementDirection};
 //! use glam::Vec3;
 //!
 //! let mut movement = PlayerMovement::new();

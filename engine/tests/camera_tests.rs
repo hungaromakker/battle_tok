@@ -3,8 +3,8 @@
 //! Tests for the camera module including CameraController and raycast functionality.
 
 use glam::Vec3;
-use magic_engine::camera::{CameraController, CameraMode};
-use magic_engine::camera::raycast::{
+use battle_tok_engine::camera::{CameraController, CameraMode};
+use battle_tok_engine::camera::raycast::{
     raycast_to_ground, raycast_to_plane, get_ray_direction, RaycastConfig,
 };
 

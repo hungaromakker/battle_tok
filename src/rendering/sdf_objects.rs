@@ -8,7 +8,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use magic_engine::rendering::sdf_objects::{SdfPrimitive, SdfOperation, SdfObject};
+//! use battle_tok_engine::rendering::sdf_objects::{SdfPrimitive, SdfOperation, SdfObject};
 //! use glam::{Mat4, Vec3};
 //!
 //! // Create a cannon barrel (cylinder with rounded cap)

@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use magic_engine::rendering::hex_prism::{HexPrism, HexPrismGrid};
+//! use battle_tok_engine::rendering::hex_prism::{HexPrism, HexPrismGrid};
 //! use glam::Vec3;
 //!
 //! let mut grid = HexPrismGrid::new(0.5, 0.3); // radius=0.5, height=0.3

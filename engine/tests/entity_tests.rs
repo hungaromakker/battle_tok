@@ -4,11 +4,11 @@
 //! color packing/unpacking, and grid snapping functionality.
 
 use glam::Vec3;
-use magic_engine::render::entities::{
+use battle_tok_engine::render::entities::{
     PlacedEntity, EntityBufferData, entity_type,
     pack_color, unpack_color, ENTITY_COLORS,
 };
-use magic_engine::world::{GridConfig, snap_to_grid, clamp_to_map};
+use battle_tok_engine::world::{GridConfig, snap_to_grid, clamp_to_map};
 
 // ============================================================================
 // PlacedEntity Size Tests (Critical - Must be 48 bytes for GPU compatibility)

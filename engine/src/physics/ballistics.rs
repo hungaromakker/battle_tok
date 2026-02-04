@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use magic_engine::physics::ballistics::{Projectile, BallisticsConfig, ProjectileState};
+//! use battle_tok_engine::physics::ballistics::{Projectile, BallisticsConfig, ProjectileState};
 //! use glam::Vec3;
 //!
 //! let config = BallisticsConfig::default();

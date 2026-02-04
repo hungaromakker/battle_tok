@@ -16,7 +16,7 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! use magic_engine::player::{CrouchController, Stance};
+//! use battle_tok_engine::player::{CrouchController, Stance};
 //!
 //! let mut crouch = CrouchController::new();
 //!

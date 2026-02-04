@@ -9,7 +9,7 @@
 //!
 //! # Example
 //! ```ignore
-//! use magic_engine::game::battle_sphere::cannon::Cannon;
+//! use battle_tok_engine::game::battle_sphere::cannon::Cannon;
 //! use glam::Vec3;
 //!
 //! let mut cannon = Cannon::new(Vec3::new(0.0, 1.0, -50.0));

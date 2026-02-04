@@ -11,7 +11,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use magic_engine::physics::collision::{ray_aabb_intersect, HitInfo, HexPrism, HexPrismGrid};
+//! use battle_tok_engine::physics::collision::{ray_aabb_intersect, HitInfo, HexPrism, HexPrismGrid};
 //! use glam::Vec3;
 //!
 //! // Ray-AABB intersection

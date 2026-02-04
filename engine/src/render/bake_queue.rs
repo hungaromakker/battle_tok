@@ -19,7 +19,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use magic_engine::render::bake_queue::{BakeQueue, BakeJob, EntityId};
+//! use battle_tok_engine::render::bake_queue::{BakeQueue, BakeJob, EntityId};
 //!
 //! let mut bake_queue = BakeQueue::new();
 //!

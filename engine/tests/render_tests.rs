@@ -3,7 +3,7 @@
 //! Tests for the render module including uniform structs, buffer data,
 //! and GPU-compatible struct serialization.
 
-use magic_engine::render::uniforms::{
+use battle_tok_engine::render::uniforms::{
     EntityBufferData, PlacedEntity, SkySettings, TestUniforms,
     pack_color, ENTITY_COLORS,
 };

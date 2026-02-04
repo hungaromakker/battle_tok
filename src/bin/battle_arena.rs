@@ -49,8 +49,8 @@ use std::time::Instant;
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
-use magic_engine::render::HexPrismGrid;
-use magic_engine::render::hex_prism::{DEFAULT_HEX_HEIGHT, DEFAULT_HEX_RADIUS};
+use battle_tok_engine::render::HexPrismGrid;
+use battle_tok_engine::render::hex_prism::{DEFAULT_HEX_HEIGHT, DEFAULT_HEX_RADIUS};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -59,13 +59,13 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
 
 // Import physics from engine
-use magic_engine::physics::ballistics::{BallisticsConfig, Projectile, ProjectileState};
+use battle_tok_engine::physics::ballistics::{BallisticsConfig, Projectile, ProjectileState};
 
 // Import stormy skybox
-use magic_engine::render::{StormySky, StormySkyConfig};
+use battle_tok_engine::render::{StormySky, StormySkyConfig};
 
 // Import building block system (Phase 2-4)
-use magic_engine::render::{
+use battle_tok_engine::render::{
     BuildingBlockManager, BuildingBlockShape, BuildingBlock, BlockVertex, AABB,
     MergeWorkflowManager, MergedMesh,
     SculptingManager,
@@ -558,7 +558,7 @@ impl BuilderMode {
     }
     
     /// Execute undo
-    fn undo(&mut self, grid: &mut magic_engine::render::HexPrismGrid) {
+    fn undo(&mut self, grid: &mut battle_tok_engine::render::HexPrismGrid) {
         if let Some(cmd) = self.undo_stack.pop() {
             let redo_cmd = self.execute_inverse(&cmd, grid);
             self.redo_stack.push(redo_cmd);
@@ -567,7 +567,7 @@ impl BuilderMode {
     }
     
     /// Execute redo
-    fn redo(&mut self, grid: &mut magic_engine::render::HexPrismGrid) {
+    fn redo(&mut self, grid: &mut battle_tok_engine::render::HexPrismGrid) {
         if let Some(cmd) = self.redo_stack.pop() {
             let undo_cmd = self.execute_command(&cmd, grid);
             self.undo_stack.push(undo_cmd);
@@ -576,12 +576,12 @@ impl BuilderMode {
     }
     
     /// Execute a build command and return its inverse for undo
-    fn execute_command(&self, cmd: &BuildCommand, grid: &mut magic_engine::render::HexPrismGrid) -> BuildCommand {
+    fn execute_command(&self, cmd: &BuildCommand, grid: &mut battle_tok_engine::render::HexPrismGrid) -> BuildCommand {
         match cmd {
             BuildCommand::Place { coord, material } => {
-                let prism = magic_engine::render::HexPrism::new(
-                    magic_engine::render::hex_prism::DEFAULT_HEX_HEIGHT,
-                    magic_engine::render::hex_prism::DEFAULT_HEX_RADIUS,
+                let prism = battle_tok_engine::render::HexPrism::new(
+                    battle_tok_engine::render::hex_prism::DEFAULT_HEX_HEIGHT,
+                    battle_tok_engine::render::hex_prism::DEFAULT_HEX_RADIUS,
                     *material,
                 );
                 grid.insert(coord.0, coord.1, coord.2, prism);
@@ -601,16 +601,16 @@ impl BuilderMode {
     }
     
     /// Execute inverse of a command (for undo)
-    fn execute_inverse(&self, cmd: &BuildCommand, grid: &mut magic_engine::render::HexPrismGrid) -> BuildCommand {
+    fn execute_inverse(&self, cmd: &BuildCommand, grid: &mut battle_tok_engine::render::HexPrismGrid) -> BuildCommand {
         match cmd {
             BuildCommand::Place { coord, material } => {
                 grid.remove(coord.0, coord.1, coord.2);
                 BuildCommand::Place { coord: *coord, material: *material }
             }
             BuildCommand::Remove { coord, material } => {
-                let prism = magic_engine::render::HexPrism::new(
-                    magic_engine::render::hex_prism::DEFAULT_HEX_HEIGHT,
-                    magic_engine::render::hex_prism::DEFAULT_HEX_RADIUS,
+                let prism = battle_tok_engine::render::HexPrism::new(
+                    battle_tok_engine::render::hex_prism::DEFAULT_HEX_HEIGHT,
+                    battle_tok_engine::render::hex_prism::DEFAULT_HEX_RADIUS,
                     *material,
                 );
                 grid.insert(coord.0, coord.1, coord.2, prism);
@@ -627,7 +627,7 @@ impl BuilderMode {
     }
     
     /// Place a prism at the cursor position
-    fn place_at_cursor(&mut self, grid: &mut magic_engine::render::HexPrismGrid) -> bool {
+    fn place_at_cursor(&mut self, grid: &mut battle_tok_engine::render::HexPrismGrid) -> bool {
         if let Some(coord) = self.cursor_coord {
             // Check if position is already occupied
             if grid.contains(coord.0, coord.1, coord.2) {
@@ -646,7 +646,7 @@ impl BuilderMode {
     }
     
     /// Remove prism at cursor position  
-    fn remove_at_cursor(&mut self, grid: &mut magic_engine::render::HexPrismGrid) -> bool {
+    fn remove_at_cursor(&mut self, grid: &mut battle_tok_engine::render::HexPrismGrid) -> bool {
         if let Some(coord) = self.cursor_coord {
             if let Some(prism) = grid.get(coord.0, coord.1, coord.2) {
                 let material = prism.material;
@@ -662,7 +662,7 @@ impl BuilderMode {
     }
     
     /// Copy prisms in area around cursor to clipboard
-    fn copy_area(&mut self, grid: &magic_engine::render::HexPrismGrid, radius: i32) {
+    fn copy_area(&mut self, grid: &battle_tok_engine::render::HexPrismGrid, radius: i32) {
         self.clipboard.clear();
         if let Some(center) = self.cursor_coord {
             for (coord, prism) in grid.iter() {
@@ -679,7 +679,7 @@ impl BuilderMode {
     }
     
     /// Paste clipboard at cursor
-    fn paste(&mut self, grid: &mut magic_engine::render::HexPrismGrid) -> bool {
+    fn paste(&mut self, grid: &mut battle_tok_engine::render::HexPrismGrid) -> bool {
         if self.clipboard.is_empty() {
             return false;
         }
@@ -4301,7 +4301,7 @@ impl BattleArenaApp {
         
         let forward = self.camera.get_forward();
         let right = self.camera.get_right();
-        let up = forward.cross(right).normalize();
+        let up = right.cross(forward).normalize(); // Fixed: correct cross product order
         
         // Use same formula as hex grid's screen_to_ray (which works)
         let ray_dir = (forward + right * ndc_x * half_fov * aspect + up * ndc_y * half_fov)
@@ -4496,7 +4496,7 @@ impl BattleArenaApp {
         
         let forward = self.camera.get_forward();
         let right = self.camera.get_right();
-        let up = forward.cross(right).normalize();
+        let up = right.cross(forward).normalize(); // Fixed: correct cross product order
         
         // Use same formula as hex grid's screen_to_ray (which works)
         let ray_dir = (forward + right * ndc_x * half_fov * aspect + up * ndc_y * half_fov)
@@ -4688,7 +4688,7 @@ impl BattleArenaApp {
         // Calculate ray direction
         let forward = self.camera.get_forward();
         let right = self.camera.get_right();
-        let up = forward.cross(right).normalize();
+        let up = right.cross(forward).normalize(); // Fixed: correct cross product order
         
         // Use same formula as hex grid's screen_to_ray (which works)
         let ray_dir = (forward + right * ndc_x * half_fov * aspect + up * ndc_y * half_fov)
@@ -5122,7 +5122,7 @@ impl BattleArenaApp {
                 if point.y <= terrain_y + 0.1 {
                     // Found intersection! Convert to grid coordinates
                     let build_level = self.builder_mode.build_level;
-                    let (q, r, _) = magic_engine::render::hex_prism::world_to_axial(point);
+                    let (q, r, _) = battle_tok_engine::render::hex_prism::world_to_axial(point);
                     return Some((q, r, build_level));
                 }
             }
@@ -5159,11 +5159,11 @@ impl BattleArenaApp {
         }
         
         // Create a ghost prism at the cursor position
-        let world_pos = magic_engine::render::hex_prism::axial_to_world(coord.0, coord.1, coord.2);
-        let prism = magic_engine::render::HexPrism::with_center(
+        let world_pos = battle_tok_engine::render::hex_prism::axial_to_world(coord.0, coord.1, coord.2);
+        let prism = battle_tok_engine::render::HexPrism::with_center(
             world_pos,
-            magic_engine::render::hex_prism::DEFAULT_HEX_HEIGHT,
-            magic_engine::render::hex_prism::DEFAULT_HEX_RADIUS,
+            battle_tok_engine::render::hex_prism::DEFAULT_HEX_HEIGHT,
+            battle_tok_engine::render::hex_prism::DEFAULT_HEX_RADIUS,
             self.builder_mode.selected_material,
         );
         
@@ -5202,7 +5202,7 @@ impl BattleArenaApp {
         // Grid parameters
         let line_thickness = 0.04;
         let grid_radius: i32 = 3;
-        let hex_radius = magic_engine::render::hex_prism::DEFAULT_HEX_RADIUS;
+        let hex_radius = battle_tok_engine::render::hex_prism::DEFAULT_HEX_RADIUS;
         
         // Generate hex outlines around cursor
         for dq in -grid_radius..=grid_radius {
@@ -5216,7 +5216,7 @@ impl BattleArenaApp {
                 
                 let q = coord.0 + dq;
                 let r = coord.1 + dr;
-                let world_pos = magic_engine::render::hex_prism::axial_to_world(q, r, coord.2);
+                let world_pos = battle_tok_engine::render::hex_prism::axial_to_world(q, r, coord.2);
                 
                 // Color - highlight cursor cell differently
                 let is_cursor = dq == 0 && dr == 0;

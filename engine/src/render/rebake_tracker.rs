@@ -22,7 +22,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use magic_engine::render::rebake_tracker::{RebakeTracker, ShapeParams};
+//! use battle_tok_engine::render::rebake_tracker::{RebakeTracker, ShapeParams};
 //!
 //! let mut tracker = RebakeTracker::new();
 //!

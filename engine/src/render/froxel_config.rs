@@ -47,7 +47,7 @@ pub const TOTAL_FROXELS: u32 = FROXEL_TILES_X * FROXEL_TILES_Y * FROXEL_DEPTH_SL
 /// # Example
 ///
 /// ```
-/// use magic_engine::render::froxel_config::depth_slice_bounds;
+/// use battle_tok_engine::render::froxel_config::depth_slice_bounds;
 ///
 /// // Get bounds for slice 0 (closest to camera)
 /// let (near, far) = depth_slice_bounds(0, 0.1, 1000.0);

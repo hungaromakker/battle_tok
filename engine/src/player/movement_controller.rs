@@ -18,8 +18,8 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! use magic_engine::player::PlayerMovementController;
-//! use magic_engine::input::MovementKeys;
+//! use battle_tok_engine::player::PlayerMovementController;
+//! use battle_tok_engine::input::MovementKeys;
 //! use glam::Vec3;
 //!
 //! let mut controller = PlayerMovementController::new();

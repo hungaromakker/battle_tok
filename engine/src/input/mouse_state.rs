@@ -16,7 +16,7 @@
 /// # Example
 ///
 /// ```rust,ignore
-/// use magic_engine::input::FpsMouseState;
+/// use battle_tok_engine::input::FpsMouseState;
 ///
 /// let mut mouse = FpsMouseState::new();
 ///

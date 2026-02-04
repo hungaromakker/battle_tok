@@ -11,7 +11,7 @@
 /// # Example
 ///
 /// ```ignore
-/// use magic_engine::game::player::physics::PlayerPhysics;
+/// use battle_tok_engine::game::player::physics::PlayerPhysics;
 ///
 /// // Use default physics
 /// let physics = PlayerPhysics::default();
