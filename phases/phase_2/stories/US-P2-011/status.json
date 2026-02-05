@@ -26,7 +26,7 @@
     "iteration": 1,
     "failed_reasons": [],
     "dependencies": ["US-P2-008"],
-    "commit_hash": "",
+    "commit_hash": "84de8b12b8f47002a3851656b3b6f946e5cee4ed",
     "files_modified": ["src/game/destruction.rs"],
     "iteration_history": [
         {"iteration": 1, "action": "Implemented meteor enhancements: HDR colors, tumbling rotation, trail/impact particle helpers", "notes": "All criteria met", "completed_at": "2026-02-05T15:30:00Z"}
