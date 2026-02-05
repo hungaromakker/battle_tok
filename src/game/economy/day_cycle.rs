@@ -33,10 +33,10 @@ impl TimeOfDay {
     /// Get ambient light color
     pub fn ambient_color(&self) -> [f32; 3] {
         match self {
-            TimeOfDay::Dawn => [1.0, 0.7, 0.5],   // Orange
-            TimeOfDay::Day => [1.0, 1.0, 0.95],   // Slightly warm white
-            TimeOfDay::Dusk => [1.0, 0.5, 0.3],   // Red-orange
-            TimeOfDay::Night => [0.2, 0.2, 0.4],  // Blue-ish
+            TimeOfDay::Dawn => [1.0, 0.7, 0.5],  // Orange
+            TimeOfDay::Day => [1.0, 1.0, 0.95],  // Slightly warm white
+            TimeOfDay::Dusk => [1.0, 0.5, 0.3],  // Red-orange
+            TimeOfDay::Night => [0.2, 0.2, 0.4], // Blue-ish
         }
     }
 

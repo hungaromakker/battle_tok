@@ -21,13 +21,16 @@ impl Default for MergedMeshBuffers {
 
 /// Create test hex-prism walls for the battle arena
 /// Creates a simple wall: 5 prisms in a row, 3 layers high on the defender hex
-#[allow(dead_code)]  // Will be used when hex-prism rendering is integrated
+#[allow(dead_code)] // Will be used when hex-prism rendering is integrated
 pub fn create_test_walls() -> HexPrismGrid {
     let mut grid = HexPrismGrid::new();
     // Build a wall: 5 prisms wide, 3 layers tall, material 0 = stone gray
     grid.create_wall(0, 0, 5, 3, 0);
     // Add variety wall with material 2 = stone dark
     grid.create_wall(-2, 2, 3, 2, 2);
-    println!("[Battle Arena] Created hex-prism walls: {} prisms", grid.len());
+    println!(
+        "[Battle Arena] Created hex-prism walls: {} prisms",
+        grid.len()
+    );
     grid
 }

@@ -46,5 +46,7 @@ pub fn get_terrain_params() -> TerrainParams {
 
 /// Set terrain parameters (called from UI)
 pub fn set_terrain_params(params: TerrainParams) {
-    unsafe { TERRAIN_PARAMS = params; }
+    unsafe {
+        TERRAIN_PARAMS = params;
+    }
 }

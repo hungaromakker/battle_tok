@@ -26,8 +26,8 @@ pub struct ApocalypticSkyConfig {
     pub cloud_coverage: f32,
 
     // Sky colors
-    pub zenith_color: Vec3,   // Deep purple
-    pub horizon_color: Vec3,  // Orange/red
+    pub zenith_color: Vec3,  // Deep purple
+    pub horizon_color: Vec3, // Orange/red
 
     // Lava glow from below
     pub lava_glow_color: Vec3,
@@ -74,9 +74,9 @@ impl ApocalypticSkyConfig {
     pub fn battle_arena() -> Self {
         Self {
             cloud_speed: 0.15,
-            cloud_density: 2.5,      // Denser, more dramatic clouds
+            cloud_density: 2.5, // Denser, more dramatic clouds
             cloud_scale: 1.0,
-            cloud_coverage: 0.75,    // More cloud coverage
+            cloud_coverage: 0.75, // More cloud coverage
 
             // Deep purple zenith matching reference - more saturated
             zenith_color: Vec3::new(0.08, 0.02, 0.22),
@@ -191,7 +191,9 @@ impl ApocalypticSky {
         // Load shader
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Apocalyptic Sky Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../../shaders/apocalyptic_sky.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../../shaders/apocalyptic_sky.wgsl").into(),
+            ),
         });
 
         // Create uniform buffer
@@ -317,7 +319,8 @@ impl ApocalypticSky {
     ) {
         // Decay lightning
         if self.config.lightning_intensity > 0.0 {
-            self.config.lightning_intensity = (self.config.lightning_intensity - delta_time * 8.0).max(0.0);
+            self.config.lightning_intensity =
+                (self.config.lightning_intensity - delta_time * 8.0).max(0.0);
         }
 
         // Random lightning triggers
@@ -373,11 +376,7 @@ impl ApocalypticSky {
     }
 
     /// Create render pass and render
-    pub fn render_to_view(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-    ) {
+    pub fn render_to_view(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Apocalyptic Sky Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

@@ -89,7 +89,10 @@ impl SdfPrimitive {
 
     /// Creates a new rounded box primitive.
     pub fn rounded_box(half_extents: Vec3, radius: f32) -> Self {
-        Self::RoundedBox { half_extents, radius }
+        Self::RoundedBox {
+            half_extents,
+            radius,
+        }
     }
 
     /// Creates a new capsule primitive.
@@ -299,7 +302,10 @@ mod tests {
     fn test_rounded_box_primitive() {
         let rbox = SdfPrimitive::rounded_box(Vec3::new(1.0, 0.5, 0.75), 0.1);
         match rbox {
-            SdfPrimitive::RoundedBox { half_extents, radius } => {
+            SdfPrimitive::RoundedBox {
+                half_extents,
+                radius,
+            } => {
                 assert_eq!(half_extents, Vec3::new(1.0, 0.5, 0.75));
                 assert_eq!(radius, 0.1);
             }

@@ -96,7 +96,7 @@ impl Default for CameraCollisionConfig {
         Self {
             enabled: true,
             min_distance: 0.2, // 20cm minimum distance from obstacles
-            radius: 0.3, // 30cm collision sphere
+            radius: 0.3,       // 30cm collision sphere
         }
     }
 }
@@ -205,9 +205,9 @@ impl Default for CameraController {
             target_mode: CameraMode::ThirdPerson,
             pitch_limits: (PITCH_LIMIT_MIN, PITCH_LIMIT_MAX),
             transition: CameraTransition::default(),
-            move_speed: 5.0, // 5 m/s walking speed (realistic human walking)
+            move_speed: 5.0,        // 5 m/s walking speed (realistic human walking)
             sprint_multiplier: 2.0, // 10 m/s sprinting
-            look_sensitivity: 8.0, // Snappy video game feel (was 2.0, too sluggish)
+            look_sensitivity: 8.0,  // Snappy video game feel (was 2.0, too sluggish)
             pan_sensitivity: 10.0,
             // Unity-style: 3m behind, 2m above player
             third_person_offset: Vec3::new(0.0, 2.0, 3.0),
@@ -222,12 +222,12 @@ impl Default for CameraController {
             // Physics
             vertical_velocity: 0.0,
             is_grounded: true,
-            gravity: 9.81, // Earth gravity (m/s²)
+            gravity: 9.81,      // Earth gravity (m/s²)
             jump_velocity: 5.0, // ~1.3m jump height
-            min_height: 1.8, // Player standing height (eyes at 1.6m + 0.2m margin)
+            min_height: 1.8,    // Player standing height (eyes at 1.6m + 0.2m margin)
             // Crouch system
-            standing_height: 1.8, // Normal standing eye level
-            crouch_height: 0.9, // Crouched eye level (half height)
+            standing_height: 1.8,   // Normal standing eye level
+            crouch_height: 0.9,     // Crouched eye level (half height)
             min_crouch_height: 0.3, // Prone/small creature level
             is_crouching: false,
             current_height: 1.8, // Start at standing height
@@ -235,7 +235,7 @@ impl Default for CameraController {
             planet_radius: 0.0, // 0 = flat world
             planet_center: Vec3::ZERO,
             friction_coefficient: 0.6, // Grass/dirt friction
-            player_mass: 70.0, // 70kg average human
+            player_mass: 70.0,         // 70kg average human
             velocity: Vec3::ZERO,
             surface_normal: Vec3::Y, // Default: flat world, up is Y
         }
@@ -687,7 +687,8 @@ impl CameraController {
             let friction_deceleration = friction_force / self.player_mass; // a = F/m
 
             // Get tangential velocity (velocity along the surface)
-            let tangential_velocity = self.velocity - self.surface_normal * self.velocity.dot(self.surface_normal);
+            let tangential_velocity =
+                self.velocity - self.surface_normal * self.velocity.dot(self.surface_normal);
             let tangential_speed = tangential_velocity.length();
 
             if tangential_speed > 0.01 {
@@ -749,14 +750,11 @@ impl CameraController {
 
         // Forward direction: project camera forward onto the tangent plane
         // Camera forward is based on yaw (ignoring pitch for ground movement)
-        let camera_forward_world = Vec3::new(
-            self.yaw.sin(),
-            0.0,
-            -self.yaw.cos(),
-        );
+        let camera_forward_world = Vec3::new(self.yaw.sin(), 0.0, -self.yaw.cos());
 
         // Project onto tangent plane and normalize
-        let forward_tangent = (camera_forward_world - up * camera_forward_world.dot(up)).normalize_or_zero();
+        let forward_tangent =
+            (camera_forward_world - up * camera_forward_world.dot(up)).normalize_or_zero();
 
         // Right direction is perpendicular to forward and up
         // forward.cross(up) gives the right vector in right-handed coordinate system
@@ -826,7 +824,8 @@ impl CameraController {
 
     /// Get tangential speed (speed along surface, ignoring vertical component)
     pub fn get_tangential_speed(&self) -> f32 {
-        let tangential = self.velocity - self.surface_normal * self.velocity.dot(self.surface_normal);
+        let tangential =
+            self.velocity - self.surface_normal * self.velocity.dot(self.surface_normal);
         tangential.length()
     }
 
@@ -856,7 +855,13 @@ impl CameraController {
         let right_input = if right { 1.0 } else { 0.0 } - if left { 1.0 } else { 0.0 };
         let up_input = if up { 1.0 } else { 0.0 } - if down { 1.0 } else { 0.0 };
 
-        self.update_movement_with_physics(forward_input, right_input, up_input, delta_time, is_sprinting);
+        self.update_movement_with_physics(
+            forward_input,
+            right_input,
+            up_input,
+            delta_time,
+            is_sprinting,
+        );
     }
 
     /// Apply movement from held keys (legacy - no delta_time)
@@ -1063,11 +1068,8 @@ impl CameraController {
 
         // Calculate position behind player based on yaw
         // Note: camera is BEHIND the player, so we add to get farther from player
-        let horizontal_offset = Vec3::new(
-            self.yaw.sin() * distance,
-            0.0,
-            -self.yaw.cos() * distance,
-        );
+        let horizontal_offset =
+            Vec3::new(self.yaw.sin() * distance, 0.0, -self.yaw.cos() * distance);
 
         self.player_position + Vec3::new(0.0, offset_height, 0.0) + horizontal_offset
     }
@@ -1160,7 +1162,10 @@ impl CameraController {
             } else {
                 // Smooth interpolation using ease-in-out
                 let t = self.ease_in_out(self.transition.progress);
-                self.position = self.transition.from_position.lerp(self.transition.to_position, t);
+                self.position = self
+                    .transition
+                    .from_position
+                    .lerp(self.transition.to_position, t);
                 self.distance = self.transition.from_distance
                     + (self.transition.to_distance - self.transition.from_distance) * t;
             }
@@ -1169,7 +1174,8 @@ impl CameraController {
             match self.mode {
                 CameraMode::ThirdPerson => {
                     // Use actual_distance (which may be reduced due to collision)
-                    let target = self.calculate_third_person_position_with_distance(self.actual_distance);
+                    let target =
+                        self.calculate_third_person_position_with_distance(self.actual_distance);
                     self.apply_spring_damping(target, delta_time);
                 }
                 CameraMode::FirstPerson => {
@@ -1334,7 +1340,11 @@ mod tests {
         assert!((camera.position.x - 5.0).abs() < 0.001);
         assert!((camera.position.z - 5.0).abs() < 0.001);
         assert!(camera.position.y > camera.player_position.y);
-        assert!((camera.position.y - (camera.player_position.y + camera.first_person_head_height)).abs() < 0.001);
+        assert!(
+            (camera.position.y - (camera.player_position.y + camera.first_person_head_height))
+                .abs()
+                < 0.001
+        );
     }
 
     #[test]

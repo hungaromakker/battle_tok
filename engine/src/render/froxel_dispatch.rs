@@ -86,7 +86,9 @@ pub fn dispatch_froxel_assign(
     froxel_bounds_buffer: &wgpu::Buffer,
     froxel_sdf_list_buffer: &wgpu::Buffer,
 ) {
-    let sdf_count = sdf_bounds.count.min(super::froxel_assignment::MAX_SDF_COUNT);
+    let sdf_count = sdf_bounds
+        .count
+        .min(super::froxel_assignment::MAX_SDF_COUNT);
 
     // Early out: nothing to assign if there are no SDFs
     if sdf_count == 0 {

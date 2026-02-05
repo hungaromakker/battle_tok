@@ -6,7 +6,7 @@
 //! - Froxel assign: Assigns SDFs to froxels
 //! - Tile culling: Builds per-tile entity lists
 
-use crate::render::shader_loader::{load_shader_file, create_shader_module};
+use crate::render::shader_loader::{create_shader_module, load_shader_file};
 
 /// Paths to the compute shader files (relative to project root).
 pub mod shader_paths {
@@ -46,19 +46,20 @@ impl ComputePipelines {
     /// Panics if any shader file cannot be loaded.
     pub fn new(device: &wgpu::Device) -> Self {
         // Load all shader sources
-        let sdf_bake_src = load_shader_file(shader_paths::SDF_BAKE)
-            .expect("Failed to load sdf_bake.wgsl");
-        let froxel_clear_src = load_shader_file(shader_paths::FROXEL_CLEAR)
-            .expect("Failed to load froxel_clear.wgsl");
+        let sdf_bake_src =
+            load_shader_file(shader_paths::SDF_BAKE).expect("Failed to load sdf_bake.wgsl");
+        let froxel_clear_src =
+            load_shader_file(shader_paths::FROXEL_CLEAR).expect("Failed to load froxel_clear.wgsl");
         let froxel_assign_src = load_shader_file(shader_paths::FROXEL_ASSIGN)
             .expect("Failed to load froxel_assign.wgsl");
-        let tile_culling_src = load_shader_file(shader_paths::TILE_CULLING)
-            .expect("Failed to load tile_culling.wgsl");
+        let tile_culling_src =
+            load_shader_file(shader_paths::TILE_CULLING).expect("Failed to load tile_culling.wgsl");
 
         // Create shader modules
         let sdf_bake_module = create_shader_module(device, "sdf_bake", &sdf_bake_src);
         let froxel_clear_module = create_shader_module(device, "froxel_clear", &froxel_clear_src);
-        let froxel_assign_module = create_shader_module(device, "froxel_assign", &froxel_assign_src);
+        let froxel_assign_module =
+            create_shader_module(device, "froxel_assign", &froxel_assign_src);
         let tile_culling_module = create_shader_module(device, "tile_culling", &tile_culling_src);
 
         // --- SDF Bake ---
@@ -86,16 +87,18 @@ impl ComputePipelines {
                 count: None,
             },
         ];
-        let sdf_bake_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("sdf_bake_bind_group_layout"),
-            entries: &sdf_bake_entries,
-        });
+        let sdf_bake_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("sdf_bake_bind_group_layout"),
+                entries: &sdf_bake_entries,
+            });
 
-        let sdf_bake_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("sdf_bake_pipeline_layout"),
-            bind_group_layouts: &[&sdf_bake_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let sdf_bake_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("sdf_bake_pipeline_layout"),
+                bind_group_layouts: &[&sdf_bake_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         let sdf_bake_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("sdf_bake_pipeline"),
@@ -108,37 +111,38 @@ impl ComputePipelines {
 
         // --- Froxel Clear ---
         // @group(0) @binding(0): storage<read_write> FroxelSDFListBuffer
-        let froxel_clear_entries = [
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
+        let froxel_clear_entries = [wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
             },
-        ];
-        let froxel_clear_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("froxel_clear_bind_group_layout"),
-            entries: &froxel_clear_entries,
-        });
+            count: None,
+        }];
+        let froxel_clear_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("froxel_clear_bind_group_layout"),
+                entries: &froxel_clear_entries,
+            });
 
-        let froxel_clear_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("froxel_clear_pipeline_layout"),
-            bind_group_layouts: &[&froxel_clear_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let froxel_clear_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("froxel_clear_pipeline_layout"),
+                bind_group_layouts: &[&froxel_clear_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
-        let froxel_clear_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("froxel_clear_pipeline"),
-            layout: Some(&froxel_clear_pipeline_layout),
-            module: &froxel_clear_module,
-            entry_point: Some("cs_clear_froxels"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let froxel_clear_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("froxel_clear_pipeline"),
+                layout: Some(&froxel_clear_pipeline_layout),
+                module: &froxel_clear_module,
+                entry_point: Some("cs_clear_froxels"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
         // --- Froxel Assign ---
         // @group(0) @binding(0): storage<read> SdfBoundsBuffer
@@ -187,25 +191,28 @@ impl ComputePipelines {
                 count: None,
             },
         ];
-        let froxel_assign_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("froxel_assign_bind_group_layout"),
-            entries: &froxel_assign_entries,
-        });
+        let froxel_assign_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("froxel_assign_bind_group_layout"),
+                entries: &froxel_assign_entries,
+            });
 
-        let froxel_assign_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("froxel_assign_pipeline_layout"),
-            bind_group_layouts: &[&froxel_assign_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let froxel_assign_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("froxel_assign_pipeline_layout"),
+                bind_group_layouts: &[&froxel_assign_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
-        let froxel_assign_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("froxel_assign_pipeline"),
-            layout: Some(&froxel_assign_pipeline_layout),
-            module: &froxel_assign_module,
-            entry_point: Some("cs_assign_sdfs"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let froxel_assign_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("froxel_assign_pipeline"),
+                layout: Some(&froxel_assign_pipeline_layout),
+                module: &froxel_assign_module,
+                entry_point: Some("cs_assign_sdfs"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
         // --- Tile Culling ---
         // @group(0) @binding(0): storage<read_write> TileBuffer
@@ -243,25 +250,28 @@ impl ComputePipelines {
                 count: None,
             },
         ];
-        let tile_culling_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("tile_culling_bind_group_layout"),
-            entries: &tile_culling_entries,
-        });
+        let tile_culling_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("tile_culling_bind_group_layout"),
+                entries: &tile_culling_entries,
+            });
 
-        let tile_culling_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("tile_culling_pipeline_layout"),
-            bind_group_layouts: &[&tile_culling_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let tile_culling_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("tile_culling_pipeline_layout"),
+                bind_group_layouts: &[&tile_culling_bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
-        let tile_culling_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("tile_culling_pipeline"),
-            layout: Some(&tile_culling_pipeline_layout),
-            module: &tile_culling_module,
-            entry_point: Some("cs_cull_entities"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let tile_culling_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("tile_culling_pipeline"),
+                layout: Some(&tile_culling_pipeline_layout),
+                module: &tile_culling_module,
+                entry_point: Some("cs_cull_entities"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
         // Validate compute pipeline bindings against shader expectations (US-P2-014)
         let compute_mismatches = super::binding_validator::validate_compute_bindings(
@@ -271,7 +281,10 @@ impl ComputePipelines {
             &tile_culling_entries,
         );
         if compute_mismatches > 0 {
-            eprintln!("[ComputePipelines] {} compute binding mismatch(es) detected!", compute_mismatches);
+            eprintln!(
+                "[ComputePipelines] {} compute binding mismatch(es) detected!",
+                compute_mismatches
+            );
         }
 
         Self {

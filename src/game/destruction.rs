@@ -26,7 +26,7 @@ impl FallingPrism {
     pub fn new(coord: (i32, i32, i32), position: Vec3, material: u8) -> Self {
         let rand_x = ((coord.0 as f32 * 12.9898).sin() * 43758.5453).fract() - 0.5;
         let rand_z = ((coord.1 as f32 * 78.233).sin() * 43758.5453).fract() - 0.5;
-        
+
         Self {
             coord,
             position,
@@ -38,17 +38,17 @@ impl FallingPrism {
             grounded: false,
         }
     }
-    
+
     pub fn update(&mut self, delta_time: f32) {
         if self.grounded {
             return;
         }
-        
+
         self.lifetime += delta_time;
         self.velocity.y -= GRAVITY * delta_time;
         self.position += self.velocity * delta_time;
         self.rotation += self.angular_velocity * delta_time;
-        
+
         let ground_height = terrain_height_at(self.position.x, self.position.z, 0.0);
         if self.position.y < ground_height + 0.1 {
             self.position.y = ground_height + 0.1;
@@ -73,7 +73,7 @@ impl DebrisParticle {
     pub fn new(position: Vec3, velocity: Vec3, material: u8) -> Self {
         let size = 0.03 + (position.x * 12.9898).sin().abs() * 0.05;
         let color = get_material_color(material);
-        
+
         Self {
             position,
             velocity,
@@ -83,18 +83,18 @@ impl DebrisParticle {
             grounded: false,
         }
     }
-    
+
     pub fn update(&mut self, delta_time: f32) {
         if self.grounded {
             self.lifetime -= delta_time;
             return;
         }
-        
+
         self.lifetime -= delta_time;
         self.velocity.y -= GRAVITY * delta_time;
         self.velocity *= 0.99;
         self.position += self.velocity * delta_time;
-        
+
         let ground_height = terrain_height_at(self.position.x, self.position.z, 0.0);
         if self.position.y < ground_height + self.size {
             self.position.y = ground_height + self.size;
@@ -108,7 +108,7 @@ impl DebrisParticle {
             }
         }
     }
-    
+
     pub fn is_alive(&self) -> bool {
         self.lifetime > 0.0
     }
@@ -144,11 +144,12 @@ pub fn spawn_debris(position: Vec3, material: u8, count: usize) -> Vec<DebrisPar
             angle.sin() * speed,
         );
 
-        let spawn_pos = position + Vec3::new(
-            (angle + 0.5).cos() * 0.1,
-            height_offset,
-            (angle + 0.5).sin() * 0.1,
-        );
+        let spawn_pos = position
+            + Vec3::new(
+                (angle + 0.5).cos() * 0.1,
+                height_offset,
+                (angle + 0.5).sin() * 0.1,
+            );
 
         particles.push(DebrisParticle::new(spawn_pos, velocity, material));
     }
@@ -192,11 +193,8 @@ impl Meteor {
         );
 
         // Calculate velocity to aim roughly at target area
-        let direction = Vec3::new(
-            target_x - position.x,
-            -start_height,
-            target_z - position.z,
-        ).normalize();
+        let direction =
+            Vec3::new(target_x - position.x, -start_height, target_z - position.z).normalize();
 
         let speed = 25.0 + seed.fract() * 15.0;
         let velocity = direction * speed;
@@ -340,11 +338,8 @@ pub fn spawn_meteor_impact(position: Vec3, count: usize) -> Vec<DebrisParticle> 
             angle.sin() * speed,
         );
 
-        let spawn_pos = position + Vec3::new(
-            (angle + 0.5).cos() * 0.2,
-            0.1,
-            (angle + 0.5).sin() * 0.2,
-        );
+        let spawn_pos =
+            position + Vec3::new((angle + 0.5).cos() * 0.2, 0.1, (angle + 0.5).sin() * 0.2);
 
         // Fire debris (material 10 = fire) with bright HDR colors for bloom
         let mut particle = DebrisParticle::new(spawn_pos, velocity, 10);
@@ -366,11 +361,7 @@ pub fn meteor_trail_ember(meteor: &Meteor, seed: f32) -> ([f32; 3], [f32; 3], f3
     let base_pos = meteor.trail_spawn_position();
     let offset_x = ((seed * 12.9898).sin() * 43758.5453).fract() * 0.3 - 0.15;
     let offset_z = ((seed * 78.233).sin() * 43758.5453).fract() * 0.3 - 0.15;
-    let position = [
-        base_pos[0] + offset_x,
-        base_pos[1],
-        base_pos[2] + offset_z,
-    ];
+    let position = [base_pos[0] + offset_x, base_pos[1], base_pos[2] + offset_z];
 
     // HDR ember color - bright orange/yellow for trail (slightly less bright than meteor core)
     let brightness = 2.5 + (seed * 0.618).fract() * 1.0;

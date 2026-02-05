@@ -2,8 +2,8 @@
 //!
 //! Pure raycast functions for builder mode and block selection.
 
-use glam::Vec3;
 use crate::game::physics::AABB;
+use glam::Vec3;
 
 /// Convert screen coordinates to a world-space ray
 ///
@@ -32,16 +32,18 @@ pub fn screen_to_ray(
     // Convert to normalized device coordinates (-1 to 1)
     let ndc_x = (2.0 * screen_x / screen_width) - 1.0;
     let ndc_y = 1.0 - (2.0 * screen_y / screen_height); // Flip Y
-    
+
     // Calculate up vector from forward and right
     let up = camera_right.cross(camera_forward).normalize();
-    
+
     // Calculate ray direction based on FOV and aspect ratio
     let aspect = screen_width / screen_height;
     let half_fov_tan = (camera_fov / 2.0).tan();
-    
-    let ray_dir = (camera_forward + camera_right * ndc_x * half_fov_tan * aspect + up * ndc_y * half_fov_tan).normalize();
-    
+
+    let ray_dir =
+        (camera_forward + camera_right * ndc_x * half_fov_tan * aspect + up * ndc_y * half_fov_tan)
+            .normalize();
+
     (camera_position, ray_dir)
 }
 
@@ -58,7 +60,7 @@ pub fn determine_hit_face(point: Vec3, aabb: &AABB) -> (Vec3, Vec3, (f32, f32)) 
     let half_size = (aabb.max - aabb.min) * 0.5;
     let offset = point - center;
     let abs_offset = Vec3::new(offset.x.abs(), offset.y.abs(), offset.z.abs());
-    
+
     if abs_offset.x > abs_offset.y && abs_offset.x > abs_offset.z {
         // X face (left/right)
         let normal = Vec3::new(offset.x.signum(), 0.0, 0.0);
@@ -89,10 +91,10 @@ pub fn determine_hit_face(point: Vec3, aabb: &AABB) -> (Vec3, Vec3, (f32, f32)) 
 pub fn calculate_adjacent_block_position(hit_point: Vec3, aabb: &AABB, grid_size: f32) -> Vec3 {
     let block_center = aabb.center();
     let hit_offset = hit_point - block_center;
-    
+
     // Find dominant axis
     let abs_offset = Vec3::new(hit_offset.x.abs(), hit_offset.y.abs(), hit_offset.z.abs());
-    
+
     let placement_pos = if abs_offset.y > abs_offset.x && abs_offset.y > abs_offset.z {
         // Top or bottom
         if hit_offset.y > 0.0 {
@@ -115,7 +117,7 @@ pub fn calculate_adjacent_block_position(hit_point: Vec3, aabb: &AABB, grid_size
             Vec3::new(block_center.x, block_center.y, aabb.min.z - 0.5)
         }
     };
-    
+
     // Snap to grid
     Vec3::new(
         (placement_pos.x / grid_size).round() * grid_size,
@@ -158,7 +160,7 @@ pub fn find_snap_position<'a>(
 ) -> Vec3 {
     let mut best_pos = position;
     let mut best_dist = snap_distance;
-    
+
     for (block_center, aabb_max_y) in block_centers {
         // Possible snap positions (adjacent to this block)
         let snap_positions = [
@@ -166,9 +168,9 @@ pub fn find_snap_position<'a>(
             Vec3::new(block_center.x - grid_size, position.y, block_center.z), // Left
             Vec3::new(block_center.x, position.y, block_center.z + grid_size), // Front
             Vec3::new(block_center.x, position.y, block_center.z - grid_size), // Back
-            Vec3::new(block_center.x, aabb_max_y + 0.5, block_center.z), // Top
+            Vec3::new(block_center.x, aabb_max_y + 0.5, block_center.z),       // Top
         ];
-        
+
         for snap_pos in snap_positions {
             let dist = (snap_pos - position).length();
             if dist < best_dist {
@@ -177,7 +179,7 @@ pub fn find_snap_position<'a>(
             }
         }
     }
-    
+
     best_pos
 }
 
@@ -203,17 +205,17 @@ where
     F: Fn(f32, f32) -> f32,
 {
     let mut t = 1.0;
-    
+
     while t < max_distance {
         let p = ray_origin + ray_dir * t;
         let ground_height = terrain_height_fn(p.x, p.z);
-        
+
         if p.y <= ground_height {
             return Some(p);
         }
-        
+
         t += step_size;
     }
-    
+
     None
 }

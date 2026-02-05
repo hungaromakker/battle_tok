@@ -37,7 +37,7 @@ use std::collections::HashMap;
 use std::f32::consts::PI;
 
 // Import collision functions for ray-prism intersection (US-015)
-use crate::physics::collision::{aabb_surface_normal, ray_aabb_intersect, HitInfo};
+use crate::physics::collision::{HitInfo, aabb_surface_normal, ray_aabb_intersect};
 
 /// Default hex-prism radius for micro-voxels (0.1-0.5 units appear smooth)
 pub const DEFAULT_HEX_RADIUS: f32 = 0.3;
@@ -556,8 +556,8 @@ impl HexPrism {
         for i in 0..6 {
             let angle = (i as f32) * PI / 3.0; // 60 degrees apart, starting at 0
             hex_offsets[i] = [
-                self.radius * angle.sin(),  // X
-                self.radius * angle.cos(),  // Z
+                self.radius * angle.sin(), // X
+                self.radius * angle.cos(), // Z
             ];
         }
 
@@ -716,7 +716,14 @@ impl HexPrismGrid {
     /// * `width` - Number of prisms wide
     /// * `height` - Number of prisms tall (vertical layers)
     /// * `material` - Material type for all prisms
-    pub fn create_wall(&mut self, start_q: i32, start_r: i32, width: i32, height: i32, material: u8) {
+    pub fn create_wall(
+        &mut self,
+        start_q: i32,
+        start_r: i32,
+        width: i32,
+        height: i32,
+        material: u8,
+    ) {
         for q_offset in 0..width {
             for level in 0..height {
                 let prism = HexPrism::new(DEFAULT_HEX_HEIGHT, DEFAULT_HEX_RADIUS, material);
@@ -806,7 +813,14 @@ mod tests {
         for (q, r, level) in test_coords {
             let world = axial_to_world(q, r, level);
             let (rq, rr, rlevel) = world_to_axial(world);
-            assert_eq!((q, r, level), (rq, rr, rlevel), "Roundtrip failed for ({}, {}, {})", q, r, level);
+            assert_eq!(
+                (q, r, level),
+                (rq, rr, rlevel),
+                "Roundtrip failed for ({}, {}, {})",
+                q,
+                r,
+                level
+            );
         }
     }
 

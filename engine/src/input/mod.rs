@@ -64,9 +64,7 @@ impl InputState {
 
     /// Check if any movement input is active (keyboard movement or mouse look/pan).
     pub fn is_moving(&self) -> bool {
-        self.keyboard.movement.any_pressed()
-            || self.mouse.is_looking()
-            || self.mouse.is_panning()
+        self.keyboard.movement.any_pressed() || self.mouse.is_looking() || self.mouse.is_panning()
     }
 }
 

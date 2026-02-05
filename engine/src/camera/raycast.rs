@@ -74,10 +74,8 @@ pub fn raycast_to_plane(
 
     // Calculate ray direction in world space
     // MUST use -forward to match shader convention: ray_cam.z = -1.0
-    let ray_dir = (right * ndc.0 * aspect_ratio * half_fov
-        + up * ndc.1 * half_fov
-        - forward)
-        .normalize();
+    let ray_dir =
+        (right * ndc.0 * aspect_ratio * half_fov + up * ndc.1 * half_fov - forward).normalize();
 
     // Intersect with horizontal plane at Y=plane_height
     // Ray: P = camera_pos + t * ray_dir
@@ -165,7 +163,12 @@ impl RaycastConfig {
     }
 
     /// Raycast to ground plane using this config
-    pub fn raycast_to_ground(&self, camera_pos: Vec3, camera_target: Vec3, uv: (f32, f32)) -> Option<Vec3> {
+    pub fn raycast_to_ground(
+        &self,
+        camera_pos: Vec3,
+        camera_target: Vec3,
+        uv: (f32, f32),
+    ) -> Option<Vec3> {
         raycast_to_ground(camera_pos, camera_target, uv, self.aspect_ratio, self.fov)
     }
 
@@ -274,9 +277,13 @@ mod tests {
 
         for x in [0.0, 0.25, 0.5, 0.75, 1.0] {
             for y in [0.0, 0.25, 0.5, 0.75, 1.0] {
-                let ray = get_ray_direction(camera_pos, camera_target, (x, y), 16.0/9.0, 1.2);
+                let ray = get_ray_direction(camera_pos, camera_target, (x, y), 16.0 / 9.0, 1.2);
                 let len = ray.length();
-                assert!((len - 1.0).abs() < 0.001, "Ray should be normalized, got length {}", len);
+                assert!(
+                    (len - 1.0).abs() < 0.001,
+                    "Ray should be normalized, got length {}",
+                    len
+                );
             }
         }
     }
@@ -285,7 +292,7 @@ mod tests {
     #[test]
     fn test_raycast_config_defaults() {
         let config = RaycastConfig::default();
-        assert!((config.aspect_ratio - 16.0/9.0).abs() < 0.01);
+        assert!((config.aspect_ratio - 16.0 / 9.0).abs() < 0.01);
         assert!((config.fov - 1.2).abs() < 0.01);
     }
 
@@ -298,7 +305,7 @@ mod tests {
         let camera_target = Vec3::new(0.0, 0.0, 0.0);
         let uv = (0.5, 0.5);
 
-        let result = raycast_to_ground(camera_pos, camera_target, uv, 16.0/9.0, 1.2);
+        let result = raycast_to_ground(camera_pos, camera_target, uv, 16.0 / 9.0, 1.2);
         // The ray direction at center screen goes opposite to forward due to shader convention
         // This may or may not hit ground depending on the exact ray direction
         // Just verify the function doesn't panic
@@ -321,8 +328,8 @@ mod tests {
     /// Test that RaycastConfig::with_aspect works correctly
     #[test]
     fn test_raycast_config_with_aspect() {
-        let config = RaycastConfig::with_aspect(4.0/3.0);
-        assert!((config.aspect_ratio - 4.0/3.0).abs() < 0.01);
+        let config = RaycastConfig::with_aspect(4.0 / 3.0);
+        assert!((config.aspect_ratio - 4.0 / 3.0).abs() < 0.01);
         // FOV should still be default
         assert!((config.fov - 1.2).abs() < 0.01);
     }
@@ -363,7 +370,7 @@ mod tests {
         let camera_pos = Vec3::new(0.0, 10.0, 10.0);
         let camera_target = Vec3::new(0.0, 0.0, 0.0);
 
-        let ray_dir = get_ray_direction(camera_pos, camera_target, (0.5, 0.5), 16.0/9.0, 1.2);
+        let ray_dir = get_ray_direction(camera_pos, camera_target, (0.5, 0.5), 16.0 / 9.0, 1.2);
 
         // The ray direction should point away from target due to -forward convention
         // forward = normalize(target - camera) = normalize((0,0,0) - (0,10,10)) = normalize((0,-10,-10))

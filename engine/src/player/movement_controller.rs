@@ -412,10 +412,8 @@ impl PlayerMovementController {
     /// controller.set_spherical_mode(Vec3::ZERO, 1000.0);
     /// ```
     pub fn set_spherical_mode(&mut self, planet_center: Vec3, planet_radius: f32) {
-        self.gravity_mode = GravityMode::Spherical(SphericalGravityConfig::new(
-            planet_center,
-            planet_radius,
-        ));
+        self.gravity_mode =
+            GravityMode::Spherical(SphericalGravityConfig::new(planet_center, planet_radius));
     }
 
     /// Disable spherical gravity mode and return to flat mode.
@@ -846,7 +844,13 @@ impl PlayerMovementController {
 mod tests {
     use super::*;
 
-    fn create_input(forward: bool, backward: bool, left: bool, right: bool, sprint: bool) -> MovementKeys {
+    fn create_input(
+        forward: bool,
+        backward: bool,
+        left: bool,
+        right: bool,
+        sprint: bool,
+    ) -> MovementKeys {
         let mut input = MovementKeys::default();
         input.forward = forward;
         input.backward = backward;
@@ -1229,7 +1233,11 @@ mod tests {
         }
 
         // With v0=8.0, g=20.0: max height = v0^2 / (2g) = 64 / 40 = 1.6m
-        assert!((max_height - 1.6).abs() < 0.1, "Max height was {} expected ~1.6", max_height);
+        assert!(
+            (max_height - 1.6).abs() < 0.1,
+            "Max height was {} expected ~1.6",
+            max_height
+        );
 
         // Should land back on ground
         assert!(controller.is_grounded());
@@ -1254,8 +1262,7 @@ mod tests {
     #[test]
     fn test_custom_jump_gravity() {
         let controller = PlayerMovementController::with_full_physics(
-            5.0, 10.0, 50.0, 30.0,
-            10.0, // custom jump velocity
+            5.0, 10.0, 50.0, 30.0, 10.0, // custom jump velocity
             15.0, // custom gravity
         );
 
@@ -1332,7 +1339,10 @@ mod tests {
         // Player at +X side of planet
         controller.set_player_position(Vec3::new(1100.0, 0.0, 0.0));
         let jump_dir = controller.get_jump_direction();
-        assert!((jump_dir - Vec3::X).length() < 0.001, "Jump should point +X (surface normal)");
+        assert!(
+            (jump_dir - Vec3::X).length() < 0.001,
+            "Jump should point +X (surface normal)"
+        );
     }
 
     #[test]
@@ -1354,11 +1364,17 @@ mod tests {
 
         // Above surface
         let height = config.get_height_above_surface(Vec3::new(0.0, 1100.0, 0.0));
-        assert!((height - 100.0).abs() < 0.001, "Should be 100m above surface");
+        assert!(
+            (height - 100.0).abs() < 0.001,
+            "Should be 100m above surface"
+        );
 
         // Below surface (inside planet)
         let height = config.get_height_above_surface(Vec3::new(0.0, 900.0, 0.0));
-        assert!((height - (-100.0)).abs() < 0.001, "Should be 100m below surface");
+        assert!(
+            (height - (-100.0)).abs() < 0.001,
+            "Should be 100m below surface"
+        );
     }
 
     #[test]
@@ -1393,7 +1409,10 @@ mod tests {
         // With gravity pulling down, velocity decreases but still positive initially
         // avg_velocity = (10.0 + (10.0 - 20.0*0.1)) / 2 = 9.0
         // delta_magnitude = 9.0 * 0.1 = 0.9
-        assert!(delta.y > 0.0, "Delta should still be positive (upward) initially");
+        assert!(
+            delta.y > 0.0,
+            "Delta should still be positive (upward) initially"
+        );
         assert!(delta.x.abs() < 0.001, "Delta should have no X component");
         assert!(delta.z.abs() < 0.001, "Delta should have no Z component");
     }
@@ -1412,7 +1431,9 @@ mod tests {
         assert!(controller.is_grounded());
         assert_eq!(controller.get_vertical_velocity(), 0.0);
         // Should be exactly on surface
-        let height = controller.get_spherical_config().unwrap()
+        let height = controller
+            .get_spherical_config()
+            .unwrap()
             .get_height_above_surface(corrected);
         assert!(height.abs() < 0.001);
     }
@@ -1445,11 +1466,20 @@ mod tests {
         let up = controller.get_up_direction();
 
         // Forward and right should be perpendicular to up
-        assert!(forward.dot(up).abs() < 0.001, "Forward should be tangent to surface");
-        assert!(right.dot(up).abs() < 0.001, "Right should be tangent to surface");
+        assert!(
+            forward.dot(up).abs() < 0.001,
+            "Forward should be tangent to surface"
+        );
+        assert!(
+            right.dot(up).abs() < 0.001,
+            "Right should be tangent to surface"
+        );
 
         // Forward and right should be perpendicular to each other
-        assert!(forward.dot(right).abs() < 0.001, "Forward and right should be perpendicular");
+        assert!(
+            forward.dot(right).abs() < 0.001,
+            "Forward and right should be perpendicular"
+        );
     }
 
     #[test]
@@ -1472,7 +1502,11 @@ mod tests {
 
         // Velocity should be perpendicular to up (tangent to surface)
         let dot = velocity.normalize().dot(up);
-        assert!(dot.abs() < 0.1, "Velocity should be tangent to surface, got dot={}", dot);
+        assert!(
+            dot.abs() < 0.1,
+            "Velocity should be tangent to surface, got dot={}",
+            dot
+        );
     }
 
     #[test]
@@ -1498,7 +1532,9 @@ mod tests {
             position += delta;
             position = controller.update_grounded_state_spherical(position);
 
-            let height = controller.get_spherical_config().unwrap()
+            let height = controller
+                .get_spherical_config()
+                .unwrap()
                 .get_height_above_surface(position);
             if height > max_height {
                 max_height = height;
@@ -1511,12 +1547,22 @@ mod tests {
         }
 
         // Max height should be approximately v0^2 / (2g) = 64 / 40 = 1.6m
-        assert!((max_height - 1.6).abs() < 0.2, "Max height was {} expected ~1.6", max_height);
+        assert!(
+            (max_height - 1.6).abs() < 0.2,
+            "Max height was {} expected ~1.6",
+            max_height
+        );
 
         // Should land back on surface
         assert!(controller.is_grounded());
-        let final_height = controller.get_spherical_config().unwrap()
+        let final_height = controller
+            .get_spherical_config()
+            .unwrap()
             .get_height_above_surface(position);
-        assert!(final_height.abs() < 0.01, "Should be on surface, height={}", final_height);
+        assert!(
+            final_height.abs() < 0.01,
+            "Should be on surface, height={}",
+            final_height
+        );
     }
 }

@@ -1,31 +1,42 @@
 {
     "story_id": "US-P3-008",
     "title": "Create BuildingSystem",
-    "status": "pending",
-    "focus": "",
+    "status": "completed",
+    "focus": "All criteria met — BuildingSystem created and committed",
     "criteria": [
-        {"text": "BuildingSystem owns all 5 building-related state fields", "done": false, "notes": ""},
-        {"text": "place_block() wraps existing placement logic", "done": false, "notes": ""},
-        {"text": "calculate_placement() wraps raycast + snap logic", "done": false, "notes": ""},
-        {"text": "update_physics() runs periodic structural checks", "done": false, "notes": ""},
-        {"text": "No wgpu imports", "done": false, "notes": ""},
-        {"text": "Typecheck passes (cargo check)", "done": false, "notes": ""}
+        {"text": "BuildingSystem owns all 5 building-related state fields", "done": true, "notes": "Owns block_manager, block_physics, merge_workflow, sculpting, toolbar"},
+        {"text": "place_block() wraps existing placement logic", "done": true, "notes": "Creates block with toolbar shape/material, adds to manager, registers with physics"},
+        {"text": "calculate_placement() wraps raycast + snap logic", "done": true, "notes": "Ray-terrain/block intersection with grid snap and nearby block snap"},
+        {"text": "update_physics() runs periodic structural checks", "done": true, "notes": "Timer-based with configurable interval, returns removed block IDs"},
+        {"text": "No wgpu imports", "done": true, "notes": "Verified with grep — zero wgpu references"},
+        {"text": "Typecheck passes (cargo check)", "done": true, "notes": "cargo check passes cleanly (no errors, only pre-existing warnings)"}
     ],
     "checklist": [
-        {"item": "Read spec.md for implementation details", "done": false},
-        {"item": "Read building code in battle_arena.rs and builder/", "done": false},
-        {"item": "Create src/game/systems/building_system.rs", "done": false},
-        {"item": "Update src/game/systems/mod.rs", "done": false},
-        {"item": "Run cargo check", "done": false}
+        {"item": "Read spec.md for implementation details", "done": true},
+        {"item": "Read building code in battle_arena.rs and builder/", "done": true},
+        {"item": "Create src/game/systems/building_system.rs", "done": true},
+        {"item": "Update src/game/systems/mod.rs", "done": true},
+        {"item": "Run cargo check", "done": true}
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
+    "worker_notes": "All criteria met. BuildingSystem created at src/game/systems/building_system.rs (244 lines). Owns all 5 building fields, provides place_block(), calculate_placement(), update_physics(), merged_meshes(), toolbar accessors, and blocks() accessor. No wgpu imports. cargo check passes.",
+    "notes_history": [
+        {"iteration": 1, "note": "Read spec.md and all building-related code. Created BuildingSystem with all methods. Fixed MergedMesh Clone issue by using &[MergedMesh] instead of Vec drain. Removed unused BuildingBlockShape import. cargo check passes. Committed.", "timestamp": "2026-02-05T20:08:00Z"}
+    ],
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": [],
-    "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
+    "commit_hash": "e8e2428a2a968b963edfd4fdcc27fc42fedab500",
+    "files_modified": [
+        "src/game/systems/building_system.rs",
+        "src/game/systems/mod.rs",
+        "src/game/mod.rs"
+    ],
+    "iteration_history": [
+        {"iteration": 1, "action": "Created BuildingSystem struct with all methods, fixed compile errors, committed", "notes": "All 6 acceptance criteria met in single iteration", "completed_at": "2026-02-05T20:08:00Z"}
+    ],
+    "learnings": [
+        "MergedMesh doesn't implement Clone — use &[MergedMesh] slice reference instead of drain/to_vec pattern",
+        "Game systems module uses crate:: which resolves to battle_tok_engine due to path injection pattern"
+    ],
     "created_at": "2026-02-05T22:00:00Z"
 }

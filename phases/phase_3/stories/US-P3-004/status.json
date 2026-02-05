@@ -1,31 +1,43 @@
 {
     "story_id": "US-P3-004",
     "title": "Create ProjectileSystem",
-    "status": "pending",
-    "focus": "",
+    "status": "completed",
+    "focus": "All criteria met — ProjectileSystem implemented and typechecks clean",
     "criteria": [
-        {"text": "ProjectileSystem owns Vec<Projectile> and BallisticsConfig", "done": false, "notes": ""},
-        {"text": "fire() creates projectile with correct initial state", "done": false, "notes": ""},
-        {"text": "update() applies physics and returns position changes", "done": false, "notes": ""},
-        {"text": "No wgpu imports - pure game logic", "done": false, "notes": ""},
-        {"text": "Re-exported from systems module", "done": false, "notes": ""},
-        {"text": "Typecheck passes (cargo check)", "done": false, "notes": ""}
+        {"text": "ProjectileSystem owns Vec<Projectile> and BallisticsConfig", "done": true, "notes": "Struct owns both fields; config accessible via config()/config_mut()"},
+        {"text": "fire() creates projectile with correct initial state", "done": true, "notes": "fire() uses Projectile::spawn(); fire_projectile() accepts pre-built Projectile from Cannon::fire()"},
+        {"text": "update() applies physics and returns position changes", "done": true, "notes": "Returns Vec<ProjectileUpdate> with prev_pos/new_pos/state; auto-removes Expired/Hit projectiles"},
+        {"text": "No wgpu imports - pure game logic", "done": true, "notes": "Only imports glam::Vec3 and engine ballistics types — zero GPU coupling"},
+        {"text": "Re-exported from systems module", "done": true, "notes": "Re-exported via systems/mod.rs and game/mod.rs as ProjectileSystem and ProjectileUpdate"},
+        {"text": "Typecheck passes (cargo check)", "done": true, "notes": "cargo check passes cleanly (no new warnings from our files)"}
     ],
     "checklist": [
-        {"item": "Read spec.md for implementation details", "done": false},
-        {"item": "Read projectile code in battle_arena.rs and engine ballistics", "done": false},
-        {"item": "Create src/game/systems/projectile_system.rs", "done": false},
-        {"item": "Update src/game/systems/mod.rs", "done": false},
-        {"item": "Run cargo check", "done": false}
+        {"item": "Read spec.md for implementation details", "done": true},
+        {"item": "Read projectile code in battle_arena.rs and engine ballistics", "done": true},
+        {"item": "Create src/game/systems/projectile_system.rs", "done": true},
+        {"item": "Update src/game/systems/mod.rs", "done": true},
+        {"item": "Run cargo check", "done": true}
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
+    "worker_notes": "All criteria met. ProjectileSystem created with fire/fire_projectile/update/clear/remove/iter/active_count methods. The update() method saves prev_pos, calls integrate(), and returns ProjectileUpdate structs for external collision checking. Expired/Hit projectiles are auto-removed via swap_remove. The ~40-line retain_mut block in battle_arena.rs (lines 1198-1236) can be replaced with a single self.projectile_system.update(delta) call plus collision logic on the returned updates.",
+    "notes_history": [
+        {"iteration": 1, "note": "Implemented ProjectileSystem from scratch. Read ballistics.rs to understand actual API (integrate() not update(), ProjectileState::Flying/Hit/Expired not Active/Hit/OutOfBounds). Created systems/mod.rs and projectile_system.rs. All criteria pass.", "timestamp": "2026-02-05T22:05:00Z"}
+    ],
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": [],
-    "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
+    "commit_hash": "fd2f8de5a2e6cab8d9b6d155025ef9864e727431",
+    "files_modified": [
+        "src/game/systems/projectile_system.rs",
+        "src/game/systems/mod.rs",
+        "src/game/mod.rs"
+    ],
+    "iteration_history": [
+        {"iteration": 1, "action": "Created ProjectileSystem with all required methods, registered in systems module and game mod.rs, verified cargo check passes", "notes": "All 6 acceptance criteria met in single iteration", "completed_at": "2026-02-05T22:05:00Z"}
+    ],
+    "learnings": [
+        "Engine ballistics uses integrate(&config, dt) not update(delta) — spec description was slightly inaccurate",
+        "ProjectileState variants are Flying/Hit{position,normal}/Expired — not Active/Hit/OutOfBounds as spec mentioned",
+        "Projectile::spawn() takes (position, direction, speed, mass) — 4 args not 3"
+    ],
     "created_at": "2026-02-05T22:00:00Z"
 }

@@ -2,13 +2,16 @@
 //!
 //! Game-specific rendering components including uniforms and shader source.
 
-pub mod uniforms;
-pub mod shader;
-pub mod walls;
 pub mod preview;
+pub mod shader;
+pub mod uniforms;
+pub mod walls;
 
-pub use uniforms::{Uniforms, HexPrismModelUniforms, SdfCannonUniforms, SdfCannonData};
-pub use uniforms::{TerrainParams, LavaParams, SkyStormParams, FogPostParams, TonemapParams};
+pub use preview::{
+    GHOST_PREVIEW_COLOR, calculate_ghost_color, generate_block_preview_mesh,
+    generate_hex_grid_overlay,
+};
 pub use shader::SHADER_SOURCE;
+pub use uniforms::{FogPostParams, LavaParams, SkyStormParams, TerrainParams, TonemapParams};
+pub use uniforms::{HexPrismModelUniforms, SdfCannonData, SdfCannonUniforms, Uniforms};
 pub use walls::{MergedMeshBuffers, create_test_walls};
-pub use preview::{generate_hex_grid_overlay, calculate_ghost_color, GHOST_PREVIEW_COLOR, generate_block_preview_mesh};

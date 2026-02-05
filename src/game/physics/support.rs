@@ -4,12 +4,12 @@
 
 /// Hex coordinate neighbors in axial coordinates
 pub const HEX_NEIGHBORS: [(i32, i32); 6] = [
-    (1, 0),     // E
-    (-1, 0),    // W
-    (0, 1),     // SE
-    (0, -1),    // NW
-    (1, -1),    // NE
-    (-1, 1),    // SW
+    (1, 0),  // E
+    (-1, 0), // W
+    (0, 1),  // SE
+    (0, -1), // NW
+    (1, -1), // NE
+    (-1, 1), // SW
 ];
 
 /// Check if a prism at given coordinates has structural support
@@ -35,19 +35,19 @@ where
     if level <= 0 {
         return true;
     }
-    
+
     // Check if there's a prism directly below
     if grid_contains(q, r, level - 1) {
         return true;
     }
-    
+
     // Check for diagonal support from neighbors (structural support)
     // A prism can be supported if at least 2 adjacent neighbors at same level exist
     let mut neighbor_support = 0;
     for (dq, dr) in HEX_NEIGHBORS {
         let nq = q + dq;
         let nr = r + dr;
-        
+
         // Check neighbor at same level (horizontal structural support)
         if grid_contains(nq, nr, level) {
             neighbor_support += 1;
@@ -57,7 +57,7 @@ where
             neighbor_support += 1;
         }
     }
-    
+
     // Need at least 2 supports to stay standing (structural integrity)
     neighbor_support >= 2
 }
@@ -81,19 +81,19 @@ where
 {
     let (q, r, level) = destroyed_coord;
     let mut prisms_to_fall = Vec::new();
-    
+
     // Check prism directly above
     if grid_contains(q, r, level + 1) {
         if !has_support(q, r, level + 1, &grid_contains) {
             prisms_to_fall.push((q, r, level + 1));
         }
     }
-    
+
     // Check prisms in adjacent columns that might have lost support
     for (dq, dr) in HEX_NEIGHBORS {
         let nq = q + dq;
         let nr = r + dr;
-        
+
         // Check if neighbor at same level or above has lost support
         for check_level in level..=(level + max_cascade_levels) {
             if grid_contains(nq, nr, check_level) {
@@ -103,7 +103,7 @@ where
             }
         }
     }
-    
+
     prisms_to_fall
 }
 

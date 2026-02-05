@@ -69,11 +69,11 @@ pub struct MovementConfig {
 impl Default for MovementConfig {
     fn default() -> Self {
         Self {
-            walk_speed: 5.0,           // 5 m/s walking speed
-            acceleration_time: 0.2,    // ~0.2s to reach target velocity
-            deceleration_time: 0.15,   // ~0.15s to stop
+            walk_speed: 5.0,                     // 5 m/s walking speed
+            acceleration_time: 0.2,              // ~0.2s to reach target velocity
+            deceleration_time: 0.15,             // ~0.15s to stop
             max_turn_rate: std::f32::consts::PI, // 180°/s max turn rate
-            sprint_multiplier: 2.0,    // 2x speed when sprinting
+            sprint_multiplier: 2.0,              // 2x speed when sprinting
         }
     }
 }
@@ -254,11 +254,8 @@ impl PlayerMovement {
 
         if input_direction.is_moving() {
             // Calculate target velocity in world space (camera-relative)
-            let target_velocity = self.calculate_target_velocity(
-                input_direction,
-                camera_yaw,
-                is_sprinting,
-            );
+            let target_velocity =
+                self.calculate_target_velocity(input_direction, camera_yaw, is_sprinting);
 
             // Calculate desired facing direction
             let desired_yaw = target_velocity.x.atan2(-target_velocity.z);
@@ -267,12 +264,8 @@ impl PlayerMovement {
             self.facing_yaw = self.clamp_turn(self.facing_yaw, desired_yaw, dt);
 
             // Accelerate towards target velocity
-            self.velocity = self.accelerate_towards(
-                self.velocity,
-                target_velocity,
-                is_sprinting,
-                dt,
-            );
+            self.velocity =
+                self.accelerate_towards(self.velocity, target_velocity, is_sprinting, dt);
 
             self.was_sprinting = is_sprinting;
         } else {

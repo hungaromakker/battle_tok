@@ -30,9 +30,9 @@ pub const TILE_SIZE: u32 = 16;
 pub const MAX_ENTITIES_PER_TILE: usize = 32;
 
 /// Grid dimensions at 1080p resolution (1920×1080)
-pub const TILES_X_1080P: u32 = 120;  // ceil(1920 / 16)
-pub const TILES_Y_1080P: u32 = 68;   // ceil(1080 / 16)
-pub const TOTAL_TILES_1080P: u32 = TILES_X_1080P * TILES_Y_1080P;  // 8,160
+pub const TILES_X_1080P: u32 = 120; // ceil(1920 / 16)
+pub const TILES_Y_1080P: u32 = 68; // ceil(1080 / 16)
+pub const TOTAL_TILES_1080P: u32 = TILES_X_1080P * TILES_Y_1080P; // 8,160
 
 /// Per-tile culling data - stores entity indices overlapping this tile.
 ///
@@ -98,7 +98,9 @@ impl TileData {
 
     /// Iterate over the valid entity indices in this tile
     pub fn entity_iter(&self) -> impl Iterator<Item = u32> + '_ {
-        self.entity_indices[..self.entity_count as usize].iter().copied()
+        self.entity_indices[..self.entity_count as usize]
+            .iter()
+            .copied()
     }
 }
 
@@ -234,8 +236,7 @@ impl TileBuffer {
 
     /// Calculate the total GPU buffer size needed
     pub fn gpu_buffer_size(&self) -> usize {
-        std::mem::size_of::<TileBufferHeader>()
-            + self.tiles.len() * std::mem::size_of::<TileData>()
+        std::mem::size_of::<TileBufferHeader>() + self.tiles.len() * std::mem::size_of::<TileData>()
     }
 
     /// Get the header as bytes for GPU upload

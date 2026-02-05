@@ -90,7 +90,7 @@ impl Default for TestUniforms {
             placement_height: 0.0,
             show_hud: 1,
             camera_pitch: 0.0,
-            camera_mode: 0, // Third-person by default
+            camera_mode: 0,       // Third-person by default
             show_perf_overlay: 0, // Hidden by default, F12 to toggle
             perf_fps: 0.0,
             perf_frame_time_ms: 0.0,
@@ -401,9 +401,18 @@ impl Default for EntityBufferData {
 
 // Compile-time assertion to verify struct sizes match WGSL layout
 const _: () = {
-    assert!(std::mem::size_of::<TestUniforms>() == 128, "TestUniforms must be 128 bytes to match WGSL");
-    assert!(std::mem::size_of::<PlacedEntity>() == 48, "PlacedEntity must be 48 bytes to match WGSL");
-    assert!(std::mem::size_of::<EntityBufferData>() == 16 + 48 * 64, "EntityBufferData size mismatch");
+    assert!(
+        std::mem::size_of::<TestUniforms>() == 128,
+        "TestUniforms must be 128 bytes to match WGSL"
+    );
+    assert!(
+        std::mem::size_of::<PlacedEntity>() == 48,
+        "PlacedEntity must be 48 bytes to match WGSL"
+    );
+    assert!(
+        std::mem::size_of::<EntityBufferData>() == 16 + 48 * 64,
+        "EntityBufferData size mismatch"
+    );
 };
 
 /// Pack RGB values into a u32.
@@ -413,12 +422,12 @@ pub fn pack_color(r: u8, g: u8, b: u8) -> u32 {
 
 /// Predefined colors for placed objects.
 pub const ENTITY_COLORS: [(u8, u8, u8); 8] = [
-    (255, 100, 50),   // Orange
-    (50, 200, 255),   // Cyan
-    (255, 50, 150),   // Pink
-    (150, 255, 50),   // Lime
-    (255, 200, 50),   // Yellow
-    (150, 50, 255),   // Purple
-    (50, 255, 150),   // Mint
-    (255, 150, 200),  // Light pink
+    (255, 100, 50),  // Orange
+    (50, 200, 255),  // Cyan
+    (255, 50, 150),  // Pink
+    (150, 255, 50),  // Lime
+    (255, 200, 50),  // Yellow
+    (150, 50, 255),  // Purple
+    (50, 255, 150),  // Mint
+    (255, 150, 200), // Light pink
 ];

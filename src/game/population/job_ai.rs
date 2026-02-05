@@ -9,9 +9,9 @@
 
 use std::collections::HashMap;
 
-use super::villager::{Population, VillagerRole};
 use super::super::economy::production::{ProductionBuilding, ProductionType};
 use super::super::economy::resources::{ResourceType, Resources};
+use super::villager::{Population, VillagerRole};
 
 /// Priority level for job types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -91,7 +91,8 @@ impl JobAI {
         }
 
         // Food is always at least Normal priority (survival)
-        let food_priority = self.resource_priorities
+        let food_priority = self
+            .resource_priorities
             .entry(ResourceType::Food)
             .or_insert(JobPriority::Low);
         if *food_priority == JobPriority::Low {
@@ -175,26 +176,37 @@ impl JobAI {
         }
 
         // Get idle villagers
-        let idle_ids: Vec<u32> = population
-            .idle_villagers()
-            .iter()
-            .map(|v| v.id)
-            .collect();
+        let idle_ids: Vec<u32> = population.idle_villagers().iter().map(|v| v.id).collect();
 
         let mut idle_iter = idle_ids.into_iter();
 
         // Process assignments by priority
         for assignment in assignments {
-            let current = building_workers.get(&assignment.building_id).copied().unwrap_or(0);
+            let current = building_workers
+                .get(&assignment.building_id)
+                .copied()
+                .unwrap_or(0);
             let max = assignment.workers_needed + current;
 
-            while building_workers.get(&assignment.building_id).copied().unwrap_or(0) < max {
+            while building_workers
+                .get(&assignment.building_id)
+                .copied()
+                .unwrap_or(0)
+                < max
+            {
                 if let Some(villager_id) = idle_iter.next() {
                     // Assign the villager
-                    population.assign_role(villager_id, assignment.role, Some(assignment.building_id));
+                    population.assign_role(
+                        villager_id,
+                        assignment.role,
+                        Some(assignment.building_id),
+                    );
 
                     // Update building workers
-                    if let Some(building) = buildings.iter_mut().find(|b| b.id == assignment.building_id) {
+                    if let Some(building) = buildings
+                        .iter_mut()
+                        .find(|b| b.id == assignment.building_id)
+                    {
                         building.add_worker();
                     }
                     *building_workers.entry(assignment.building_id).or_insert(0) += 1;
@@ -274,9 +286,7 @@ mod tests {
         population.add_villager();
         population.add_villager();
 
-        let mut buildings = vec![
-            ProductionBuilding::new(ProductionType::Farm, 1),
-        ];
+        let mut buildings = vec![ProductionBuilding::new(ProductionType::Farm, 1)];
 
         let assignments = ai.generate_assignments(&buildings, &population, &resources);
         let made = ai.auto_assign(&assignments, &mut population, &mut buildings);

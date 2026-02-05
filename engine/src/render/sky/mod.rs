@@ -4,4 +4,4 @@
 
 pub mod cloud_texture;
 
-pub use cloud_texture::{CloudTexture, CLOUD_TEXTURE_SIZE};
+pub use cloud_texture::{CLOUD_TEXTURE_SIZE, CloudTexture};

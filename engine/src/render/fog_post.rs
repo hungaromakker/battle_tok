@@ -51,9 +51,9 @@ impl FogPostConfig {
     pub fn battle_arena() -> Self {
         Self {
             fog_color: Vec3::new(0.6, 0.4, 0.55), // Warmer purple with more saturation
-            density: 0.008,                        // Much lighter distance fog
-            height_fog_start: 2.0,                 // Lower start
-            height_fog_density: 0.04,              // Lighter height fog
+            density: 0.008,                       // Much lighter distance fog
+            height_fog_start: 2.0,                // Lower start
+            height_fog_density: 0.04,             // Lighter height fog
         }
     }
 
@@ -83,14 +83,14 @@ impl FogPostConfig {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct FogUniforms {
-    fog_color: [f32; 3],       // 12 bytes (offset 0)
-    density: f32,              // 4 bytes (offset 12) - total 16
-    height_fog_start: f32,     // 4 bytes (offset 16)
-    height_fog_density: f32,   // 4 bytes (offset 20)
-    _pad0: [f32; 2],           // 8 bytes (offset 24) - align to 32
+    fog_color: [f32; 3],          // 12 bytes (offset 0)
+    density: f32,                 // 4 bytes (offset 12) - total 16
+    height_fog_start: f32,        // 4 bytes (offset 16)
+    height_fog_density: f32,      // 4 bytes (offset 20)
+    _pad0: [f32; 2],              // 8 bytes (offset 24) - align to 32
     inv_view_proj: [[f32; 4]; 4], // 64 bytes (offset 32) - total 96
-    camera_pos: [f32; 3],      // 12 bytes (offset 96)
-    _pad1: f32,                // 4 bytes (offset 108) - total 112
+    camera_pos: [f32; 3],         // 12 bytes (offset 96)
+    _pad1: f32,                   // 4 bytes (offset 108) - total 112
 }
 
 // Verify struct size at compile time
@@ -264,12 +264,7 @@ impl FogPostPass {
     }
 
     /// Update uniform buffer with current camera matrices
-    pub fn update(
-        &self,
-        queue: &wgpu::Queue,
-        view_proj: Mat4,
-        camera_pos: Vec3,
-    ) {
+    pub fn update(&self, queue: &wgpu::Queue, view_proj: Mat4, camera_pos: Vec3) {
         let inv_view_proj = view_proj.inverse();
 
         let uniforms = FogUniforms {
@@ -318,7 +313,11 @@ impl FogPostPass {
     }
 
     /// Record render commands into an existing render pass
-    pub fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, bind_group: &'a wgpu::BindGroup) {
+    pub fn render<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        bind_group: &'a wgpu::BindGroup,
+    ) {
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);
         // Draw fullscreen triangle (3 vertices, no vertex buffer)

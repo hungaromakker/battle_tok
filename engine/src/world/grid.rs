@@ -84,11 +84,7 @@ impl GridConfig {
     ///
     /// Calculates planet_radius based on map_size assuming spherical world.
     /// For flat worlds, planet_radius is still calculated but not used.
-    pub fn new(
-        small_grid_size: f32,
-        large_grid_size: f32,
-        map_size: f32,
-    ) -> Self {
+    pub fn new(small_grid_size: f32, large_grid_size: f32, map_size: f32) -> Self {
         // Calculate planet radius from map size
         // circumference = map_size * 4, radius = circumference / (2π)
         let circumference = map_size * 4.0;

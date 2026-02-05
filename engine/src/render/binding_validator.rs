@@ -52,12 +52,17 @@ fn classify_entry(entry: &wgpu::BindGroupLayoutEntry) -> ExpectedBindingType {
     match &entry.ty {
         wgpu::BindingType::Buffer { ty, .. } => match ty {
             wgpu::BufferBindingType::Uniform => ExpectedBindingType::UniformBuffer,
-            wgpu::BufferBindingType::Storage { read_only: true } => ExpectedBindingType::StorageBufferReadOnly,
-            wgpu::BufferBindingType::Storage { read_only: false } => ExpectedBindingType::StorageBufferReadWrite,
+            wgpu::BufferBindingType::Storage { read_only: true } => {
+                ExpectedBindingType::StorageBufferReadOnly
+            }
+            wgpu::BufferBindingType::Storage { read_only: false } => {
+                ExpectedBindingType::StorageBufferReadWrite
+            }
         },
-        wgpu::BindingType::Texture { view_dimension: wgpu::TextureViewDimension::Cube, .. } => {
-            ExpectedBindingType::TextureCube
-        }
+        wgpu::BindingType::Texture {
+            view_dimension: wgpu::TextureViewDimension::Cube,
+            ..
+        } => ExpectedBindingType::TextureCube,
         wgpu::BindingType::Sampler(_) => ExpectedBindingType::Sampler,
         _ => ExpectedBindingType::UniformBuffer, // fallback for unhandled types
     }
@@ -76,7 +81,11 @@ fn validate_bind_group(
             None => {
                 eprintln!(
                     "[BindingValidator] MISMATCH in '{}' group {} binding {}: expected {} ({}), actual: MISSING",
-                    expected.pipeline_name, expected.group_index, exp.binding, exp.binding_type, exp.label
+                    expected.pipeline_name,
+                    expected.group_index,
+                    exp.binding,
+                    exp.binding_type,
+                    exp.label
                 );
                 mismatches += 1;
             }
@@ -85,8 +94,12 @@ fn validate_bind_group(
                 if actual_type != exp.binding_type {
                     eprintln!(
                         "[BindingValidator] MISMATCH in '{}' group {} binding {}: expected {} ({}), actual: {}",
-                        expected.pipeline_name, expected.group_index, exp.binding,
-                        exp.binding_type, exp.label, actual_type
+                        expected.pipeline_name,
+                        expected.group_index,
+                        exp.binding,
+                        exp.binding_type,
+                        exp.label,
+                        actual_type
                     );
                     mismatches += 1;
                 }
@@ -95,7 +108,11 @@ fn validate_bind_group(
     }
 
     for actual in actual_entries {
-        if !expected.bindings.iter().any(|e| e.binding == actual.binding) {
+        if !expected
+            .bindings
+            .iter()
+            .any(|e| e.binding == actual.binding)
+        {
             let actual_type = classify_entry(actual);
             eprintln!(
                 "[BindingValidator] EXTRA binding in '{}' group {} binding {}: type {} not in shader expectations",
@@ -123,14 +140,46 @@ pub fn validate_render_bindings(
         pipeline_name: "Render",
         group_index: 0,
         bindings: vec![
-            ExpectedBinding { binding: 0, binding_type: ExpectedBindingType::UniformBuffer, label: "GpuUniforms" },
-            ExpectedBinding { binding: 1, binding_type: ExpectedBindingType::StorageBufferReadOnly, label: "EntityBuffer" },
-            ExpectedBinding { binding: 2, binding_type: ExpectedBindingType::UniformBuffer, label: "SkySettings" },
-            ExpectedBinding { binding: 3, binding_type: ExpectedBindingType::StorageBufferReadOnly, label: "FroxelBoundsBuffer" },
-            ExpectedBinding { binding: 4, binding_type: ExpectedBindingType::StorageBufferReadOnly, label: "FroxelSDFListBuffer" },
-            ExpectedBinding { binding: 5, binding_type: ExpectedBindingType::StorageBufferReadOnly, label: "TileBuffer" },
-            ExpectedBinding { binding: 8, binding_type: ExpectedBindingType::TextureCube, label: "SkyCubemap" },
-            ExpectedBinding { binding: 9, binding_type: ExpectedBindingType::Sampler, label: "SkySampler" },
+            ExpectedBinding {
+                binding: 0,
+                binding_type: ExpectedBindingType::UniformBuffer,
+                label: "GpuUniforms",
+            },
+            ExpectedBinding {
+                binding: 1,
+                binding_type: ExpectedBindingType::StorageBufferReadOnly,
+                label: "EntityBuffer",
+            },
+            ExpectedBinding {
+                binding: 2,
+                binding_type: ExpectedBindingType::UniformBuffer,
+                label: "SkySettings",
+            },
+            ExpectedBinding {
+                binding: 3,
+                binding_type: ExpectedBindingType::StorageBufferReadOnly,
+                label: "FroxelBoundsBuffer",
+            },
+            ExpectedBinding {
+                binding: 4,
+                binding_type: ExpectedBindingType::StorageBufferReadOnly,
+                label: "FroxelSDFListBuffer",
+            },
+            ExpectedBinding {
+                binding: 5,
+                binding_type: ExpectedBindingType::StorageBufferReadOnly,
+                label: "TileBuffer",
+            },
+            ExpectedBinding {
+                binding: 8,
+                binding_type: ExpectedBindingType::TextureCube,
+                label: "SkyCubemap",
+            },
+            ExpectedBinding {
+                binding: 9,
+                binding_type: ExpectedBindingType::Sampler,
+                label: "SkySampler",
+            },
         ],
     };
     total += validate_bind_group(&render_g0, group0_entries);
@@ -139,9 +188,11 @@ pub fn validate_render_bindings(
     let render_g1 = ExpectedBindGroup {
         pipeline_name: "Render",
         group_index: 1,
-        bindings: vec![
-            ExpectedBinding { binding: 0, binding_type: ExpectedBindingType::StorageBufferReadOnly, label: "BrickCache SSBO" },
-        ],
+        bindings: vec![ExpectedBinding {
+            binding: 0,
+            binding_type: ExpectedBindingType::StorageBufferReadOnly,
+            label: "BrickCache SSBO",
+        }],
     };
     total += validate_bind_group(&render_g1, group1_entries);
 
@@ -164,8 +215,16 @@ pub fn validate_compute_bindings(
         pipeline_name: "SDF Bake",
         group_index: 0,
         bindings: vec![
-            ExpectedBinding { binding: 0, binding_type: ExpectedBindingType::UniformBuffer, label: "BakeParams" },
-            ExpectedBinding { binding: 1, binding_type: ExpectedBindingType::StorageBufferReadWrite, label: "SDF output" },
+            ExpectedBinding {
+                binding: 0,
+                binding_type: ExpectedBindingType::UniformBuffer,
+                label: "BakeParams",
+            },
+            ExpectedBinding {
+                binding: 1,
+                binding_type: ExpectedBindingType::StorageBufferReadWrite,
+                label: "SDF output",
+            },
         ],
     };
     total += validate_bind_group(&sdf_bake, sdf_bake_entries);
@@ -173,9 +232,11 @@ pub fn validate_compute_bindings(
     let froxel_clear = ExpectedBindGroup {
         pipeline_name: "Froxel Clear",
         group_index: 0,
-        bindings: vec![
-            ExpectedBinding { binding: 0, binding_type: ExpectedBindingType::StorageBufferReadWrite, label: "FroxelSDFListBuffer" },
-        ],
+        bindings: vec![ExpectedBinding {
+            binding: 0,
+            binding_type: ExpectedBindingType::StorageBufferReadWrite,
+            label: "FroxelSDFListBuffer",
+        }],
     };
     total += validate_bind_group(&froxel_clear, froxel_clear_entries);
 
@@ -183,10 +244,26 @@ pub fn validate_compute_bindings(
         pipeline_name: "Froxel Assign",
         group_index: 0,
         bindings: vec![
-            ExpectedBinding { binding: 0, binding_type: ExpectedBindingType::StorageBufferReadOnly, label: "SdfBoundsBuffer" },
-            ExpectedBinding { binding: 1, binding_type: ExpectedBindingType::StorageBufferReadOnly, label: "FroxelBoundsBuffer" },
-            ExpectedBinding { binding: 2, binding_type: ExpectedBindingType::StorageBufferReadWrite, label: "FroxelSDFListBuffer" },
-            ExpectedBinding { binding: 3, binding_type: ExpectedBindingType::UniformBuffer, label: "AssignmentUniforms" },
+            ExpectedBinding {
+                binding: 0,
+                binding_type: ExpectedBindingType::StorageBufferReadOnly,
+                label: "SdfBoundsBuffer",
+            },
+            ExpectedBinding {
+                binding: 1,
+                binding_type: ExpectedBindingType::StorageBufferReadOnly,
+                label: "FroxelBoundsBuffer",
+            },
+            ExpectedBinding {
+                binding: 2,
+                binding_type: ExpectedBindingType::StorageBufferReadWrite,
+                label: "FroxelSDFListBuffer",
+            },
+            ExpectedBinding {
+                binding: 3,
+                binding_type: ExpectedBindingType::UniformBuffer,
+                label: "AssignmentUniforms",
+            },
         ],
     };
     total += validate_bind_group(&froxel_assign, froxel_assign_entries);
@@ -195,9 +272,21 @@ pub fn validate_compute_bindings(
         pipeline_name: "Tile Culling",
         group_index: 0,
         bindings: vec![
-            ExpectedBinding { binding: 0, binding_type: ExpectedBindingType::StorageBufferReadWrite, label: "TileBuffer" },
-            ExpectedBinding { binding: 1, binding_type: ExpectedBindingType::StorageBufferReadOnly, label: "EntityBuffer" },
-            ExpectedBinding { binding: 2, binding_type: ExpectedBindingType::UniformBuffer, label: "CullingUniforms" },
+            ExpectedBinding {
+                binding: 0,
+                binding_type: ExpectedBindingType::StorageBufferReadWrite,
+                label: "TileBuffer",
+            },
+            ExpectedBinding {
+                binding: 1,
+                binding_type: ExpectedBindingType::StorageBufferReadOnly,
+                label: "EntityBuffer",
+            },
+            ExpectedBinding {
+                binding: 2,
+                binding_type: ExpectedBindingType::UniformBuffer,
+                label: "CullingUniforms",
+            },
         ],
     };
     total += validate_bind_group(&tile_culling, tile_culling_entries);
@@ -221,7 +310,9 @@ pub fn validate_all_startup_bindings(
     total += validate_compute_bindings(sdf_bake, froxel_clear, froxel_assign, tile_culling);
 
     if total == 0 {
-        println!("[BindingValidator] All shader bindings validated OK (6 bind groups across render + compute pipelines)");
+        println!(
+            "[BindingValidator] All shader bindings validated OK (6 bind groups across render + compute pipelines)"
+        );
     } else {
         eprintln!(
             "[BindingValidator] WARNING: {} binding mismatch(es) found! GPU validation errors may occur.",

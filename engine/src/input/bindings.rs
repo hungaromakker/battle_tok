@@ -157,16 +157,34 @@ mod tests {
     fn test_default_bindings() {
         let bindings = KeyBindings::new();
 
-        assert_eq!(bindings.get_action(KeyCode::W), Some(InputAction::MoveForward));
+        assert_eq!(
+            bindings.get_action(KeyCode::W),
+            Some(InputAction::MoveForward)
+        );
         assert_eq!(bindings.get_action(KeyCode::S), Some(InputAction::MoveBack));
         assert_eq!(bindings.get_action(KeyCode::A), Some(InputAction::MoveLeft));
-        assert_eq!(bindings.get_action(KeyCode::D), Some(InputAction::MoveRight));
-        assert_eq!(bindings.get_action(KeyCode::ShiftLeft), Some(InputAction::Sprint));
+        assert_eq!(
+            bindings.get_action(KeyCode::D),
+            Some(InputAction::MoveRight)
+        );
+        assert_eq!(
+            bindings.get_action(KeyCode::ShiftLeft),
+            Some(InputAction::Sprint)
+        );
         assert_eq!(bindings.get_action(KeyCode::Space), Some(InputAction::Jump));
-        assert_eq!(bindings.get_action(KeyCode::ControlLeft), Some(InputAction::Crouch));
-        assert_eq!(bindings.get_action(KeyCode::V), Some(InputAction::CameraToggle));
+        assert_eq!(
+            bindings.get_action(KeyCode::ControlLeft),
+            Some(InputAction::Crouch)
+        );
+        assert_eq!(
+            bindings.get_action(KeyCode::V),
+            Some(InputAction::CameraToggle)
+        );
         assert_eq!(bindings.get_action(KeyCode::E), Some(InputAction::Interact));
-        assert_eq!(bindings.get_action(KeyCode::Escape), Some(InputAction::Escape));
+        assert_eq!(
+            bindings.get_action(KeyCode::Escape),
+            Some(InputAction::Escape)
+        );
     }
 
     #[test]
@@ -174,7 +192,10 @@ mod tests {
         let bindings = KeyBindings::new();
 
         assert_eq!(bindings.get_key(InputAction::MoveForward), Some(KeyCode::W));
-        assert_eq!(bindings.get_key(InputAction::Sprint), Some(KeyCode::ShiftLeft));
+        assert_eq!(
+            bindings.get_key(InputAction::Sprint),
+            Some(KeyCode::ShiftLeft)
+        );
         assert_eq!(bindings.get_key(InputAction::Jump), Some(KeyCode::Space));
     }
 
@@ -189,8 +210,14 @@ mod tests {
         assert_eq!(bindings.get_action(KeyCode::W), None);
 
         // Arrow up should now be forward
-        assert_eq!(bindings.get_action(KeyCode::ArrowUp), Some(InputAction::MoveForward));
-        assert_eq!(bindings.get_key(InputAction::MoveForward), Some(KeyCode::ArrowUp));
+        assert_eq!(
+            bindings.get_action(KeyCode::ArrowUp),
+            Some(InputAction::MoveForward)
+        );
+        assert_eq!(
+            bindings.get_key(InputAction::MoveForward),
+            Some(KeyCode::ArrowUp)
+        );
     }
 
     #[test]

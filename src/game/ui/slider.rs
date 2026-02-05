@@ -31,13 +31,12 @@ impl UISlider {
             color,
         }
     }
-    
+
     /// Check if a point is within this slider
     pub fn contains(&self, px: f32, py: f32) -> bool {
-        px >= self.x && px <= self.x + self.width &&
-        py >= self.y && py <= self.y + self.height
+        px >= self.x && px <= self.x + self.width && py >= self.y && py <= self.y + self.height
     }
-    
+
     /// Get value from mouse X position within slider
     pub fn value_from_x(&self, px: f32) -> f32 {
         ((px - self.x) / self.width).clamp(0.0, 1.0)

@@ -65,14 +65,14 @@ impl FlagMaterialConfig {
     pub fn for_team(team: FlagTeam) -> Self {
         match team {
             FlagTeam::Red => Self {
-                team_color: Vec3::new(0.8, 0.1, 0.1),       // Bright red
-                stripe_color: Vec3::new(0.4, 0.05, 0.05),  // Dark red stripe
+                team_color: Vec3::new(0.8, 0.1, 0.1),     // Bright red
+                stripe_color: Vec3::new(0.4, 0.05, 0.05), // Dark red stripe
                 wind_strength: 0.2,
                 ambient_strength: 0.4,
             },
             FlagTeam::Blue => Self {
-                team_color: Vec3::new(0.1, 0.4, 0.9),       // Bright blue
-                stripe_color: Vec3::new(0.05, 0.2, 0.45),  // Dark blue stripe
+                team_color: Vec3::new(0.1, 0.4, 0.9),     // Bright blue
+                stripe_color: Vec3::new(0.05, 0.2, 0.45), // Dark blue stripe
                 wind_strength: 0.2,
                 ambient_strength: 0.4,
             },
@@ -83,14 +83,14 @@ impl FlagMaterialConfig {
     pub fn battle_arena(team: FlagTeam) -> Self {
         match team {
             FlagTeam::Red => Self {
-                team_color: Vec3::new(0.9, 0.15, 0.1),      // Fiery red
+                team_color: Vec3::new(0.9, 0.15, 0.1),     // Fiery red
                 stripe_color: Vec3::new(0.35, 0.05, 0.02), // Dark ember stripe
-                wind_strength: 0.25,                        // Stronger wind
-                ambient_strength: 0.3,                      // Darker ambient
+                wind_strength: 0.25,                       // Stronger wind
+                ambient_strength: 0.3,                     // Darker ambient
             },
             FlagTeam::Blue => Self {
-                team_color: Vec3::new(0.15, 0.5, 0.95),     // Electric blue
-                stripe_color: Vec3::new(0.05, 0.2, 0.4),   // Deep blue stripe
+                team_color: Vec3::new(0.15, 0.5, 0.95),  // Electric blue
+                stripe_color: Vec3::new(0.05, 0.2, 0.4), // Deep blue stripe
                 wind_strength: 0.25,
                 ambient_strength: 0.3,
             },
@@ -103,23 +103,23 @@ impl FlagMaterialConfig {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct FlagUniforms {
-    view_proj: [[f32; 4]; 4],         // 64 bytes (offset 0)
-    time: f32,                        // 4 bytes (offset 64)
-    team_color_r: f32,                // 4 bytes (offset 68)
-    team_color_g: f32,                // 4 bytes (offset 72)
-    team_color_b: f32,                // 4 bytes (offset 76)
-    stripe_color_r: f32,              // 4 bytes (offset 80)
-    stripe_color_g: f32,              // 4 bytes (offset 84)
-    stripe_color_b: f32,              // 4 bytes (offset 88)
-    wind_strength: f32,               // 4 bytes (offset 92)
-    camera_pos_x: f32,                // 4 bytes (offset 96)
-    camera_pos_y: f32,                // 4 bytes (offset 100)
-    camera_pos_z: f32,                // 4 bytes (offset 104)
-    ambient_strength: f32,            // 4 bytes (offset 108)
-    _pad1: f32,                       // 4 bytes (offset 112)
-    _pad2: f32,                       // 4 bytes (offset 116)
-    _pad3: f32,                       // 4 bytes (offset 120)
-    _pad4: f32,                       // 4 bytes (offset 124) - align to 128
+    view_proj: [[f32; 4]; 4], // 64 bytes (offset 0)
+    time: f32,                // 4 bytes (offset 64)
+    team_color_r: f32,        // 4 bytes (offset 68)
+    team_color_g: f32,        // 4 bytes (offset 72)
+    team_color_b: f32,        // 4 bytes (offset 76)
+    stripe_color_r: f32,      // 4 bytes (offset 80)
+    stripe_color_g: f32,      // 4 bytes (offset 84)
+    stripe_color_b: f32,      // 4 bytes (offset 88)
+    wind_strength: f32,       // 4 bytes (offset 92)
+    camera_pos_x: f32,        // 4 bytes (offset 96)
+    camera_pos_y: f32,        // 4 bytes (offset 100)
+    camera_pos_z: f32,        // 4 bytes (offset 104)
+    ambient_strength: f32,    // 4 bytes (offset 108)
+    _pad1: f32,               // 4 bytes (offset 112)
+    _pad2: f32,               // 4 bytes (offset 116)
+    _pad3: f32,               // 4 bytes (offset 120)
+    _pad4: f32,               // 4 bytes (offset 124) - align to 128
 }
 
 // Verify struct size at compile time
@@ -147,7 +147,12 @@ impl FlagMaterial {
         surface_format: wgpu::TextureFormat,
         team: FlagTeam,
     ) -> Self {
-        Self::with_config(device, surface_format, FlagMaterialConfig::for_team(team), team)
+        Self::with_config(
+            device,
+            surface_format,
+            FlagMaterialConfig::for_team(team),
+            team,
+        )
     }
 
     /// Create a new flag material with custom configuration
@@ -160,9 +165,7 @@ impl FlagMaterial {
         // Load shader
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Flag Shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../../shaders/flag.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../../shaders/flag.wgsl").into()),
         });
 
         // Create uniform buffer
@@ -266,7 +269,10 @@ impl FlagMaterial {
             cache: None,
         });
 
-        println!("[FlagMaterial] Initialized flag material for {:?} team", team);
+        println!(
+            "[FlagMaterial] Initialized flag material for {:?} team",
+            team
+        );
 
         Self {
             pipeline,
@@ -321,13 +327,7 @@ impl FlagMaterial {
     }
 
     /// Update uniform buffer with current camera and time
-    pub fn update(
-        &self,
-        queue: &wgpu::Queue,
-        view_proj: Mat4,
-        camera_pos: Vec3,
-        time: f32,
-    ) {
+    pub fn update(&self, queue: &wgpu::Queue, view_proj: Mat4, camera_pos: Vec3, time: f32) {
         let uniforms = FlagUniforms {
             view_proj: view_proj.to_cols_array_2d(),
             time,

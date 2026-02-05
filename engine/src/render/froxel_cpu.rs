@@ -5,8 +5,8 @@
 //! shader: for each froxel, test all SDF bounds against the froxel AABB using
 //! sphere-AABB intersection, and build per-froxel SDF index lists.
 
-use super::froxel_buffers::{FroxelBounds, FroxelBoundsBuffer, FroxelSDFListBuffer};
 use super::froxel_assignment::SdfBounds;
+use super::froxel_buffers::{FroxelBounds, FroxelBoundsBuffer, FroxelSDFListBuffer};
 use super::froxel_config::TOTAL_FROXELS;
 
 /// Assign SDFs to froxels on the CPU using sphere-AABB intersection.

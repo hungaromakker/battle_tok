@@ -377,7 +377,9 @@ mod tests {
             if !p_drag.active && !p_no_drag.active {
                 break;
             }
-            if matches!(state1, ProjectileState::Hit { .. }) && matches!(state2, ProjectileState::Hit { .. }) {
+            if matches!(state1, ProjectileState::Hit { .. })
+                && matches!(state2, ProjectileState::Hit { .. })
+            {
                 break;
             }
         }

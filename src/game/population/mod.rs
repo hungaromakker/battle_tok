@@ -5,10 +5,10 @@
 //! - AI auto-assigns workers to jobs
 //! - Morale affected by flag visibility
 
-pub mod villager;
-pub mod morale;
 pub mod job_ai;
+pub mod morale;
+pub mod villager;
 
-pub use villager::{Villager, VillagerRole, VillagerStats, Population};
+pub use job_ai::{JobAI, JobAssignment, JobPriority};
 pub use morale::{Morale, MoraleModifier, MoraleState};
-pub use job_ai::{JobAssignment, JobAI, JobPriority};
+pub use villager::{Population, Villager, VillagerRole, VillagerStats};

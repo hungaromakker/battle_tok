@@ -40,7 +40,8 @@ impl Mesh {
     pub fn merge(&mut self, other: &Mesh) {
         let base_idx = self.vertices.len() as u32;
         self.vertices.extend_from_slice(&other.vertices);
-        self.indices.extend(other.indices.iter().map(|i| i + base_idx));
+        self.indices
+            .extend(other.indices.iter().map(|i| i + base_idx));
     }
 }
 
@@ -111,7 +112,14 @@ impl Camera {
         self.pitch = self.pitch.clamp(-pitch_limit, pitch_limit);
     }
 
-    pub fn update_movement(&mut self, forward: f32, right: f32, up: f32, delta_time: f32, sprint: bool) {
+    pub fn update_movement(
+        &mut self,
+        forward: f32,
+        right: f32,
+        up: f32,
+        delta_time: f32,
+        sprint: bool,
+    ) {
         let speed = if sprint {
             self.move_speed * 2.5
         } else {
@@ -155,18 +163,18 @@ pub fn noise_2d(x: f32, y: f32) -> f32 {
     let iy = y.floor();
     let fx = x - ix;
     let fy = y - iy;
-    
+
     let v00 = hash_2d(ix, iy);
     let v10 = hash_2d(ix + 1.0, iy);
     let v01 = hash_2d(ix, iy + 1.0);
     let v11 = hash_2d(ix + 1.0, iy + 1.0);
-    
+
     let sx = smoothstep(fx);
     let sy = smoothstep(fy);
-    
+
     let v0 = v00 + sx * (v10 - v00);
     let v1 = v01 + sx * (v11 - v01);
-    
+
     v0 + sy * (v1 - v0)
 }
 
@@ -176,14 +184,14 @@ pub fn fbm_noise(x: f32, z: f32, octaves: u32) -> f32 {
     let mut amplitude = 1.0;
     let mut frequency = 1.0;
     let mut max_value = 0.0;
-    
+
     for _ in 0..octaves {
         value += amplitude * noise_2d(x * frequency, z * frequency);
         max_value += amplitude;
         amplitude *= 0.5;
         frequency *= 2.0;
     }
-    
+
     value / max_value
 }
 
@@ -193,7 +201,7 @@ pub fn ridged_noise(x: f32, z: f32, octaves: u32) -> f32 {
     let mut amplitude = 1.0;
     let mut frequency = 1.0;
     let mut max_value = 0.0;
-    
+
     for _ in 0..octaves {
         let n = 1.0 - noise_2d(x * frequency, z * frequency).abs();
         value += amplitude * n * n;
@@ -201,7 +209,7 @@ pub fn ridged_noise(x: f32, z: f32, octaves: u32) -> f32 {
         amplitude *= 0.5;
         frequency *= 2.2;
     }
-    
+
     value / max_value
 }
 
@@ -211,14 +219,14 @@ pub fn turbulent_noise(x: f32, z: f32, octaves: u32) -> f32 {
     let mut amplitude = 1.0;
     let mut frequency = 1.0;
     let mut max_value = 0.0;
-    
+
     for _ in 0..octaves {
         value += amplitude * noise_2d(x * frequency, z * frequency).abs();
         max_value += amplitude;
         amplitude *= 0.5;
         frequency *= 2.0;
     }
-    
+
     value / max_value
 }
 
@@ -285,7 +293,8 @@ pub fn generate_oriented_box(
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
 
-    let transform = |local: Vec3| -> Vec3 { center + right * local.x + up * local.y + forward * local.z };
+    let transform =
+        |local: Vec3| -> Vec3 { center + right * local.x + up * local.y + forward * local.z };
 
     let corners = [
         Vec3::new(-hx, -hy, -hz),
@@ -324,14 +333,19 @@ pub fn generate_oriented_box(
 }
 
 /// Generate a rotated box (for falling prisms)
-pub fn generate_rotated_box(center: Vec3, half_extents: Vec3, rotation: Vec3, color: [f32; 4]) -> Mesh {
+pub fn generate_rotated_box(
+    center: Vec3,
+    half_extents: Vec3,
+    rotation: Vec3,
+    color: [f32; 4],
+) -> Mesh {
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
-    
+
     let (sx, cx) = rotation.x.sin_cos();
     let (sy, cy) = rotation.y.sin_cos();
     let (sz, cz) = rotation.z.sin_cos();
-    
+
     let rotate = |v: Vec3| -> Vec3 {
         let y1 = v.y * cx - v.z * sx;
         let z1 = v.y * sx + v.z * cx;
@@ -344,22 +358,22 @@ pub fn generate_rotated_box(center: Vec3, half_extents: Vec3, rotation: Vec3, co
         let z3 = z2;
         Vec3::new(x3, y3, z3)
     };
-    
+
     let (hx, hy, hz) = (half_extents.x, half_extents.y, half_extents.z);
-    
+
     let corners: [Vec3; 8] = [
         Vec3::new(-hx, -hy, -hz),
-        Vec3::new( hx, -hy, -hz),
-        Vec3::new( hx,  hy, -hz),
-        Vec3::new(-hx,  hy, -hz),
-        Vec3::new(-hx, -hy,  hz),
-        Vec3::new( hx, -hy,  hz),
-        Vec3::new( hx,  hy,  hz),
-        Vec3::new(-hx,  hy,  hz),
+        Vec3::new(hx, -hy, -hz),
+        Vec3::new(hx, hy, -hz),
+        Vec3::new(-hx, hy, -hz),
+        Vec3::new(-hx, -hy, hz),
+        Vec3::new(hx, -hy, hz),
+        Vec3::new(hx, hy, hz),
+        Vec3::new(-hx, hy, hz),
     ];
-    
+
     let world_corners: Vec<Vec3> = corners.iter().map(|&c| center + rotate(c)).collect();
-    
+
     let faces: [([usize; 4], Vec3); 6] = [
         ([0, 3, 2, 1], Vec3::new(0.0, 0.0, -1.0)),
         ([4, 5, 6, 7], Vec3::new(0.0, 0.0, 1.0)),
@@ -368,11 +382,11 @@ pub fn generate_rotated_box(center: Vec3, half_extents: Vec3, rotation: Vec3, co
         ([3, 7, 6, 2], Vec3::new(0.0, 1.0, 0.0)),
         ([0, 1, 5, 4], Vec3::new(0.0, -1.0, 0.0)),
     ];
-    
+
     for (face_indices, local_normal) in &faces {
         let base = vertices.len() as u32;
         let world_normal = rotate(*local_normal);
-        
+
         for &i in face_indices {
             let pos = world_corners[i];
             vertices.push(Vertex {
@@ -383,7 +397,7 @@ pub fn generate_rotated_box(center: Vec3, half_extents: Vec3, rotation: Vec3, co
         }
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
-    
+
     Mesh { vertices, indices }
 }
 

@@ -70,8 +70,8 @@ impl Default for Camera {
             // Position camera outside the sphere, looking at center
             // Planet radius 1000, position ~2x radius away
             position: Vec3::new(0.0, 500.0, 2200.0),
-            yaw: 0.0, // Looking toward -Z (toward planet center)
-            pitch: -0.15, // Slight downward angle
+            yaw: 0.0,          // Looking toward -Z (toward planet center)
+            pitch: -0.15,      // Slight downward angle
             move_speed: 200.0, // Fast movement for planet scale
             look_sensitivity: 0.003,
             fov: 55.0_f32.to_radians(),
@@ -116,7 +116,14 @@ impl Camera {
         self.pitch = self.pitch.clamp(-pitch_limit, pitch_limit);
     }
 
-    fn update_movement(&mut self, forward: f32, right: f32, up: f32, delta_time: f32, sprint: bool) {
+    fn update_movement(
+        &mut self,
+        forward: f32,
+        right: f32,
+        up: f32,
+        delta_time: f32,
+        sprint: bool,
+    ) {
         let speed = if sprint {
             self.move_speed * 2.5
         } else {
@@ -164,13 +171,17 @@ struct Mesh {
 
 impl Mesh {
     fn new() -> Self {
-        Self { vertices: Vec::new(), indices: Vec::new() }
+        Self {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+        }
     }
-    
+
     fn merge(&mut self, other: &Mesh) {
         let base_idx = self.vertices.len() as u32;
         self.vertices.extend_from_slice(&other.vertices);
-        self.indices.extend(other.indices.iter().map(|i| i + base_idx));
+        self.indices
+            .extend(other.indices.iter().map(|i| i + base_idx));
     }
 }
 
@@ -182,49 +193,60 @@ impl Mesh {
 /// Creates 12 pentagons (at icosahedron vertices) + hexagons everywhere else
 fn generate_hex_planet(radius: f32, subdivisions: u32, extrusion: f32, bevel_ratio: f32) -> Mesh {
     let n = subdivisions.max(1);
-    
+
     // Step 1: Generate subdivided icosphere
     let (ico_verts, ico_faces) = generate_icosphere(n);
-    
+
     // Step 2: Compute face centroids (these become hex/pentagon centers in dual)
-    let face_centers: Vec<Vec3> = ico_faces.iter().map(|face| {
-        let centroid = (ico_verts[face[0]] + ico_verts[face[1]] + ico_verts[face[2]]) / 3.0;
-        centroid.normalize()
-    }).collect();
-    
+    let face_centers: Vec<Vec3> = ico_faces
+        .iter()
+        .map(|face| {
+            let centroid = (ico_verts[face[0]] + ico_verts[face[1]] + ico_verts[face[2]]) / 3.0;
+            centroid.normalize()
+        })
+        .collect();
+
     // Step 3: Build adjacency - for each icosphere vertex, find surrounding faces
     let vertex_to_faces = build_vertex_adjacency(&ico_verts, &ico_faces);
-    
+
     // Step 4: Create extruded hex/pentagon tiles
     let mut mesh = Mesh::new();
-    
+
     for (vert_idx, adjacent_faces) in vertex_to_faces.iter().enumerate() {
-        if adjacent_faces.is_empty() { continue; }
-        
+        if adjacent_faces.is_empty() {
+            continue;
+        }
+
         let center_dir = ico_verts[vert_idx];
-        
+
         // Get polygon corners from adjacent face centers
-        let mut corners: Vec<Vec3> = adjacent_faces.iter()
-            .map(|&fi| face_centers[fi])
-            .collect();
-        
+        let mut corners: Vec<Vec3> = adjacent_faces.iter().map(|&fi| face_centers[fi]).collect();
+
         // Sort corners by angle for correct winding
         sort_polygon_corners(&mut corners, center_dir);
-        
+
         // Generate tile color based on position
         let tile_color = get_tile_color(center_dir, vert_idx);
-        
+
         // Create extruded tile
-        create_extruded_tile(&mut mesh, center_dir, &corners, radius, extrusion, bevel_ratio, tile_color);
+        create_extruded_tile(
+            &mut mesh,
+            center_dir,
+            &corners,
+            radius,
+            extrusion,
+            bevel_ratio,
+            tile_color,
+        );
     }
-    
+
     mesh
 }
 
 /// Generate subdivided icosphere (base for dual)
 fn generate_icosphere(subdivisions: u32) -> (Vec<Vec3>, Vec<[usize; 3]>) {
     let phi = (1.0 + 5.0_f32.sqrt()) / 2.0;
-    
+
     // 12 icosahedron vertices
     let mut verts: Vec<Vec3> = vec![
         Vec3::new(-1.0, phi, 0.0).normalize(),
@@ -240,27 +262,43 @@ fn generate_icosphere(subdivisions: u32) -> (Vec<Vec3>, Vec<[usize; 3]>) {
         Vec3::new(-phi, 0.0, -1.0).normalize(),
         Vec3::new(-phi, 0.0, 1.0).normalize(),
     ];
-    
+
     // 20 icosahedron faces
     let mut faces: Vec<[usize; 3]> = vec![
-        [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
-        [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
-        [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
-        [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
+        [0, 11, 5],
+        [0, 5, 1],
+        [0, 1, 7],
+        [0, 7, 10],
+        [0, 10, 11],
+        [1, 5, 9],
+        [5, 11, 4],
+        [11, 10, 2],
+        [10, 7, 6],
+        [7, 1, 8],
+        [3, 9, 4],
+        [3, 4, 2],
+        [3, 2, 6],
+        [3, 6, 8],
+        [3, 8, 9],
+        [4, 9, 5],
+        [2, 4, 11],
+        [6, 2, 10],
+        [8, 6, 7],
+        [9, 8, 1],
     ];
-    
+
     // Subdivide
     for _ in 0..subdivisions {
         let mut new_faces = Vec::new();
-        let mut edge_midpoints: std::collections::HashMap<(usize, usize), usize> = 
+        let mut edge_midpoints: std::collections::HashMap<(usize, usize), usize> =
             std::collections::HashMap::new();
-        
+
         for face in &faces {
             let (v0, v1, v2) = (face[0], face[1], face[2]);
             let m01 = get_midpoint(&mut verts, &mut edge_midpoints, v0, v1);
             let m12 = get_midpoint(&mut verts, &mut edge_midpoints, v1, v2);
             let m20 = get_midpoint(&mut verts, &mut edge_midpoints, v2, v0);
-            
+
             new_faces.push([v0, m01, m20]);
             new_faces.push([v1, m12, m01]);
             new_faces.push([v2, m20, m12]);
@@ -268,18 +306,21 @@ fn generate_icosphere(subdivisions: u32) -> (Vec<Vec3>, Vec<[usize; 3]>) {
         }
         faces = new_faces;
     }
-    
+
     (verts, faces)
 }
 
 fn get_midpoint(
     verts: &mut Vec<Vec3>,
     cache: &mut std::collections::HashMap<(usize, usize), usize>,
-    a: usize, b: usize
+    a: usize,
+    b: usize,
 ) -> usize {
     let key = if a < b { (a, b) } else { (b, a) };
-    if let Some(&idx) = cache.get(&key) { return idx; }
-    
+    if let Some(&idx) = cache.get(&key) {
+        return idx;
+    }
+
     let mid = ((verts[a] + verts[b]) / 2.0).normalize();
     let idx = verts.len();
     verts.push(mid);
@@ -291,25 +332,35 @@ fn build_vertex_adjacency(verts: &[Vec3], faces: &[[usize; 3]]) -> Vec<Vec<usize
     let mut adj = vec![Vec::new(); verts.len()];
     for (fi, face) in faces.iter().enumerate() {
         for &vi in face {
-            if !adj[vi].contains(&fi) { adj[vi].push(fi); }
+            if !adj[vi].contains(&fi) {
+                adj[vi].push(fi);
+            }
         }
     }
     adj
 }
 
 fn sort_polygon_corners(corners: &mut Vec<Vec3>, center: Vec3) {
-    if corners.len() < 3 { return; }
-    
-    let up = if center.y.abs() < 0.99 { Vec3::Y } else { Vec3::X };
+    if corners.len() < 3 {
+        return;
+    }
+
+    let up = if center.y.abs() < 0.99 {
+        Vec3::Y
+    } else {
+        Vec3::X
+    };
     let t1 = center.cross(up).normalize();
     let t2 = center.cross(t1).normalize();
-    
+
     corners.sort_by(|a, b| {
         let da = *a - center;
         let db = *b - center;
         let angle_a = da.dot(t2).atan2(da.dot(t1));
         let angle_b = db.dot(t2).atan2(db.dot(t1));
-        angle_a.partial_cmp(&angle_b).unwrap_or(std::cmp::Ordering::Equal)
+        angle_a
+            .partial_cmp(&angle_b)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
 }
 
@@ -317,10 +368,10 @@ fn sort_polygon_corners(corners: &mut Vec<Vec3>, center: Vec3) {
 fn get_tile_color(dir: Vec3, idx: usize) -> [f32; 4] {
     // Hash-based variation for visual interest
     let hash = ((idx * 2654435761) % 1000) as f32 / 1000.0;
-    
+
     // Latitude-based coloring
     let lat = dir.y.abs();
-    
+
     if lat > 0.85 {
         // Polar caps - white/ice
         [0.9 + hash * 0.05, 0.92 + hash * 0.05, 0.95, 1.0]
@@ -332,7 +383,12 @@ fn get_tile_color(dir: Vec3, idx: usize) -> [f32; 4] {
         [0.75 + hash * 0.1, 0.65 + hash * 0.1, 0.45 + hash * 0.1, 1.0]
     } else {
         // Temperate - neutral stone grey
-        [0.55 + hash * 0.15, 0.52 + hash * 0.15, 0.48 + hash * 0.15, 1.0]
+        [
+            0.55 + hash * 0.15,
+            0.52 + hash * 0.15,
+            0.48 + hash * 0.15,
+            1.0,
+        ]
     }
 }
 
@@ -347,20 +403,22 @@ fn create_extruded_tile(
     color: [f32; 4],
 ) {
     let n = corners.len();
-    if n < 3 { return; }
-    
+    if n < 3 {
+        return;
+    }
+
     let base_idx = mesh.vertices.len() as u32;
-    
+
     // Colors for different parts
     let edge_color = [color[0] * 0.5, color[1] * 0.5, color[2] * 0.5, 1.0];
     // Rocky crust color - dark brown/grey rock (NOT void black)
     let crust_color = [0.18, 0.12, 0.08, 1.0]; // Dark brown rock
-    
+
     // Compute tile geometry
     let outer_radius = radius + extrusion;
     let inner_radius = radius - extrusion * 0.5; // Tiles go down into crust
     let shrink = 1.0 - bevel_ratio;
-    
+
     // === TOP SURFACE CENTER ===
     let top_center = center_dir * outer_radius;
     mesh.vertices.push(HexVertex {
@@ -368,7 +426,7 @@ fn create_extruded_tile(
         normal: center_dir.into(),
         color,
     });
-    
+
     // === TOP SURFACE CORNERS (shrunk for gap) ===
     for corner in corners {
         let dir = slerp(center_dir, *corner, shrink * 0.9);
@@ -379,7 +437,7 @@ fn create_extruded_tile(
             color,
         });
     }
-    
+
     // === BEVEL EDGE (outer edge, slightly lower) ===
     for corner in corners {
         let dir = slerp(center_dir, *corner, shrink);
@@ -390,7 +448,7 @@ fn create_extruded_tile(
             color: edge_color,
         });
     }
-    
+
     // === CRUST LAYER (rocky sides going down) ===
     for corner in corners {
         let dir = slerp(center_dir, *corner, shrink * 0.98);
@@ -401,18 +459,18 @@ fn create_extruded_tile(
             color: crust_color,
         });
     }
-    
+
     let n = n as u32;
-    
+
     // === INDEX GENERATION ===
     // Top surface fan
     for i in 0..n {
         let next = (i + 1) % n;
-        mesh.indices.push(base_idx);           // center
+        mesh.indices.push(base_idx); // center
         mesh.indices.push(base_idx + 1 + i);
         mesh.indices.push(base_idx + 1 + next);
     }
-    
+
     // Bevel strip (top corners to bevel edge)
     for i in 0..n {
         let next = (i + 1) % n;
@@ -420,16 +478,16 @@ fn create_extruded_tile(
         let top_next = base_idx + 1 + next;
         let bevel = base_idx + 1 + n + i;
         let bevel_next = base_idx + 1 + n + next;
-        
+
         mesh.indices.push(top);
         mesh.indices.push(bevel);
         mesh.indices.push(top_next);
-        
+
         mesh.indices.push(top_next);
         mesh.indices.push(bevel);
         mesh.indices.push(bevel_next);
     }
-    
+
     // Side walls (bevel to bottom)
     for i in 0..n {
         let next = (i + 1) % n;
@@ -437,11 +495,11 @@ fn create_extruded_tile(
         let bevel_next = base_idx + 1 + n + next;
         let bottom = base_idx + 1 + n * 2 + i;
         let bottom_next = base_idx + 1 + n * 2 + next;
-        
+
         mesh.indices.push(bevel);
         mesh.indices.push(bottom);
         mesh.indices.push(bevel_next);
-        
+
         mesh.indices.push(bevel_next);
         mesh.indices.push(bottom);
         mesh.indices.push(bottom_next);
@@ -452,11 +510,11 @@ fn create_extruded_tile(
 fn slerp(a: Vec3, b: Vec3, t: f32) -> Vec3 {
     let dot = a.dot(b).clamp(-1.0, 1.0);
     let theta = dot.acos();
-    
+
     if theta.abs() < 0.001 {
         return (a * (1.0 - t) + b * t).normalize();
     }
-    
+
     let sin_theta = theta.sin();
     let wa = ((1.0 - t) * theta).sin() / sin_theta;
     let wb = (t * theta).sin() / sin_theta;
@@ -478,13 +536,13 @@ fn generate_hex_sphere(radius: f32, subdivisions: u32) -> (Vec<HexVertex>, Vec<u
 #[allow(dead_code)]
 fn generate_floating_island(center: Vec3, size: Vec3) -> Mesh {
     let mut mesh = Mesh::new();
-    
+
     // Generate tapered rock base
     generate_island_rock(&mut mesh, center, size);
-    
+
     // Generate grass plane on top
     generate_grass_plane(&mut mesh, center + Vec3::Y * size.y * 0.5, size.x, size.z);
-    
+
     mesh
 }
 
@@ -494,40 +552,40 @@ fn generate_island_rock(mesh: &mut Mesh, center: Vec3, size: Vec3) {
     let base_idx = mesh.vertices.len() as u32;
     let segments = 24;
     let rings = 16;
-    
+
     let rock_color = [0.45, 0.40, 0.35, 1.0];
     let dark_rock = [0.25, 0.22, 0.20, 1.0];
-    
+
     // Generate vertices for tapered rock
     for ring in 0..=rings {
         let v = ring as f32 / rings as f32;
         let y = 0.5 - v; // Top to bottom
-        
+
         // Radius varies: full at top, tapered to point at bottom
         let taper = if y > 0.0 {
             1.0 // Full radius above center
         } else {
             (1.0 + y * 2.0).max(0.05) // Taper below
         };
-        
+
         for seg in 0..=segments {
             let u = seg as f32 / segments as f32;
             let theta = u * std::f32::consts::TAU;
-            
+
             // Add noise for rocky appearance
             let noise = ((theta * 5.0).sin() * 0.15 + (y * 8.0).sin() * 0.1) * taper;
             let r = taper + noise;
-            
+
             let x = theta.cos() * r * size.x * 0.5;
             let z = theta.sin() * r * size.z * 0.5;
             let py = y * size.y;
-            
+
             let pos = center + Vec3::new(x, py, z);
             let normal = Vec3::new(x, py * 0.5, z).normalize();
-            
+
             // Darker at bottom
             let color = if y < -0.3 { dark_rock } else { rock_color };
-            
+
             mesh.vertices.push(HexVertex {
                 position: pos.into(),
                 normal: normal.into(),
@@ -535,7 +593,7 @@ fn generate_island_rock(mesh: &mut Mesh, center: Vec3, size: Vec3) {
             });
         }
     }
-    
+
     // Generate indices
     for ring in 0..rings {
         for seg in 0..segments {
@@ -543,11 +601,11 @@ fn generate_island_rock(mesh: &mut Mesh, center: Vec3, size: Vec3) {
             let next = curr + 1;
             let below = curr + segments + 1;
             let below_next = below + 1;
-            
+
             mesh.indices.push(curr);
             mesh.indices.push(below);
             mesh.indices.push(next);
-            
+
             mesh.indices.push(next);
             mesh.indices.push(below);
             mesh.indices.push(below_next);
@@ -561,34 +619,34 @@ fn generate_grass_plane(mesh: &mut Mesh, center: Vec3, width: f32, depth: f32) {
     let base_idx = mesh.vertices.len() as u32;
     let grass_color = [0.35, 0.55, 0.25, 1.0];
     let grass_dark = [0.25, 0.45, 0.18, 1.0];
-    
+
     let segments = 16;
-    
+
     // Generate disc vertices
     mesh.vertices.push(HexVertex {
         position: center.into(),
         normal: [0.0, 1.0, 0.0],
         color: grass_color,
     });
-    
+
     for i in 0..=segments {
         let angle = (i as f32 / segments as f32) * std::f32::consts::TAU;
         let x = angle.cos() * width * 0.45;
         let z = angle.sin() * depth * 0.45;
-        
+
         // Slight undulation
         let y = ((angle * 3.0).sin() * 0.5 + (angle * 7.0).cos() * 0.3) * 2.0;
-        
+
         let pos = center + Vec3::new(x, y, z);
         let color = if i % 2 == 0 { grass_color } else { grass_dark };
-        
+
         mesh.vertices.push(HexVertex {
             position: pos.into(),
             normal: [0.0, 1.0, 0.0],
             color,
         });
     }
-    
+
     // Fan triangles
     for i in 0..segments as u32 {
         mesh.indices.push(base_idx);
@@ -605,23 +663,23 @@ fn generate_grass_plane(mesh: &mut Mesh, center: Vec3, width: f32, depth: f32) {
 #[allow(dead_code)]
 fn generate_fortress(center: Vec3) -> Mesh {
     let mut mesh = Mesh::new();
-    
+
     // Outer wall ring
     generate_wall_ring(&mut mesh, center, 120.0, 12.0, 18.0);
-    
+
     // Corner towers (4)
     for i in 0..4 {
         let angle = (i as f32 / 4.0) * std::f32::consts::TAU + std::f32::consts::FRAC_PI_4;
         let tower_pos = center + Vec3::new(angle.cos() * 115.0, 0.0, angle.sin() * 115.0);
         generate_tower(&mut mesh, tower_pos, 18.0, 35.0);
     }
-    
+
     // Central keep
     generate_keep(&mut mesh, center, Vec3::new(50.0, 40.0, 50.0));
-    
+
     // Crystal pit in center
     generate_crystal_pit(&mut mesh, center, 25.0);
-    
+
     mesh
 }
 
@@ -632,14 +690,18 @@ fn generate_wall_ring(mesh: &mut Mesh, center: Vec3, radius: f32, thickness: f32
     let segments = 32;
     let wall_color = [0.5, 0.48, 0.45, 1.0];
     let dark_wall = [0.35, 0.33, 0.30, 1.0];
-    
+
     // Inner and outer rings at bottom and top
     for ring in 0..4 {
         let is_outer = ring % 2 == 0;
         let is_top = ring >= 2;
-        let r = if is_outer { radius + thickness * 0.5 } else { radius - thickness * 0.5 };
+        let r = if is_outer {
+            radius + thickness * 0.5
+        } else {
+            radius - thickness * 0.5
+        };
         let y = if is_top { height } else { 0.0 };
-        
+
         for seg in 0..=segments {
             let angle = (seg as f32 / segments as f32) * std::f32::consts::TAU;
             let pos = center + Vec3::new(angle.cos() * r, y, angle.sin() * r);
@@ -648,7 +710,7 @@ fn generate_wall_ring(mesh: &mut Mesh, center: Vec3, radius: f32, thickness: f32
             } else {
                 Vec3::new(-angle.cos(), 0.0, -angle.sin())
             };
-            
+
             mesh.vertices.push(HexVertex {
                 position: pos.into(),
                 normal: normal.into(),
@@ -656,9 +718,9 @@ fn generate_wall_ring(mesh: &mut Mesh, center: Vec3, radius: f32, thickness: f32
             });
         }
     }
-    
+
     let verts_per_ring = (segments + 1) as u32;
-    
+
     // Outer wall face
     for seg in 0..segments as u32 {
         let bot = base_idx + seg;
@@ -670,7 +732,7 @@ fn generate_wall_ring(mesh: &mut Mesh, center: Vec3, radius: f32, thickness: f32
         mesh.indices.push(top);
         mesh.indices.push(top + 1);
     }
-    
+
     // Inner wall face
     for seg in 0..segments as u32 {
         let bot = base_idx + verts_per_ring + seg;
@@ -682,7 +744,7 @@ fn generate_wall_ring(mesh: &mut Mesh, center: Vec3, radius: f32, thickness: f32
         mesh.indices.push(top + 1);
         mesh.indices.push(top);
     }
-    
+
     // Top walkway
     for seg in 0..segments as u32 {
         let outer = base_idx + verts_per_ring * 2 + seg;
@@ -694,22 +756,33 @@ fn generate_wall_ring(mesh: &mut Mesh, center: Vec3, radius: f32, thickness: f32
         mesh.indices.push(inner);
         mesh.indices.push(inner + 1);
     }
-    
+
     // Crenellations on top
     generate_crenellations(mesh, center, radius + thickness * 0.5, height, segments / 2);
 }
 
 /// Generate crenellations (merlons) on wall top
 #[allow(dead_code)]
-fn generate_crenellations(mesh: &mut Mesh, center: Vec3, radius: f32, wall_height: f32, count: u32) {
+fn generate_crenellations(
+    mesh: &mut Mesh,
+    center: Vec3,
+    radius: f32,
+    wall_height: f32,
+    count: u32,
+) {
     let merlon_color = [0.52, 0.50, 0.47, 1.0];
     let merlon_height = 4.0;
     let merlon_width = 3.0;
-    
+
     for i in 0..count {
         let angle = (i as f32 / count as f32) * std::f32::consts::TAU;
         let pos = center + Vec3::new(angle.cos() * radius, wall_height, angle.sin() * radius);
-        generate_box(mesh, pos, Vec3::new(merlon_width, merlon_height, merlon_width), merlon_color);
+        generate_box(
+            mesh,
+            pos,
+            Vec3::new(merlon_width, merlon_height, merlon_width),
+            merlon_color,
+        );
     }
 }
 
@@ -720,7 +793,7 @@ fn generate_tower(mesh: &mut Mesh, center: Vec3, radius: f32, height: f32) {
     let segments = 16;
     let tower_color = [0.48, 0.45, 0.42, 1.0];
     let roof_color = [0.35, 0.25, 0.20, 1.0];
-    
+
     // Tower cylinder
     for ring in 0..2 {
         let y = ring as f32 * height;
@@ -728,7 +801,7 @@ fn generate_tower(mesh: &mut Mesh, center: Vec3, radius: f32, height: f32) {
             let angle = (seg as f32 / segments as f32) * std::f32::consts::TAU;
             let pos = center + Vec3::new(angle.cos() * radius, y, angle.sin() * radius);
             let normal = Vec3::new(angle.cos(), 0.0, angle.sin());
-            
+
             mesh.vertices.push(HexVertex {
                 position: pos.into(),
                 normal: normal.into(),
@@ -736,7 +809,7 @@ fn generate_tower(mesh: &mut Mesh, center: Vec3, radius: f32, height: f32) {
             });
         }
     }
-    
+
     // Cylinder indices
     let verts_per_ring = (segments + 1) as u32;
     for seg in 0..segments as u32 {
@@ -749,30 +822,35 @@ fn generate_tower(mesh: &mut Mesh, center: Vec3, radius: f32, height: f32) {
         mesh.indices.push(top);
         mesh.indices.push(top + 1);
     }
-    
+
     // Cone roof
     let roof_base = mesh.vertices.len() as u32;
     let roof_height = height * 0.4;
     let apex = center + Vec3::Y * (height + roof_height);
-    
+
     mesh.vertices.push(HexVertex {
         position: apex.into(),
         normal: [0.0, 1.0, 0.0],
         color: roof_color,
     });
-    
+
     for seg in 0..=segments {
         let angle = (seg as f32 / segments as f32) * std::f32::consts::TAU;
-        let pos = center + Vec3::new(angle.cos() * radius * 1.2, height, angle.sin() * radius * 1.2);
+        let pos = center
+            + Vec3::new(
+                angle.cos() * radius * 1.2,
+                height,
+                angle.sin() * radius * 1.2,
+            );
         let normal = Vec3::new(angle.cos(), 0.5, angle.sin()).normalize();
-        
+
         mesh.vertices.push(HexVertex {
             position: pos.into(),
             normal: normal.into(),
             color: roof_color,
         });
     }
-    
+
     // Cone indices
     for seg in 0..segments as u32 {
         mesh.indices.push(roof_base);
@@ -786,7 +864,7 @@ fn generate_tower(mesh: &mut Mesh, center: Vec3, radius: f32, height: f32) {
 fn generate_keep(mesh: &mut Mesh, center: Vec3, size: Vec3) {
     let keep_color = [0.5, 0.47, 0.43, 1.0];
     generate_box(mesh, center + Vec3::Y * size.y * 0.5, size, keep_color);
-    
+
     // Add smaller tower on top
     let tower_pos = center + Vec3::Y * size.y;
     generate_tower(mesh, tower_pos, size.x * 0.3, size.y * 0.6);
@@ -799,31 +877,31 @@ fn generate_crystal_pit(mesh: &mut Mesh, center: Vec3, radius: f32) {
     let pit_color = [0.1, 0.08, 0.08, 1.0];
     let segments = 16;
     let base_idx = mesh.vertices.len() as u32;
-    
+
     // Pit rim
     mesh.vertices.push(HexVertex {
         position: (center - Vec3::Y * 5.0).into(),
         normal: [0.0, -1.0, 0.0],
         color: pit_color,
     });
-    
+
     for seg in 0..=segments {
         let angle = (seg as f32 / segments as f32) * std::f32::consts::TAU;
         let pos = center + Vec3::new(angle.cos() * radius, -5.0, angle.sin() * radius);
-        
+
         mesh.vertices.push(HexVertex {
             position: pos.into(),
             normal: [0.0, -1.0, 0.0],
             color: pit_color,
         });
     }
-    
+
     for seg in 0..segments as u32 {
         mesh.indices.push(base_idx);
         mesh.indices.push(base_idx + 2 + seg);
         mesh.indices.push(base_idx + 1 + seg);
     }
-    
+
     // Crystal spikes (glowing orange)
     let crystal_color = [1.0, 0.6, 0.1, 1.0]; // Emissive orange
     for i in 0..5 {
@@ -840,27 +918,27 @@ fn generate_crystal_pit(mesh: &mut Mesh, center: Vec3, radius: f32) {
 fn generate_crystal_spike(mesh: &mut Mesh, base: Vec3, height: f32, width: f32, color: [f32; 4]) {
     let base_idx = mesh.vertices.len() as u32;
     let apex = base + Vec3::Y * height;
-    
+
     // Apex
     mesh.vertices.push(HexVertex {
         position: apex.into(),
         normal: [0.0, 1.0, 0.0],
         color,
     });
-    
+
     // Base corners
     for i in 0..4 {
         let angle = (i as f32 / 4.0) * std::f32::consts::TAU + std::f32::consts::FRAC_PI_4;
         let pos = base + Vec3::new(angle.cos() * width, 0.0, angle.sin() * width);
         let normal = Vec3::new(angle.cos(), 0.5, angle.sin()).normalize();
-        
+
         mesh.vertices.push(HexVertex {
             position: pos.into(),
             normal: normal.into(),
             color,
         });
     }
-    
+
     // Faces
     for i in 0..4u32 {
         let next = (i + 1) % 4;
@@ -874,7 +952,7 @@ fn generate_crystal_spike(mesh: &mut Mesh, base: Vec3, height: f32, width: f32, 
 #[allow(dead_code)]
 fn generate_box(mesh: &mut Mesh, center: Vec3, size: Vec3, color: [f32; 4]) {
     let half = size * 0.5;
-    
+
     // 8 corners
     let corners = [
         Vec3::new(-half.x, -half.y, -half.z),
@@ -886,7 +964,7 @@ fn generate_box(mesh: &mut Mesh, center: Vec3, size: Vec3, color: [f32; 4]) {
         Vec3::new(half.x, half.y, half.z),
         Vec3::new(-half.x, half.y, half.z),
     ];
-    
+
     // Face definitions: [v0, v1, v2, v3], normal
     let faces: [([usize; 4], Vec3); 6] = [
         ([0, 1, 2, 3], -Vec3::Y), // Bottom
@@ -896,7 +974,7 @@ fn generate_box(mesh: &mut Mesh, center: Vec3, size: Vec3, color: [f32; 4]) {
         ([0, 3, 7, 4], -Vec3::X), // Left
         ([1, 5, 6, 2], Vec3::X),  // Right
     ];
-    
+
     for (verts, normal) in &faces {
         let fi = mesh.vertices.len() as u32;
         for &vi in verts {
@@ -924,17 +1002,32 @@ fn generate_box(mesh: &mut Mesh, center: Vec3, size: Vec3, color: [f32; 4]) {
 fn generate_trebuchet(center: Vec3) -> Mesh {
     let mut mesh = Mesh::new();
     let wood_color = [0.4, 0.3, 0.2, 1.0];
-    
+
     // Base platform
     generate_box(&mut mesh, center, Vec3::new(8.0, 2.0, 12.0), wood_color);
-    
+
     // Vertical supports
-    generate_box(&mut mesh, center + Vec3::new(-3.0, 6.0, 0.0), Vec3::new(1.5, 10.0, 1.5), wood_color);
-    generate_box(&mut mesh, center + Vec3::new(3.0, 6.0, 0.0), Vec3::new(1.5, 10.0, 1.5), wood_color);
-    
+    generate_box(
+        &mut mesh,
+        center + Vec3::new(-3.0, 6.0, 0.0),
+        Vec3::new(1.5, 10.0, 1.5),
+        wood_color,
+    );
+    generate_box(
+        &mut mesh,
+        center + Vec3::new(3.0, 6.0, 0.0),
+        Vec3::new(1.5, 10.0, 1.5),
+        wood_color,
+    );
+
     // Throwing arm
-    generate_box(&mut mesh, center + Vec3::new(0.0, 10.0, 0.0), Vec3::new(1.0, 1.0, 18.0), wood_color);
-    
+    generate_box(
+        &mut mesh,
+        center + Vec3::new(0.0, 10.0, 0.0),
+        Vec3::new(1.0, 1.0, 18.0),
+        wood_color,
+    );
+
     mesh
 }
 
@@ -944,38 +1037,43 @@ fn generate_soldier(center: Vec3) -> Mesh {
     let mut mesh = Mesh::new();
     let armor_color = [0.4, 0.4, 0.45, 1.0];
     let skin_color = [0.8, 0.65, 0.5, 1.0];
-    
+
     // Body (capsule approximated as cylinder + spheres)
-    generate_box(&mut mesh, center + Vec3::Y * 0.9, Vec3::new(0.6, 1.2, 0.4), armor_color);
-    
+    generate_box(
+        &mut mesh,
+        center + Vec3::Y * 0.9,
+        Vec3::new(0.6, 1.2, 0.4),
+        armor_color,
+    );
+
     // Head
     let head_base = mesh.vertices.len() as u32;
     let head_pos = center + Vec3::Y * 1.8;
     let segments = 8;
-    
+
     mesh.vertices.push(HexVertex {
         position: (head_pos + Vec3::Y * 0.3).into(),
         normal: [0.0, 1.0, 0.0],
         color: skin_color,
     });
-    
+
     for seg in 0..=segments {
         let angle = (seg as f32 / segments as f32) * std::f32::consts::TAU;
         let pos = head_pos + Vec3::new(angle.cos() * 0.2, 0.0, angle.sin() * 0.2);
-        
+
         mesh.vertices.push(HexVertex {
             position: pos.into(),
             normal: Vec3::new(angle.cos(), 0.0, angle.sin()).into(),
             color: skin_color,
         });
     }
-    
+
     for seg in 0..segments as u32 {
         mesh.indices.push(head_base);
         mesh.indices.push(head_base + 1 + seg);
         mesh.indices.push(head_base + 2 + seg);
     }
-    
+
     mesh
 }
 
@@ -983,20 +1081,30 @@ fn generate_soldier(center: Vec3) -> Mesh {
 #[allow(dead_code)]
 fn generate_distant_castle(center: Vec3) -> Mesh {
     let mut mesh = Mesh::new();
-    
+
     // Small floating rock
     generate_island_rock(&mut mesh, center, Vec3::new(40.0, 30.0, 40.0));
-    
+
     // Simple castle silhouette
     let castle_color = [0.3, 0.28, 0.25, 1.0];
     let castle_base = center + Vec3::Y * 15.0;
-    
+
     // Main keep
-    generate_box(&mut mesh, castle_base + Vec3::Y * 10.0, Vec3::new(15.0, 20.0, 15.0), castle_color);
-    
+    generate_box(
+        &mut mesh,
+        castle_base + Vec3::Y * 10.0,
+        Vec3::new(15.0, 20.0, 15.0),
+        castle_color,
+    );
+
     // Tower
-    generate_tower(&mut mesh, castle_base + Vec3::new(10.0, 0.0, 10.0), 5.0, 25.0);
-    
+    generate_tower(
+        &mut mesh,
+        castle_base + Vec3::new(10.0, 0.0, 10.0),
+        5.0,
+        25.0,
+    );
+
     mesh
 }
 
@@ -1008,22 +1116,22 @@ fn generate_distant_castle(center: Vec3) -> Mesh {
 /// (Fortresses/buildings are player-built on hex tiles, not part of base scene)
 fn generate_full_scene(planet_radius: f32, planet_subdivisions: u32) -> Mesh {
     let mut scene = Mesh::new();
-    
+
     // Extrusion height for tiles
     let tile_extrusion = 15.0;
-    
+
     // 1. Inner magma/mantle sphere - fills the core, visible in cracks
     // Sits just below where tile crust bottoms end
     let magma_radius = planet_radius - tile_extrusion * 0.6;
     let magma = generate_magma_sphere(magma_radius, 48);
     scene.merge(&magma);
-    
+
     // 2. Hex tiles (continental crust) with rocky sides
     // - extrusion: how thick the tiles are
     // - bevel_ratio: gap size (0.08 = 8% gap for visible magma cracks)
     let tiles = generate_hex_planet(planet_radius, planet_subdivisions, tile_extrusion, 0.08);
     scene.merge(&tiles);
-    
+
     scene
 }
 
@@ -1031,29 +1139,33 @@ fn generate_full_scene(planet_radius: f32, planet_subdivisions: u32) -> Mesh {
 fn generate_magma_sphere(radius: f32, segments: u32) -> Mesh {
     let mut mesh = Mesh::new();
     let rings = segments / 2;
-    
+
     // Magma colors - bright orange/red emissive
-    let magma_bright = [1.0, 0.4, 0.05, 1.0];  // Bright orange (emissive)
-    let magma_dark = [0.8, 0.15, 0.02, 1.0];   // Darker red-orange
-    
+    let magma_bright = [1.0, 0.4, 0.05, 1.0]; // Bright orange (emissive)
+    let magma_dark = [0.8, 0.15, 0.02, 1.0]; // Darker red-orange
+
     // Generate sphere vertices
     for ring in 0..=rings {
         let phi = (ring as f32 / rings as f32) * std::f32::consts::PI;
         let y = phi.cos();
         let ring_radius = phi.sin();
-        
+
         for seg in 0..=segments {
             let theta = (seg as f32 / segments as f32) * std::f32::consts::TAU;
             let x = ring_radius * theta.cos();
             let z = ring_radius * theta.sin();
-            
+
             let pos = Vec3::new(x, y, z) * radius;
             let normal = Vec3::new(x, y, z).normalize();
-            
+
             // Vary color based on position for more interesting magma look
             let noise = ((theta * 5.0).sin() * (phi * 7.0).cos() + 1.0) * 0.5;
-            let color = if noise > 0.6 { magma_bright } else { magma_dark };
-            
+            let color = if noise > 0.6 {
+                magma_bright
+            } else {
+                magma_dark
+            };
+
             mesh.vertices.push(HexVertex {
                 position: pos.into(),
                 normal: normal.into(),
@@ -1061,7 +1173,7 @@ fn generate_magma_sphere(radius: f32, segments: u32) -> Mesh {
             });
         }
     }
-    
+
     // Generate indices
     let verts_per_ring = segments + 1;
     for ring in 0..rings {
@@ -1070,18 +1182,18 @@ fn generate_magma_sphere(radius: f32, segments: u32) -> Mesh {
             let next = curr + 1;
             let below = curr + verts_per_ring;
             let below_next = below + 1;
-            
+
             // Two triangles per quad (inward-facing normals for inside view)
             mesh.indices.push(curr);
             mesh.indices.push(next);
             mesh.indices.push(below);
-            
+
             mesh.indices.push(next);
             mesh.indices.push(below_next);
             mesh.indices.push(below);
         }
     }
-    
+
     mesh
 }
 
@@ -1094,12 +1206,13 @@ fn generate_magma_sphere(radius: f32, segments: u32) -> Mesh {
 fn sphere_elevation(pos: Vec3) -> f32 {
     let scale1 = 3.0;
     let scale2 = 6.0;
-    
+
     let noise1 = (pos.x * scale1).sin() * (pos.y * scale1 + 1.0).cos() * (pos.z * scale1).sin();
-    let noise2 = (pos.x * scale2 + 2.0).sin() * (pos.y * scale2).cos() * (pos.z * scale2 + 1.5).sin();
-    
+    let noise2 =
+        (pos.x * scale2 + 2.0).sin() * (pos.y * scale2).cos() * (pos.z * scale2 + 1.5).sin();
+
     let combined = noise1 * 3.0 + noise2 * 1.5;
-    
+
     combined.clamp(-2.0, 4.0)
 }
 
@@ -1107,7 +1220,7 @@ fn sphere_elevation(pos: Vec3) -> f32 {
 #[allow(dead_code)]
 fn sphere_biome_color(pos: Vec3, elevation: f32) -> [f32; 4] {
     let latitude = pos.y.abs();
-    
+
     if elevation < -0.5 {
         // Ocean - blue
         [0.15, 0.35, 0.65, 1.0]
@@ -1162,7 +1275,7 @@ struct AppState {
     // Planet parameters (adjustable at runtime)
     planet_radius: f32,
     hex_subdivisions: u32,
-    
+
     // Camera
     camera: Camera,
     movement_keys: MovementKeys,
@@ -1174,7 +1287,7 @@ struct AppState {
     // Timing
     start_time: Instant,
     last_frame_time: Instant,
-    
+
     // FPS tracking
     frame_count: u32,
     fps_update_time: Instant,
@@ -1367,19 +1480,23 @@ impl AppState {
 
         // Generate full scene: hex planet + floating island + fortress + props
         println!("[SDF Demo] Generating full scene...");
-        let planet_radius = 1000.0;  // 1000 unit radius planet
-        let hex_subdivisions = 3;    // ~640 hex tiles at level 3
-        
+        let planet_radius = 1000.0; // 1000 unit radius planet
+        let hex_subdivisions = 3; // ~640 hex tiles at level 3
+
         let scene = generate_full_scene(planet_radius, hex_subdivisions);
         let vertices = scene.vertices;
         let indices = scene.indices;
-        
+
         let num_tiles = 10 * 4_u32.pow(hex_subdivisions) + 2;
         println!(
             "[SDF Demo] Scene: {} hex tiles + island + fortress + props",
             num_tiles
         );
-        println!("[SDF Demo] Total: {} vertices, {} triangles", vertices.len(), indices.len() / 3);
+        println!(
+            "[SDF Demo] Total: {} vertices, {} triangles",
+            vertices.len(),
+            indices.len() / 3
+        );
 
         // Create vertex buffer - allocate larger size for full scene
         // Planet + island + fortress + props needs ~50-100MB at high detail
@@ -1452,16 +1569,24 @@ impl AppState {
     /// Regenerate the full scene with current settings
     fn regenerate_planet(&mut self) {
         let scene = generate_full_scene(self.planet_radius, self.hex_subdivisions);
-        
+
         let num_tiles = 10 * 4_u32.pow(self.hex_subdivisions) + 2;
         println!(
             "[Regenerated] {} tiles + scene ({} verts, {} tris) - subdiv: {}",
-            num_tiles, scene.vertices.len(), scene.indices.len() / 3, self.hex_subdivisions
+            num_tiles,
+            scene.vertices.len(),
+            scene.indices.len() / 3,
+            self.hex_subdivisions
         );
-        
+
         // Update buffers
-        self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&scene.vertices));
-        self.queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&scene.indices));
+        self.queue.write_buffer(
+            &self.vertex_buffer,
+            0,
+            bytemuck::cast_slice(&scene.vertices),
+        );
+        self.queue
+            .write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&scene.indices));
         self.index_count = scene.indices.len() as u32;
     }
 
@@ -1475,7 +1600,7 @@ impl AppState {
             self.print_status();
         }
     }
-    
+
     /// Adjust planet radius and regenerate
     fn adjust_planet_size(&mut self, delta: f32) {
         let new_radius = (self.planet_radius + delta).clamp(100.0, 2000.0);
@@ -1485,19 +1610,19 @@ impl AppState {
             self.print_status();
         }
     }
-    
+
     /// Print current status
     fn print_status(&self) {
         // Icosphere subdivision: vertices = 10 * 4^n + 2
         // Each vertex becomes a hex/pentagon tile in the dual
         let n = self.hex_subdivisions;
         let num_tiles = 10 * 4_u32.pow(n) + 2;
-        
+
         // Calculate approximate hex size in meters
         let surface_area = 4.0 * std::f32::consts::PI * self.planet_radius * self.planet_radius;
         let tile_area = surface_area / num_tiles as f32;
         let hex_size = (tile_area / 2.6).sqrt() * 2.0; // diameter
-        
+
         println!(
             "[Status] Tiles: {} | Planet: {:.0}m | Hex: ~{:.0}m | FPS: {:.0}",
             num_tiles, self.planet_radius, hex_size, self.current_fps
@@ -1517,7 +1642,7 @@ impl AppState {
         let now = Instant::now();
         let delta_time = (now - self.last_frame_time).as_secs_f32();
         self.last_frame_time = now;
-        
+
         // FPS tracking
         self.frame_count += 1;
         let fps_elapsed = (now - self.fps_update_time).as_secs_f32();
@@ -1525,7 +1650,7 @@ impl AppState {
             self.current_fps = self.frame_count as f32 / fps_elapsed;
             self.frame_count = 0;
             self.fps_update_time = now;
-            
+
             // Update window title with FPS
             let num_tiles = 10 * 4_u32.pow(self.hex_subdivisions) + 2;
             self.window.set_title(&format!(
@@ -1536,7 +1661,11 @@ impl AppState {
 
         // Update camera movement
         let forward = if self.movement_keys.forward { 1.0 } else { 0.0 }
-            - if self.movement_keys.backward { 1.0 } else { 0.0 };
+            - if self.movement_keys.backward {
+                1.0
+            } else {
+                0.0
+            };
         let right = if self.movement_keys.right { 1.0 } else { 0.0 }
             - if self.movement_keys.left { 1.0 } else { 0.0 };
         let up = if self.movement_keys.up { 1.0 } else { 0.0 }
@@ -1565,9 +1694,9 @@ impl AppState {
             camera_pos: self.camera.position.into(),
             time: elapsed,
             sun_dir: Vec3::new(0.4, 0.8, 0.3).normalize().into(), // Sun from upper-right
-            fog_density: 0.0001, // Very light fog for space view
-            fog_color: [0.01, 0.01, 0.02], // Very dark space background
-            ambient: 0.3, // Decent ambient for visibility
+            fog_density: 0.0001,                                  // Very light fog for space view
+            fog_color: [0.01, 0.01, 0.02],                        // Very dark space background
+            ambient: 0.3,                                         // Decent ambient for visibility
         };
         self.queue
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
@@ -1795,7 +1924,11 @@ impl ApplicationHandler for App {
 
                 state.handle_key(key, pressed);
             }
-            WindowEvent::MouseInput { button, state: btn_state, .. } => {
+            WindowEvent::MouseInput {
+                button,
+                state: btn_state,
+                ..
+            } => {
                 state.handle_mouse_button(button, btn_state == ElementState::Pressed);
             }
             WindowEvent::CursorMoved { position, .. } => {

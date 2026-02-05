@@ -546,14 +546,20 @@ mod tests {
     fn test_assignment_uniforms_new() {
         let uniforms = AssignmentUniforms::new(42);
         assert_eq!(uniforms.creature_count, 42);
-        assert_eq!(uniforms.froxel_count, super::super::froxel_config::TOTAL_FROXELS);
+        assert_eq!(
+            uniforms.froxel_count,
+            super::super::froxel_config::TOTAL_FROXELS
+        );
     }
 
     #[test]
     fn test_assignment_uniforms_default() {
         let uniforms = AssignmentUniforms::default();
         assert_eq!(uniforms.creature_count, 0);
-        assert_eq!(uniforms.froxel_count, super::super::froxel_config::TOTAL_FROXELS);
+        assert_eq!(
+            uniforms.froxel_count,
+            super::super::froxel_config::TOTAL_FROXELS
+        );
     }
 
     #[test]

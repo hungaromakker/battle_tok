@@ -6,7 +6,7 @@
 use glam::{IVec3, Vec3};
 use std::collections::HashMap;
 
-use super::dual_grid::{CornerType, DualGrid, BLOCK_SIZE};
+use super::dual_grid::{BLOCK_SIZE, CornerType, DualGrid};
 
 /// Shape of a building block
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

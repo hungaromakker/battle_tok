@@ -53,7 +53,10 @@ impl WeatherType {
     /// Returns the default rain intensity for this weather type
     pub fn default_rain_intensity(&self) -> f32 {
         match self {
-            WeatherType::Clear | WeatherType::PartlyCloudy | WeatherType::Cloudy | WeatherType::Overcast => 0.0,
+            WeatherType::Clear
+            | WeatherType::PartlyCloudy
+            | WeatherType::Cloudy
+            | WeatherType::Overcast => 0.0,
             WeatherType::Rain => 0.6,
             WeatherType::Storm => 1.0,
         }

@@ -69,26 +69,26 @@ pub struct StormySkyConfig {
 impl Default for StormySkyConfig {
     fn default() -> Self {
         Self {
-            cloud_speed: 0.05,       // Slow dramatic movement
+            cloud_speed: 0.05, // Slow dramatic movement
             flow_speed: 0.02,
             flow_amount: 0.3,
             wave_amount: 0.15,
             wave_distort: 0.05,
-            cloud_density: 1.0,      // Used for blending
+            cloud_density: 1.0, // Used for blending
             cloud_scale: 1.0,
             cloud_bias: 0.0,
             bump_offset: 0.1,
-            parallax_steps: 6.0,     // Optimized - only 6 ray march steps
+            parallax_steps: 6.0, // Optimized - only 6 ray march steps
             cloud_height: 100.0,
             world_scale: 1.0,
             // Sun position - low on horizon for dramatic rim lighting
             sun_dir: Vec3::new(0.3, 0.15, -0.9).normalize(),
             lightning_intensity: 0.0,
             // Colors (used as fallback, main colors are in shader)
-            cloud_color1: Vec3::new(0.4, 0.35, 0.3),     // Lit cloud edges
-            cloud_color2: Vec3::new(0.05, 0.05, 0.07),   // Dark cloud core
-            upper_color: Vec3::new(0.02, 0.02, 0.04),    // Near-black zenith
-            fog_color: Vec3::new(0.12, 0.1, 0.08),       // Brown horizon fog
+            cloud_color1: Vec3::new(0.4, 0.35, 0.3), // Lit cloud edges
+            cloud_color2: Vec3::new(0.05, 0.05, 0.07), // Dark cloud core
+            upper_color: Vec3::new(0.02, 0.02, 0.04), // Near-black zenith
+            fog_color: Vec3::new(0.12, 0.1, 0.08),   // Brown horizon fog
             fog_density: 0.6,
         }
     }
@@ -134,10 +134,10 @@ impl StormySkyConfig {
     pub fn twilight_storm() -> Self {
         Self {
             cloud_speed: 0.08,
-            cloud_color1: Vec3::new(0.6, 0.45, 0.5),     // Purple-ish highlights
-            cloud_color2: Vec3::new(0.15, 0.1, 0.15),    // Dark purple shadows
-            upper_color: Vec3::new(0.4, 0.25, 0.35),     // Twilight purple
-            fog_color: Vec3::new(0.25, 0.15, 0.2),       // Purple fog
+            cloud_color1: Vec3::new(0.6, 0.45, 0.5), // Purple-ish highlights
+            cloud_color2: Vec3::new(0.15, 0.1, 0.15), // Dark purple shadows
+            upper_color: Vec3::new(0.4, 0.25, 0.35), // Twilight purple
+            fog_color: Vec3::new(0.25, 0.15, 0.2),   // Purple fog
             sun_dir: Vec3::new(-0.8, 0.1, -0.5).normalize(),
             ..Default::default()
         }
@@ -147,12 +147,12 @@ impl StormySkyConfig {
     /// Matching the dramatic concept art: purple sky, orange horizon, fiery atmosphere
     pub fn battle_arena() -> Self {
         Self {
-            cloud_speed: 0.12,                          // Faster, more dramatic
+            cloud_speed: 0.12, // Faster, more dramatic
             flow_speed: 0.04,
             flow_amount: 0.5,
             wave_amount: 0.3,
             wave_distort: 0.08,
-            cloud_density: 2.0,                         // Thicker, heavier clouds
+            cloud_density: 2.0, // Thicker, heavier clouds
             cloud_scale: 1.5,
             cloud_bias: -0.15,
             bump_offset: 0.15,
@@ -161,15 +161,15 @@ impl StormySkyConfig {
             world_scale: 1.0,
             // Low sun for dramatic rim lighting from horizon (lava glow)
             sun_dir: Vec3::new(0.0, 0.08, -1.0).normalize(),
-            lightning_intensity: 0.8,                   // Active lightning
+            lightning_intensity: 0.8, // Active lightning
             // Cloud colors: vivid purple with fiery orange underlit
-            cloud_color1: Vec3::new(0.95, 0.55, 0.3),   // Brighter orange-lit cloud edges
-            cloud_color2: Vec3::new(0.18, 0.1, 0.25),   // Richer purple shadows
+            cloud_color1: Vec3::new(0.95, 0.55, 0.3), // Brighter orange-lit cloud edges
+            cloud_color2: Vec3::new(0.18, 0.1, 0.25), // Richer purple shadows
             // Sky gradient
-            upper_color: Vec3::new(0.2, 0.1, 0.35),     // Deeper purple zenith
+            upper_color: Vec3::new(0.2, 0.1, 0.35), // Deeper purple zenith
             // Horizon fog: warm orange glow
-            fog_color: Vec3::new(0.7, 0.35, 0.2),       // More saturated orange-red
-            fog_density: 0.5,                            // Less dense fog in sky
+            fog_color: Vec3::new(0.7, 0.35, 0.2), // More saturated orange-red
+            fog_density: 0.5,                     // Less dense fog in sky
         }
     }
 }
@@ -180,48 +180,48 @@ impl StormySkyConfig {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct SkyUniforms {
-    view_proj: [[f32; 4]; 4],       // 64 bytes (offset 0)
-    inv_view_proj: [[f32; 4]; 4],   // 64 bytes (offset 64)
-    camera_pos_x: f32,              // 4 bytes (offset 128)
-    camera_pos_y: f32,              // 4 bytes (offset 132)
-    camera_pos_z: f32,              // 4 bytes (offset 136)
-    time: f32,                      // 4 bytes (offset 140)
-    resolution_x: f32,              // 4 bytes (offset 144)
-    resolution_y: f32,              // 4 bytes (offset 148)
-    cloud_speed: f32,               // 4 bytes (offset 152)
-    flow_speed: f32,                // 4 bytes (offset 156)
-    flow_amount: f32,               // 4 bytes (offset 160)
-    wave_amount: f32,               // 4 bytes (offset 164)
-    wave_distort: f32,              // 4 bytes (offset 168)
-    cloud_density: f32,             // 4 bytes (offset 172)
-    cloud_scale: f32,               // 4 bytes (offset 176)
-    cloud_bias: f32,                // 4 bytes (offset 180)
-    bump_offset: f32,               // 4 bytes (offset 184)
-    parallax_steps: f32,            // 4 bytes (offset 188)
-    cloud_height: f32,              // 4 bytes (offset 192)
-    world_scale: f32,               // 4 bytes (offset 196)
-    light_spread_power1: f32,       // 4 bytes (offset 200)
-    light_spread_factor1: f32,      // 4 bytes (offset 204)
-    light_spread_power2: f32,       // 4 bytes (offset 208)
-    light_spread_factor2: f32,      // 4 bytes (offset 212)
-    sun_dir_x: f32,                 // 4 bytes (offset 216)
-    sun_dir_y: f32,                 // 4 bytes (offset 220)
-    sun_dir_z: f32,                 // 4 bytes (offset 224)
-    lightning_intensity: f32,       // 4 bytes (offset 228)
-    cloud_color1_r: f32,            // 4 bytes (offset 232)
-    cloud_color1_g: f32,            // 4 bytes (offset 236)
-    cloud_color1_b: f32,            // 4 bytes (offset 240)
-    cloud_color2_r: f32,            // 4 bytes (offset 244)
-    cloud_color2_g: f32,            // 4 bytes (offset 248)
-    cloud_color2_b: f32,            // 4 bytes (offset 252)
-    upper_color_r: f32,             // 4 bytes (offset 256)
-    upper_color_g: f32,             // 4 bytes (offset 260)
-    upper_color_b: f32,             // 4 bytes (offset 264)
-    fog_color_r: f32,               // 4 bytes (offset 268)
-    fog_color_g: f32,               // 4 bytes (offset 272)
-    fog_color_b: f32,               // 4 bytes (offset 276)
-    fog_density: f32,               // 4 bytes (offset 280)
-    _pad: f32,                      // 4 bytes (offset 284) - align to 288
+    view_proj: [[f32; 4]; 4],     // 64 bytes (offset 0)
+    inv_view_proj: [[f32; 4]; 4], // 64 bytes (offset 64)
+    camera_pos_x: f32,            // 4 bytes (offset 128)
+    camera_pos_y: f32,            // 4 bytes (offset 132)
+    camera_pos_z: f32,            // 4 bytes (offset 136)
+    time: f32,                    // 4 bytes (offset 140)
+    resolution_x: f32,            // 4 bytes (offset 144)
+    resolution_y: f32,            // 4 bytes (offset 148)
+    cloud_speed: f32,             // 4 bytes (offset 152)
+    flow_speed: f32,              // 4 bytes (offset 156)
+    flow_amount: f32,             // 4 bytes (offset 160)
+    wave_amount: f32,             // 4 bytes (offset 164)
+    wave_distort: f32,            // 4 bytes (offset 168)
+    cloud_density: f32,           // 4 bytes (offset 172)
+    cloud_scale: f32,             // 4 bytes (offset 176)
+    cloud_bias: f32,              // 4 bytes (offset 180)
+    bump_offset: f32,             // 4 bytes (offset 184)
+    parallax_steps: f32,          // 4 bytes (offset 188)
+    cloud_height: f32,            // 4 bytes (offset 192)
+    world_scale: f32,             // 4 bytes (offset 196)
+    light_spread_power1: f32,     // 4 bytes (offset 200)
+    light_spread_factor1: f32,    // 4 bytes (offset 204)
+    light_spread_power2: f32,     // 4 bytes (offset 208)
+    light_spread_factor2: f32,    // 4 bytes (offset 212)
+    sun_dir_x: f32,               // 4 bytes (offset 216)
+    sun_dir_y: f32,               // 4 bytes (offset 220)
+    sun_dir_z: f32,               // 4 bytes (offset 224)
+    lightning_intensity: f32,     // 4 bytes (offset 228)
+    cloud_color1_r: f32,          // 4 bytes (offset 232)
+    cloud_color1_g: f32,          // 4 bytes (offset 236)
+    cloud_color1_b: f32,          // 4 bytes (offset 240)
+    cloud_color2_r: f32,          // 4 bytes (offset 244)
+    cloud_color2_g: f32,          // 4 bytes (offset 248)
+    cloud_color2_b: f32,          // 4 bytes (offset 252)
+    upper_color_r: f32,           // 4 bytes (offset 256)
+    upper_color_g: f32,           // 4 bytes (offset 260)
+    upper_color_b: f32,           // 4 bytes (offset 264)
+    fog_color_r: f32,             // 4 bytes (offset 268)
+    fog_color_g: f32,             // 4 bytes (offset 272)
+    fog_color_b: f32,             // 4 bytes (offset 276)
+    fog_density: f32,             // 4 bytes (offset 280)
+    _pad: f32,                    // 4 bytes (offset 284) - align to 288
 }
 
 // Verify struct size at compile time
@@ -250,7 +250,9 @@ impl StormySky {
         // Load shader
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Stormy Sky Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../../shaders/stormy_sky.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../../shaders/stormy_sky.wgsl").into(),
+            ),
         });
 
         // Create uniform buffer
@@ -433,11 +435,7 @@ impl StormySky {
 
     /// Create a render pass and render the sky
     /// Convenience method that handles render pass creation
-    pub fn render_to_view(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-    ) {
+    pub fn render_to_view(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Stormy Sky Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

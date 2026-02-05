@@ -314,7 +314,11 @@ impl PointLightManager {
 
         // Write light count to uniform buffer (padded to 16 bytes)
         let count_data: [u32; 4] = [self.lights.len() as u32, 0, 0, 0];
-        queue.write_buffer(&self.light_count_buffer, 0, bytemuck::cast_slice(&count_data));
+        queue.write_buffer(
+            &self.light_count_buffer,
+            0,
+            bytemuck::cast_slice(&count_data),
+        );
     }
 
     /// Get the bind group for shader access.

@@ -5,5 +5,5 @@
 pub mod actions;
 pub mod keyboard;
 
-pub use actions::{InputAction, InputContext, MovementState, AimingState, MovementKey, AimingKey};
+pub use actions::{AimingKey, AimingState, InputAction, InputContext, MovementKey, MovementState};
 pub use keyboard::map_key_to_action;

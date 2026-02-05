@@ -6,7 +6,7 @@
 use glam::Mat4;
 use wgpu::util::DeviceExt;
 
-use super::render_pass::{RenderPass, RenderPassPriority, RenderContext, FrameContext};
+use super::render_pass::{FrameContext, RenderContext, RenderPass, RenderPassPriority};
 
 /// Vertex for UI rendering (position, normal, color)
 #[repr(C)]
@@ -73,12 +73,29 @@ impl UiMesh {
         let base = self.vertices.len() as u32;
         let normal = [0.0, 0.0, 1.0];
 
-        self.vertices.push(UiVertex { position: [x1, y1, 0.0], normal, color });
-        self.vertices.push(UiVertex { position: [x2, y1, 0.0], normal, color });
-        self.vertices.push(UiVertex { position: [x2, y2, 0.0], normal, color });
-        self.vertices.push(UiVertex { position: [x1, y2, 0.0], normal, color });
+        self.vertices.push(UiVertex {
+            position: [x1, y1, 0.0],
+            normal,
+            color,
+        });
+        self.vertices.push(UiVertex {
+            position: [x2, y1, 0.0],
+            normal,
+            color,
+        });
+        self.vertices.push(UiVertex {
+            position: [x2, y2, 0.0],
+            normal,
+            color,
+        });
+        self.vertices.push(UiVertex {
+            position: [x1, y2, 0.0],
+            normal,
+            color,
+        });
 
-        self.indices.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
+        self.indices
+            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
     /// Convert screen coordinates to NDC
@@ -96,7 +113,9 @@ impl Default for UiMesh {
 /// Trait for UI components that can generate meshes
 pub trait UiComponent {
     fn generate_mesh(&self, width: f32, height: f32) -> UiMesh;
-    fn is_visible(&self) -> bool { true }
+    fn is_visible(&self) -> bool {
+        true
+    }
 }
 
 /// UI render pass that renders all registered UI components
@@ -181,33 +200,39 @@ impl RenderPass for UiRenderPass {
 
         // UI shader (same as mesh shader but used differently)
         let shader_source = include_str!("../../../shaders/ui.wgsl");
-        let shader = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("UI Shader"),
-            source: wgpu::ShaderSource::Wgsl(shader_source.into()),
-        });
+        let shader = ctx
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("UI Shader"),
+                source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+            });
 
         // Create uniform buffer
         let uniforms = UiUniforms::default();
-        let uniform_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("UI Uniform Buffer"),
-            contents: bytemuck::bytes_of(&uniforms),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+        let uniform_buffer = ctx
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("UI Uniform Buffer"),
+                contents: bytemuck::bytes_of(&uniforms),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
 
         // Create bind group layout
-        let bind_group_layout = ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("UI Bind Group Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let bind_group_layout =
+            ctx.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("UI Bind Group Layout"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                });
 
         // Create bind group
         let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -220,66 +245,70 @@ impl RenderPass for UiRenderPass {
         });
 
         // Create pipeline layout
-        let pipeline_layout = ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("UI Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = ctx
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("UI Pipeline Layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
         // Create pipeline (no depth testing, alpha blending)
-        let pipeline = ctx.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("UI Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<UiVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x3,
-                            offset: 0,
-                            shader_location: 0,
-                        },
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x3,
-                            offset: 12,
-                            shader_location: 1,
-                        },
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x4,
-                            offset: 24,
-                            shader_location: 2,
-                        },
-                    ],
-                }],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: ctx.surface_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None, // No culling for UI
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: None, // No depth testing for UI
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        let pipeline = ctx
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("UI Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<UiVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x3,
+                                offset: 0,
+                                shader_location: 0,
+                            },
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x3,
+                                offset: 12,
+                                shader_location: 1,
+                            },
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x4,
+                                offset: 24,
+                                shader_location: 2,
+                            },
+                        ],
+                    }],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: ctx.surface_format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None, // No culling for UI
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: None, // No depth testing for UI
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
 
         // Create dynamic buffers for UI meshes
         let vertex_buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
@@ -315,25 +344,32 @@ impl RenderPass for UiRenderPass {
         let index_buffer = self.index_buffer.as_ref().unwrap();
 
         // Upload mesh data
-        ctx.queue.write_buffer(vertex_buffer, 0, bytemuck::cast_slice(&self.current_vertices));
-        ctx.queue.write_buffer(index_buffer, 0, bytemuck::cast_slice(&self.current_indices));
+        ctx.queue.write_buffer(
+            vertex_buffer,
+            0,
+            bytemuck::cast_slice(&self.current_vertices),
+        );
+        ctx.queue
+            .write_buffer(index_buffer, 0, bytemuck::cast_slice(&self.current_indices));
 
         // Begin render pass
-        let mut render_pass = frame.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("UI Render Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: frame.color_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load, // Preserve previous passes
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: None, // No depth for UI
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
+        let mut render_pass = frame
+            .encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("UI Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: frame.color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load, // Preserve previous passes
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None, // No depth for UI
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
 
         render_pass.set_pipeline(pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);

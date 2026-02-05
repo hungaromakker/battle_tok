@@ -23,9 +23,9 @@
 //! );
 //! ```
 
-use std::collections::HashMap;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
+use std::collections::HashMap;
 
 /// Material type enumeration for all supported materials.
 ///
@@ -181,12 +181,7 @@ const _: () = assert!(std::mem::size_of::<SceneUniforms>() == 128);
 
 impl SceneUniforms {
     /// Create scene uniforms from components
-    pub fn new(
-        view_proj: Mat4,
-        camera_pos: Vec3,
-        time: f32,
-        config: &SceneConfig,
-    ) -> Self {
+    pub fn new(view_proj: Mat4, camera_pos: Vec3, time: f32, config: &SceneConfig) -> Self {
         Self {
             view_proj: view_proj.to_cols_array_2d(),
             camera_pos_x: camera_pos.x,
@@ -251,19 +246,20 @@ impl MaterialSystem {
     /// * `device` - The wgpu device to create GPU resources on
     pub fn new(device: &wgpu::Device) -> Self {
         // Create scene bind group layout (shared by all materials that use scene uniforms)
-        let scene_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Scene Bind Group Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let scene_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Scene Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
 
         // Create scene uniform buffer
         let scene_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -379,7 +375,11 @@ impl MaterialSystem {
         time: f32,
     ) {
         let uniforms = SceneUniforms::new(view_proj, camera_pos, time, &self.scene_config);
-        queue.write_buffer(&self.scene_uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        queue.write_buffer(
+            &self.scene_uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[uniforms]),
+        );
     }
 
     /// Update scene uniforms with a custom configuration.
@@ -399,7 +399,11 @@ impl MaterialSystem {
         config: &SceneConfig,
     ) {
         let uniforms = SceneUniforms::new(view_proj, camera_pos, time, config);
-        queue.write_buffer(&self.scene_uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        queue.write_buffer(
+            &self.scene_uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[uniforms]),
+        );
     }
 
     /// Render geometry with a specific material.

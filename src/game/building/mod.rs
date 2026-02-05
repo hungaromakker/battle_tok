@@ -7,14 +7,17 @@
 //! - 1 dm³ (0.1m) building blocks that auto-combine
 //! - Material-based construction (wood, stone, iron, etc.)
 
-pub mod dual_grid;
-pub mod materials;
 pub mod blocks;
 pub mod drag_builder;
+pub mod dual_grid;
+pub mod materials;
 pub mod mesh_combine;
 
-pub use dual_grid::{DualGrid, GridCell, GridCorner, CornerType, BLOCK_SIZE, HALF_BLOCK};
-pub use materials::{Material, MaterialProperties, MaterialPhysics, MATERIALS, MATERIAL_PHYSICS, get_material_physics};
-pub use blocks::{BuildingBlock, BlockShape, BlockLibrary};
-pub use drag_builder::{DragBuilder, DragState, BuildEvent};
-pub use mesh_combine::{MeshCombiner, CombinedMesh, CombinedVertex};
+pub use blocks::{BlockLibrary, BlockShape, BuildingBlock};
+pub use drag_builder::{BuildEvent, DragBuilder, DragState};
+pub use dual_grid::{BLOCK_SIZE, CornerType, DualGrid, GridCell, GridCorner, HALF_BLOCK};
+pub use materials::{
+    MATERIAL_PHYSICS, MATERIALS, Material, MaterialPhysics, MaterialProperties,
+    get_material_physics,
+};
+pub use mesh_combine::{CombinedMesh, CombinedVertex, MeshCombiner};

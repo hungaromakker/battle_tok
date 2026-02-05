@@ -10,8 +10,8 @@ use winit::window::Window;
 use super::compute_pipelines::ComputePipelines;
 use super::culling::TileBufferHeader;
 use super::froxel_buffers::{
-    create_froxel_bounds_buffer, create_froxel_sdf_list_buffer,
-    FroxelBoundsBuffer, FroxelSDFListBuffer,
+    FroxelBoundsBuffer, FroxelSDFListBuffer, create_froxel_bounds_buffer,
+    create_froxel_sdf_list_buffer,
 };
 use super::sdf_baker::BrickCache;
 use super::sky_bake_dispatch::SkyBakePipeline;
@@ -68,11 +68,12 @@ pub fn detect_software_renderer() -> bool {
         ..Default::default()
     });
 
-    let adapter_result = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }));
+    let adapter_result =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }));
 
     match adapter_result {
         Ok(adapter) => {
@@ -86,9 +87,15 @@ pub fn detect_software_renderer() -> bool {
                 || info.device_type == wgpu::DeviceType::Cpu;
 
             if is_software {
-                println!("[RenderState] Software renderer detected ({}) - using 1280x720 and Mailbox", info.name);
+                println!(
+                    "[RenderState] Software renderer detected ({}) - using 1280x720 and Mailbox",
+                    info.name
+                );
             } else {
-                println!("[RenderState] GPU detected ({}) - using 1920x1080 and Immediate", info.name);
+                println!(
+                    "[RenderState] GPU detected ({}) - using 1920x1080 and Immediate",
+                    info.name
+                );
             }
 
             is_software
@@ -103,7 +110,7 @@ pub fn detect_software_renderer() -> bool {
 /// Get recommended resolution based on whether software renderer is detected.
 pub fn get_recommended_resolution(is_software: bool) -> (u32, u32) {
     if is_software {
-        (1280, 720)  // Lower resolution for software renderer
+        (1280, 720) // Lower resolution for software renderer
     } else {
         (1920, 1080) // Full HD for real GPU
     }
@@ -127,8 +134,16 @@ impl RenderState {
         sky_buffer_size: u64,
     ) -> Self {
         let size = window.inner_size();
-        let width = if size.width > 0 { size.width } else { config.width };
-        let height = if size.height > 0 { size.height } else { config.height };
+        let width = if size.width > 0 {
+            size.width
+        } else {
+            config.width
+        };
+        let height = if size.height > 0 {
+            size.height
+        } else {
+            config.height
+        };
 
         println!("[RenderState] Window size: {}x{}", width, height);
 
@@ -158,21 +173,23 @@ impl RenderState {
             || name_lower.contains("swiftshader")
             || adapter_info.device_type == wgpu::DeviceType::Cpu;
 
-        let renderer_type = if is_software_renderer { "SOFTWARE RENDERER" } else { "GPU" };
+        let renderer_type = if is_software_renderer {
+            "SOFTWARE RENDERER"
+        } else {
+            "GPU"
+        };
         println!(
             "[RenderState] Using adapter: {} ({:?}) [{}]",
             adapter_info.name, adapter_info.backend, renderer_type
         );
 
         // Request device
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("Magic Engine Device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                ..Default::default()
-            },
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("Magic Engine Device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            ..Default::default()
+        }))
         .expect("Failed to create device");
 
         // Configure surface
@@ -191,7 +208,10 @@ impl RenderState {
             wgpu::PresentMode::AutoVsync
         } else if is_software_renderer {
             // Software renderers typically don't support Immediate, use Mailbox
-            if surface_caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
+            if surface_caps
+                .present_modes
+                .contains(&wgpu::PresentMode::Mailbox)
+            {
                 println!("[RenderState] Using Mailbox present mode (software renderer)");
                 wgpu::PresentMode::Mailbox
             } else {
@@ -200,10 +220,16 @@ impl RenderState {
             }
         } else {
             // Real GPU - try Immediate first (uncapped FPS), fall back to Mailbox
-            if surface_caps.present_modes.contains(&wgpu::PresentMode::Immediate) {
+            if surface_caps
+                .present_modes
+                .contains(&wgpu::PresentMode::Immediate)
+            {
                 println!("[RenderState] Using Immediate present mode (uncapped FPS)");
                 wgpu::PresentMode::Immediate
-            } else if surface_caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
+            } else if surface_caps
+                .present_modes
+                .contains(&wgpu::PresentMode::Mailbox)
+            {
                 println!("[RenderState] Immediate not available, using Mailbox");
                 wgpu::PresentMode::Mailbox
             } else {
@@ -352,8 +378,7 @@ impl RenderState {
         // TileBuffer: header (16 bytes) + tiles array (~1.06 MB at 1080p)
         let header = TileBufferHeader::for_resolution(config.width, config.height);
         let tile_count = header.total_tiles as usize;
-        let tile_data_size = std::mem::size_of::<TileBufferHeader>()
-            + tile_count * 136; // TileData = 136 bytes each
+        let tile_data_size = std::mem::size_of::<TileBufferHeader>() + tile_count * 136; // TileData = 136 bytes each
         let tile_data_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Tile Data Buffer"),
             size: tile_data_size as u64,
@@ -448,14 +473,23 @@ impl RenderState {
             },
             count: None,
         }];
-        let render_mismatches = super::binding_validator::validate_render_bindings(&group0_entries, &group1_entries);
+        let render_mismatches =
+            super::binding_validator::validate_render_bindings(&group0_entries, &group1_entries);
         if render_mismatches == 0 {
-            println!("[BindingValidator] Render pipeline bindings validated OK (group 0 + group 1)");
+            println!(
+                "[BindingValidator] Render pipeline bindings validated OK (group 0 + group 1)"
+            );
         } else {
-            eprintln!("[BindingValidator] WARNING: {} render binding mismatch(es) found!", render_mismatches);
+            eprintln!(
+                "[BindingValidator] WARNING: {} render binding mismatch(es) found!",
+                render_mismatches
+            );
         }
 
-        println!("[RenderState] Initialization complete (VSync: {})", config.vsync);
+        println!(
+            "[RenderState] Initialization complete (VSync: {})",
+            config.vsync
+        );
 
         Self {
             device,
@@ -493,34 +527,38 @@ impl RenderState {
 
     /// Write data to the uniform buffer.
     pub fn write_uniforms<T: bytemuck::Pod>(&self, data: &T) {
-        self.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(data));
+        self.queue
+            .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(data));
     }
 
     /// Write data to the entity buffer.
     pub fn write_entities<T: bytemuck::Pod>(&self, data: &T) {
-        self.queue.write_buffer(&self.entity_buffer, 0, bytemuck::bytes_of(data));
+        self.queue
+            .write_buffer(&self.entity_buffer, 0, bytemuck::bytes_of(data));
     }
 
     /// Write data to the sky buffer.
     pub fn write_sky<T: bytemuck::Pod>(&self, data: &T) {
-        self.queue.write_buffer(&self.sky_buffer, 0, bytemuck::bytes_of(data));
+        self.queue
+            .write_buffer(&self.sky_buffer, 0, bytemuck::bytes_of(data));
     }
 
     /// Write froxel bounds data to the GPU buffer.
     pub fn write_froxel_bounds(&self, data: &FroxelBoundsBuffer) {
-        self.queue.write_buffer(&self.froxel_bounds_buffer, 0, bytemuck::bytes_of(data));
+        self.queue
+            .write_buffer(&self.froxel_bounds_buffer, 0, bytemuck::bytes_of(data));
     }
 
     /// Write froxel SDF list data to the GPU buffer.
     pub fn write_froxel_sdf_lists(&self, data: &FroxelSDFListBuffer) {
-        self.queue.write_buffer(&self.froxel_sdf_list_buffer, 0, bytemuck::bytes_of(data));
+        self.queue
+            .write_buffer(&self.froxel_sdf_list_buffer, 0, bytemuck::bytes_of(data));
     }
 
     /// Create a command encoder for recording GPU commands.
     pub fn create_encoder(&self, label: &str) -> wgpu::CommandEncoder {
-        self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some(label),
-        })
+        self.device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) })
     }
 
     /// Submit encoded commands to the GPU queue.

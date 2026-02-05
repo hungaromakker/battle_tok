@@ -1,31 +1,41 @@
 {
     "story_id": "US-P3-006",
     "title": "Create MeteorSystem",
-    "status": "pending",
-    "focus": "",
+    "status": "completed",
+    "focus": "All criteria met — MeteorSystem created and verified",
     "criteria": [
-        {"text": "MeteorSystem owns both Vec<Meteor> and MeteorSpawner", "done": false, "notes": ""},
-        {"text": "update() handles spawning, physics, and impact detection", "done": false, "notes": ""},
-        {"text": "MeteorImpact returned for caller to handle debris", "done": false, "notes": ""},
-        {"text": "No wgpu imports", "done": false, "notes": ""},
-        {"text": "Re-exported from systems module", "done": false, "notes": ""},
-        {"text": "Typecheck passes (cargo check)", "done": false, "notes": ""}
+        {"text": "MeteorSystem owns both Vec<Meteor> and MeteorSpawner", "done": true, "notes": "MeteorSystem struct holds meteors: Vec<Meteor> and spawner: MeteorSpawner"},
+        {"text": "update() handles spawning, physics, and impact detection", "done": true, "notes": "update() calls spawner.update(), iterates meteors with meteor.update(), collects impacts, retains alive meteors"},
+        {"text": "MeteorImpact returned for caller to handle debris", "done": true, "notes": "MeteorImpact { position, debris } returned in Vec from update()"},
+        {"text": "No wgpu imports", "done": true, "notes": "Verified: zero wgpu references in meteor_system.rs"},
+        {"text": "Re-exported from systems module", "done": true, "notes": "pub use meteor_system::{MeteorImpact, MeteorSystem} in systems/mod.rs"},
+        {"text": "Typecheck passes (cargo check)", "done": true, "notes": "cargo check passes with no new warnings"}
     ],
     "checklist": [
-        {"item": "Read spec.md for implementation details", "done": false},
-        {"item": "Read meteor code in destruction.rs", "done": false},
-        {"item": "Create src/game/systems/meteor_system.rs", "done": false},
-        {"item": "Update src/game/systems/mod.rs", "done": false},
-        {"item": "Run cargo check", "done": false}
+        {"item": "Read spec.md for implementation details", "done": true},
+        {"item": "Read meteor code in destruction.rs", "done": true},
+        {"item": "Create src/game/systems/meteor_system.rs", "done": true},
+        {"item": "Update src/game/systems/mod.rs", "done": true},
+        {"item": "Run cargo check", "done": true}
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
+    "worker_notes": "All criteria met. MeteorSystem wraps Vec<Meteor> + MeteorSpawner with a clean update/iterate API. update() returns Vec<MeteorImpact> with pre-spawned debris. No wgpu coupling. Re-exported from systems module. cargo check passes cleanly.",
+    "notes_history": [
+        {"iteration": 1, "note": "All criteria completed in a single iteration. Created meteor_system.rs following the ProjectileSystem pattern. MeteorSystem::update() handles spawning via spawner.update(), physics via meteor.update(), impact collection, and dead-meteor cleanup. Returns MeteorImpact with position + debris for caller.", "timestamp": "2026-02-05T22:30:00Z"}
+    ],
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": [],
     "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
+    "files_modified": [
+        "src/game/systems/meteor_system.rs",
+        "src/game/systems/mod.rs"
+    ],
+    "iteration_history": [
+        {"iteration": 1, "action": "Created MeteorSystem struct with full API, updated systems/mod.rs, verified cargo check", "notes": "All 6 criteria met", "completed_at": "2026-02-05T22:30:00Z"}
+    ],
+    "learnings": [
+        "Meteor::update() already handles ground detection via terrain_height_at, returning Some(impact_pos) — system just orchestrates",
+        "MeteorSpawner::update() takes current_meteors count to enforce max_meteors limit"
+    ],
     "created_at": "2026-02-05T22:00:00Z"
 }

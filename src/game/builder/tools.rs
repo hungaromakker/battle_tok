@@ -5,7 +5,9 @@
 use glam::Vec3;
 
 /// Shape names for display
-pub const SHAPE_NAMES: [&str; 7] = ["Cube", "Cylinder", "Sphere", "Dome", "Arch", "Wedge", "Bridge"];
+pub const SHAPE_NAMES: [&str; 7] = [
+    "Cube", "Cylinder", "Sphere", "Dome", "Arch", "Wedge", "Bridge",
+];
 
 /// Grid size for block placement snapping
 pub const BLOCK_GRID_SIZE: f32 = 1.0;
@@ -45,18 +47,20 @@ impl BridgeTool {
         self.first_face = None;
         self.second_face = None;
     }
-    
+
     pub fn select_face(&mut self, face: SelectedFace) {
         if self.first_face.is_none() {
             self.first_face = Some(face);
-            println!("[Bridge] First face selected at ({:.1}, {:.1}, {:.1})", 
-                face.position.x, face.position.y, face.position.z);
+            println!(
+                "[Bridge] First face selected at ({:.1}, {:.1}, {:.1})",
+                face.position.x, face.position.y, face.position.z
+            );
         } else if self.second_face.is_none() {
             self.second_face = Some(face);
             println!("[Bridge] Second face selected - ready to create bridge!");
         }
     }
-    
+
     pub fn is_ready(&self) -> bool {
         self.first_face.is_some() && self.second_face.is_some()
     }

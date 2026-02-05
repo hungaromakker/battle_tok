@@ -1,30 +1,41 @@
 {
     "story_id": "US-P3-002",
     "title": "Create VisualConfig",
-    "status": "pending",
-    "focus": "",
+    "status": "completed",
+    "focus": "All criteria met — VisualConfig struct created with all visual atmosphere settings",
     "criteria": [
-        {"text": "VisualConfig::default() matches current hardcoded visual values", "done": false, "notes": ""},
-        {"text": "Fog, lighting, torch, and lava glow settings captured", "done": false, "notes": ""},
-        {"text": "Struct derives Clone and Debug", "done": false, "notes": ""},
-        {"text": "Re-exported from src/game/config/mod.rs", "done": false, "notes": ""},
-        {"text": "Typecheck passes (cargo check)", "done": false, "notes": ""}
+        {"text": "VisualConfig::default() matches current hardcoded visual values", "done": true, "notes": "Default values match battle_arena.rs: fog_density=0.004, fog_color=(0.65,0.45,0.55), sun_dir=(0.3,0.25,-0.92), ambient=0.25, torch params from PointLightManager"},
+        {"text": "Fog, lighting, torch, and lava glow settings captured", "done": true, "notes": "All captured: fog_density, fog_color, sun_direction, sun_color, ambient_intensity, torch_intensity, torch_flicker_speed, torch_radius, torch_color, lava_glow_color, lava_glow_strength"},
+        {"text": "Struct derives Clone and Debug", "done": true, "notes": "#[derive(Clone, Debug)] on VisualConfig"},
+        {"text": "Re-exported from src/game/config/mod.rs", "done": true, "notes": "pub use visual_config::VisualConfig in config/mod.rs, also re-exported from game/mod.rs"},
+        {"text": "Typecheck passes (cargo check)", "done": true, "notes": "cargo check passes — only pre-existing warnings"}
     ],
     "checklist": [
-        {"item": "Read spec.md for implementation details", "done": false},
-        {"item": "Scan battle_arena.rs for visual constants", "done": false},
-        {"item": "Create src/game/config/visual_config.rs", "done": false},
-        {"item": "Update src/game/config/mod.rs", "done": false},
-        {"item": "Run cargo check", "done": false}
+        {"item": "Read spec.md for implementation details", "done": true},
+        {"item": "Scan battle_arena.rs for visual constants", "done": true},
+        {"item": "Create src/game/config/visual_config.rs", "done": true},
+        {"item": "Update src/game/config/mod.rs", "done": true},
+        {"item": "Run cargo check", "done": true}
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
+    "worker_notes": "All criteria met. Created VisualConfig struct with fog, sun lighting, torch, and lava glow settings matching hardcoded values in battle_arena.rs. Integrated with existing config module (arena_config already present from parallel worker). cargo check passes clean.",
+    "notes_history": [
+        {"iteration": 1, "note": "Scanned battle_arena.rs for visual constants. Found: fog_density=0.004, fog_color=[0.65,0.45,0.55], sun_dir=[0.3,0.25,-0.92], ambient=0.25, torch_color=[1.0,0.6,0.2], torch_radius=10.0, torch_intensity=1.0, flicker_speed=12.0, lava_color=[1.8,0.5,0.1]. Created visual_config.rs, updated config/mod.rs and game/mod.rs. cargo check passes. Committed.", "timestamp": "2026-02-05T22:05:00Z"}
+    ],
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": [],
-    "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
+    "commit_hash": "4d5ebe42fd4508a49cc9f21d20d6937efdc4f174",
+    "files_modified": [
+        "src/game/config/visual_config.rs",
+        "src/game/config/mod.rs",
+        "src/game/mod.rs"
+    ],
+    "iteration_history": [
+        {"iteration": 1, "action": "Created VisualConfig struct with all visual atmosphere settings, integrated with config module, verified cargo check", "notes": "All 5 criteria met in single iteration", "completed_at": "2026-02-05T22:05:00Z"}
+    ],
+    "learnings": [
+        "Config module was already created by parallel arena_config worker — needed to add to existing mod.rs rather than create new",
+        "Torch flicker speed (12.0 rad/s) is hardcoded in PointLightManager::update, not configurable per-torch yet"
+    ],
     "created_at": "2026-02-05T22:00:00Z"
 }

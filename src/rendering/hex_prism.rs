@@ -391,7 +391,14 @@ mod tests {
                 for level in 0..=3 {
                     let world = axial_to_world(q, r, level, radius, height);
                     let (q2, r2, level2) = world_to_axial(world, radius, height);
-                    assert_eq!((q, r, level), (q2, r2, level2), "Roundtrip failed for ({}, {}, {})", q, r, level);
+                    assert_eq!(
+                        (q, r, level),
+                        (q2, r2, level2),
+                        "Roundtrip failed for ({}, {}, {})",
+                        q,
+                        r,
+                        level
+                    );
                 }
             }
         }

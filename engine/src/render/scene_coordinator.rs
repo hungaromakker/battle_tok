@@ -3,13 +3,13 @@
 //! High-level scene management that coordinates render passes,
 //! camera state, and frame submission.
 
+use glam::{Mat4, Vec3};
 use std::sync::Arc;
 use std::time::Instant;
-use glam::{Mat4, Vec3};
 use winit::window::Window;
 
 use super::gpu_context::{GpuContext, GpuContextConfig};
-use super::render_pass::{RenderContext, FrameContext, RenderPassManager};
+use super::render_pass::{FrameContext, RenderContext, RenderPassManager};
 
 /// Camera data for rendering
 #[derive(Clone, Copy)]
@@ -193,14 +193,20 @@ impl SceneCoordinator {
     /// Render a frame using all enabled passes
     pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let output = self.gpu.get_current_texture()?;
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = self.gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Scene Render Encoder"),
-        });
+        let mut encoder = self
+            .gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Scene Render Encoder"),
+            });
 
         // Create frame context
-        let view_proj = (self.camera.projection_matrix * self.camera.view_matrix).to_cols_array_2d();
+        let view_proj =
+            (self.camera.projection_matrix * self.camera.view_matrix).to_cols_array_2d();
         let camera_pos = self.camera.position.to_array();
         let time = self.elapsed_time();
         let (width, height) = self.gpu.dimensions();
@@ -233,11 +239,16 @@ impl SceneCoordinator {
     }
 
     /// Begin a custom render pass (for manual control)
-    pub fn begin_frame(&mut self) -> Result<(wgpu::SurfaceTexture, wgpu::CommandEncoder), wgpu::SurfaceError> {
+    pub fn begin_frame(
+        &mut self,
+    ) -> Result<(wgpu::SurfaceTexture, wgpu::CommandEncoder), wgpu::SurfaceError> {
         let output = self.gpu.get_current_texture()?;
-        let encoder = self.gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Custom Render Encoder"),
-        });
+        let encoder = self
+            .gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Custom Render Encoder"),
+            });
         Ok((output, encoder))
     }
 

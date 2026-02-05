@@ -9,7 +9,8 @@ use wgpu::util::DeviceExt;
 pub const MAX_CREATURE_INSTANCES: usize = 2000;
 
 /// Total buffer size in bytes (2000 * 48 = 96,000 bytes = 96 KB)
-pub const INSTANCE_BUFFER_SIZE: usize = MAX_CREATURE_INSTANCES * std::mem::size_of::<CreatureInstance>();
+pub const INSTANCE_BUFFER_SIZE: usize =
+    MAX_CREATURE_INSTANCES * std::mem::size_of::<CreatureInstance>();
 
 /// GPU instance data for a single creature entity.
 ///

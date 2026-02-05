@@ -331,9 +331,18 @@ static TRI_TABLE: [[i8; 16]; 256] = [
 
 // Edge to vertex mapping (which two corners of the cube each edge connects)
 static EDGE_VERTICES: [(usize, usize); 12] = [
-    (0, 1), (1, 2), (2, 3), (3, 0),  // Bottom face edges
-    (4, 5), (5, 6), (6, 7), (7, 4),  // Top face edges
-    (0, 4), (1, 5), (2, 6), (3, 7),  // Vertical edges
+    (0, 1),
+    (1, 2),
+    (2, 3),
+    (3, 0), // Bottom face edges
+    (4, 5),
+    (5, 6),
+    (6, 7),
+    (7, 4), // Top face edges
+    (0, 4),
+    (1, 5),
+    (2, 6),
+    (3, 7), // Vertical edges
 ];
 
 // Corner positions relative to cell origin (0,0,0)
@@ -371,13 +380,13 @@ impl MarchingCubes {
             smoothness: 0.1,
         }
     }
-    
+
     /// Set smoothness factor for vertex interpolation
     pub fn with_smoothness(mut self, smoothness: f32) -> Self {
         self.smoothness = smoothness;
         self
     }
-    
+
     /// Generate mesh from an SDF function within given bounds
     ///
     /// # Arguments
@@ -400,15 +409,15 @@ impl MarchingCubes {
     {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
-        
+
         // Cell size
         let size = max - min;
         let cell_size = size / self.resolution as f32;
-        
+
         // Sample SDF at all corners
         let sample_count = (self.resolution + 1) as usize;
         let mut samples = vec![0.0f32; sample_count * sample_count * sample_count];
-        
+
         for z in 0..=self.resolution {
             for y in 0..=self.resolution {
                 for x in 0..=self.resolution {
@@ -418,17 +427,20 @@ impl MarchingCubes {
                 }
             }
         }
-        
+
         // Vertex cache for edge interpolation (to avoid duplicates)
         let mut edge_cache: HashMap<(u32, u32, u32, u8), u32> = HashMap::new();
-        
+
         // Process each cell
         for z in 0..self.resolution {
             for y in 0..self.resolution {
                 for x in 0..self.resolution {
                     self.process_cell(
-                        x, y, z,
-                        min, cell_size,
+                        x,
+                        y,
+                        z,
+                        min,
+                        cell_size,
                         &samples,
                         sample_count,
                         color,
@@ -439,28 +451,31 @@ impl MarchingCubes {
                 }
             }
         }
-        
+
         // Calculate normals from SDF gradient
         for vertex in &mut vertices {
             let pos = Vec3::from_array(vertex.position);
             let eps = cell_size.min_element() * 0.1;
-            
+
             let normal = Vec3::new(
                 sdf(pos + Vec3::X * eps) - sdf(pos - Vec3::X * eps),
                 sdf(pos + Vec3::Y * eps) - sdf(pos - Vec3::Y * eps),
                 sdf(pos + Vec3::Z * eps) - sdf(pos - Vec3::Z * eps),
-            ).normalize_or_zero();
-            
+            )
+            .normalize_or_zero();
+
             vertex.normal = normal.to_array();
         }
-        
+
         (vertices, indices)
     }
-    
+
     /// Process a single cell
     fn process_cell(
         &self,
-        x: u32, y: u32, z: u32,
+        x: u32,
+        y: u32,
+        z: u32,
         min: Vec3,
         cell_size: Vec3,
         samples: &[f32],
@@ -479,7 +494,7 @@ impl MarchingCubes {
             let idx = (cz as usize * sample_count + cy as usize) * sample_count + cx as usize;
             corner_values[i] = samples[idx];
         }
-        
+
         // Determine cube configuration index (8 bits, one per corner)
         let mut cube_index = 0u8;
         for i in 0..8 {
@@ -487,18 +502,18 @@ impl MarchingCubes {
                 cube_index |= 1 << i;
             }
         }
-        
+
         // Skip if completely inside or outside
         if cube_index == 0 || cube_index == 255 {
             return;
         }
-        
+
         // Get edge flags
         let edge_flags = EDGE_TABLE[cube_index as usize];
         if edge_flags == 0 {
             return;
         }
-        
+
         // Calculate vertex position for each active edge
         let mut edge_vertices = [0u32; 12];
         for edge in 0..12 {
@@ -512,14 +527,14 @@ impl MarchingCubes {
                     let (v0, v1) = EDGE_VERTICES[edge];
                     let val0 = corner_values[v0];
                     let val1 = corner_values[v1];
-                    
+
                     // Linear interpolation: find where SDF crosses zero
                     let t = if (val1 - val0).abs() > 1e-6 {
                         (-val0 / (val1 - val0)).clamp(0.0, 1.0)
                     } else {
                         0.5
                     };
-                    
+
                     let p0 = Vec3::new(
                         x as f32 + CORNER_OFFSETS[v0][0],
                         y as f32 + CORNER_OFFSETS[v0][1],
@@ -530,23 +545,23 @@ impl MarchingCubes {
                         y as f32 + CORNER_OFFSETS[v1][1],
                         z as f32 + CORNER_OFFSETS[v1][2],
                     );
-                    
+
                     let local_pos = p0 + (p1 - p0) * t;
                     let world_pos = min + local_pos * cell_size;
-                    
+
                     let vertex_idx = vertices.len() as u32;
                     vertices.push(BlockVertex::new(
                         world_pos,
                         Vec3::ZERO, // Normal will be calculated later
                         color,
                     ));
-                    
+
                     edge_cache.insert(cache_key, vertex_idx);
                     edge_vertices[edge] = vertex_idx;
                 }
             }
         }
-        
+
         // Generate triangles from table
         let tri_entry = &TRI_TABLE[cube_index as usize];
         let mut i = 0;
@@ -571,27 +586,27 @@ pub fn generate_merged_mesh(
     if blocks.is_empty() {
         return (Vec::new(), Vec::new());
     }
-    
+
     // Calculate bounds
     let mut min = Vec3::splat(f32::MAX);
     let mut max = Vec3::splat(f32::MIN);
-    
+
     for block in blocks {
         let aabb = block.aabb();
         min = min.min(aabb.min);
         max = max.max(aabb.max);
     }
-    
+
     // Add small margin
     let margin = (max - min).max_element() * 0.1;
     min -= Vec3::splat(margin);
     max += Vec3::splat(margin);
-    
+
     // Create combined SDF function
     let sdf = |p: Vec3| -> f32 {
         let mut result = f32::MAX;
         let mut first = true;
-        
+
         for block in blocks {
             let d = block.sdf(p);
             if first {
@@ -603,10 +618,10 @@ pub fn generate_merged_mesh(
                 result = d + (result - d) * h - smoothness * h * (1.0 - h);
             }
         }
-        
+
         result
     };
-    
+
     // Generate mesh
     let mc = MarchingCubes::new(resolution).with_smoothness(smoothness);
     mc.generate_mesh(sdf, min, max, color)
@@ -616,67 +631,67 @@ pub fn generate_merged_mesh(
 mod tests {
     use super::*;
     use crate::render::building_blocks::{BuildingBlock, BuildingBlockShape};
-    
+
     #[test]
     fn test_marching_cubes_sphere() {
         let mc = MarchingCubes::new(16);
-        
+
         let sdf = |p: Vec3| -> f32 {
             p.length() - 1.0 // Sphere of radius 1
         };
-        
+
         let (verts, indices) = mc.generate_mesh(
             sdf,
             Vec3::splat(-2.0),
             Vec3::splat(2.0),
             [1.0, 0.0, 0.0, 1.0],
         );
-        
+
         // Should have generated some geometry
         assert!(!verts.is_empty());
         assert!(!indices.is_empty());
         // Indices should be multiple of 3 (triangles)
         assert_eq!(indices.len() % 3, 0);
     }
-    
+
     #[test]
     fn test_marching_cubes_cube() {
         let mc = MarchingCubes::new(16);
-        
+
         let sdf = |p: Vec3| -> f32 {
             // Box SDF
             let q = p.abs() - Vec3::splat(1.0);
             q.max(Vec3::ZERO).length() + q.max_element().min(0.0)
         };
-        
+
         let (verts, indices) = mc.generate_mesh(
             sdf,
             Vec3::splat(-2.0),
             Vec3::splat(2.0),
             [0.0, 1.0, 0.0, 1.0],
         );
-        
+
         assert!(!verts.is_empty());
         assert!(!indices.is_empty());
     }
-    
+
     #[test]
     fn test_merged_mesh_generation() {
         let blocks = vec![
             BuildingBlock::new(
                 BuildingBlockShape::Sphere { radius: 1.0 },
                 Vec3::new(-0.5, 0.0, 0.0),
-                0
+                0,
             ),
             BuildingBlock::new(
                 BuildingBlockShape::Sphere { radius: 1.0 },
                 Vec3::new(0.5, 0.0, 0.0),
-                0
+                0,
             ),
         ];
-        
+
         let (verts, indices) = generate_merged_mesh(&blocks, 0.2, 32, [0.5, 0.5, 0.5, 1.0]);
-        
+
         assert!(!verts.is_empty());
         assert!(!indices.is_empty());
     }

@@ -15,13 +15,10 @@ pub mod crouch;
 pub mod movement_controller;
 
 pub use crouch::{
-    CrouchController, Stance,
-    STANDING_HEIGHT, CROUCH_HEIGHT, PRONE_HEIGHT,
-    TRANSITION_DURATION, CROUCH_SPEED_MULTIPLIER, PRONE_SPEED_MULTIPLIER,
+    CROUCH_HEIGHT, CROUCH_SPEED_MULTIPLIER, CrouchController, PRONE_HEIGHT, PRONE_SPEED_MULTIPLIER,
+    STANDING_HEIGHT, Stance, TRANSITION_DURATION,
 };
 pub use movement_controller::{
-    PlayerMovementController,
-    SphericalGravityConfig, GravityMode,
-    WALK_SPEED, SPRINT_SPEED, ACCELERATION, DECELERATION,
-    JUMP_VELOCITY, GRAVITY, COYOTE_TIME,
+    ACCELERATION, COYOTE_TIME, DECELERATION, GRAVITY, GravityMode, JUMP_VELOCITY,
+    PlayerMovementController, SPRINT_SPEED, SphericalGravityConfig, WALK_SPEED,
 };

@@ -91,7 +91,10 @@ impl Position {
 
 impl From<(f32, f32)> for Position {
     fn from(tuple: (f32, f32)) -> Self {
-        Self { x: tuple.0, y: tuple.1 }
+        Self {
+            x: tuple.0,
+            y: tuple.1,
+        }
     }
 }
 
@@ -195,10 +198,9 @@ impl MouseState {
     /// Calculate the position delta since last update.
     pub fn delta(&self) -> Option<Position> {
         match (self.position, self.last_position) {
-            (Some(current), Some(last)) => Some(Position::new(
-                current.x - last.x,
-                current.y - last.y,
-            )),
+            (Some(current), Some(last)) => {
+                Some(Position::new(current.x - last.x, current.y - last.y))
+            }
             _ => None,
         }
     }

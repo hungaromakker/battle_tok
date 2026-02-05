@@ -4,8 +4,8 @@
 //! Maps physical input events to game actions.
 
 use std::collections::HashMap;
-use winit::keyboard::KeyCode;
 use winit::event::MouseButton;
+use winit::keyboard::KeyCode;
 
 /// Input actions that can be triggered by the player
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -355,12 +355,24 @@ impl InputState {
         let mut y = 0.0;
         let mut z = 0.0;
 
-        if self.action_pressed(GameAction::MoveForward) { z += 1.0; }
-        if self.action_pressed(GameAction::MoveBackward) { z -= 1.0; }
-        if self.action_pressed(GameAction::MoveLeft) { x -= 1.0; }
-        if self.action_pressed(GameAction::MoveRight) { x += 1.0; }
-        if self.action_pressed(GameAction::MoveUp) { y += 1.0; }
-        if self.action_pressed(GameAction::MoveDown) { y -= 1.0; }
+        if self.action_pressed(GameAction::MoveForward) {
+            z += 1.0;
+        }
+        if self.action_pressed(GameAction::MoveBackward) {
+            z -= 1.0;
+        }
+        if self.action_pressed(GameAction::MoveLeft) {
+            x -= 1.0;
+        }
+        if self.action_pressed(GameAction::MoveRight) {
+            x += 1.0;
+        }
+        if self.action_pressed(GameAction::MoveUp) {
+            y += 1.0;
+        }
+        if self.action_pressed(GameAction::MoveDown) {
+            y -= 1.0;
+        }
 
         (x, y, z)
     }
@@ -370,10 +382,18 @@ impl InputState {
         let mut x = 0.0;
         let mut y = 0.0;
 
-        if self.action_pressed(GameAction::AimUp) { y += 1.0; }
-        if self.action_pressed(GameAction::AimDown) { y -= 1.0; }
-        if self.action_pressed(GameAction::AimLeft) { x -= 1.0; }
-        if self.action_pressed(GameAction::AimRight) { x += 1.0; }
+        if self.action_pressed(GameAction::AimUp) {
+            y += 1.0;
+        }
+        if self.action_pressed(GameAction::AimDown) {
+            y -= 1.0;
+        }
+        if self.action_pressed(GameAction::AimLeft) {
+            x -= 1.0;
+        }
+        if self.action_pressed(GameAction::AimRight) {
+            x += 1.0;
+        }
 
         (x, y)
     }

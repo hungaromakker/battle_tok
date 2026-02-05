@@ -35,7 +35,7 @@
 
 use super::froxel_buffers::{FroxelBounds, FroxelBoundsBuffer};
 use super::froxel_config::{
-    depth_slice_bounds, FROXEL_DEPTH_SLICES, FROXEL_TILES_X, FROXEL_TILES_Y,
+    FROXEL_DEPTH_SLICES, FROXEL_TILES_X, FROXEL_TILES_Y, depth_slice_bounds,
 };
 
 /// Camera projection parameters needed for froxel bounds calculation.
@@ -264,8 +264,15 @@ pub fn calculate_froxel_bounds(camera: &CameraProjection) -> Box<FroxelBoundsBuf
 
                 // Calculate the 8 corners of this froxel in world space
                 let corners = calculate_froxel_corners(
-                    camera, ndc_left, ndc_right, ndc_bottom, ndc_top, depth_near, depth_far,
-                    tan_half_fov_x, tan_half_fov_y,
+                    camera,
+                    ndc_left,
+                    ndc_right,
+                    ndc_bottom,
+                    ndc_top,
+                    depth_near,
+                    depth_far,
+                    tan_half_fov_x,
+                    tan_half_fov_y,
                 );
 
                 // Compute AABB from corners
@@ -299,16 +306,72 @@ fn calculate_froxel_corners(
     let mut corners = [[0.0f32; 3]; 8];
 
     // Near plane corners (0-3)
-    corners[0] = ndc_to_world(camera, ndc_left, ndc_bottom, depth_near, tan_half_fov_x, tan_half_fov_y);
-    corners[1] = ndc_to_world(camera, ndc_right, ndc_bottom, depth_near, tan_half_fov_x, tan_half_fov_y);
-    corners[2] = ndc_to_world(camera, ndc_right, ndc_top, depth_near, tan_half_fov_x, tan_half_fov_y);
-    corners[3] = ndc_to_world(camera, ndc_left, ndc_top, depth_near, tan_half_fov_x, tan_half_fov_y);
+    corners[0] = ndc_to_world(
+        camera,
+        ndc_left,
+        ndc_bottom,
+        depth_near,
+        tan_half_fov_x,
+        tan_half_fov_y,
+    );
+    corners[1] = ndc_to_world(
+        camera,
+        ndc_right,
+        ndc_bottom,
+        depth_near,
+        tan_half_fov_x,
+        tan_half_fov_y,
+    );
+    corners[2] = ndc_to_world(
+        camera,
+        ndc_right,
+        ndc_top,
+        depth_near,
+        tan_half_fov_x,
+        tan_half_fov_y,
+    );
+    corners[3] = ndc_to_world(
+        camera,
+        ndc_left,
+        ndc_top,
+        depth_near,
+        tan_half_fov_x,
+        tan_half_fov_y,
+    );
 
     // Far plane corners (4-7)
-    corners[4] = ndc_to_world(camera, ndc_left, ndc_bottom, depth_far, tan_half_fov_x, tan_half_fov_y);
-    corners[5] = ndc_to_world(camera, ndc_right, ndc_bottom, depth_far, tan_half_fov_x, tan_half_fov_y);
-    corners[6] = ndc_to_world(camera, ndc_right, ndc_top, depth_far, tan_half_fov_x, tan_half_fov_y);
-    corners[7] = ndc_to_world(camera, ndc_left, ndc_top, depth_far, tan_half_fov_x, tan_half_fov_y);
+    corners[4] = ndc_to_world(
+        camera,
+        ndc_left,
+        ndc_bottom,
+        depth_far,
+        tan_half_fov_x,
+        tan_half_fov_y,
+    );
+    corners[5] = ndc_to_world(
+        camera,
+        ndc_right,
+        ndc_bottom,
+        depth_far,
+        tan_half_fov_x,
+        tan_half_fov_y,
+    );
+    corners[6] = ndc_to_world(
+        camera,
+        ndc_right,
+        ndc_top,
+        depth_far,
+        tan_half_fov_x,
+        tan_half_fov_y,
+    );
+    corners[7] = ndc_to_world(
+        camera,
+        ndc_left,
+        ndc_top,
+        depth_far,
+        tan_half_fov_x,
+        tan_half_fov_y,
+    );
 
     corners
 }
@@ -505,7 +568,10 @@ mod tests {
         let buffer = calculate_froxel_bounds(&camera);
 
         // Should have TOTAL_FROXELS bounds
-        assert_eq!(buffer.count, FROXEL_TILES_X * FROXEL_TILES_Y * FROXEL_DEPTH_SLICES);
+        assert_eq!(
+            buffer.count,
+            FROXEL_TILES_X * FROXEL_TILES_Y * FROXEL_DEPTH_SLICES
+        );
     }
 
     #[test]
@@ -521,9 +587,18 @@ mod tests {
         // Camera is at (0, 5, 0), looking toward -Z
         // So bounds should be in front of camera (negative Z values in world space)
         // First slice should start at camera.near (0.1m) from camera
-        assert!(first_bounds.size()[0] > 0.0, "Froxel should have positive width");
-        assert!(first_bounds.size()[1] > 0.0, "Froxel should have positive height");
-        assert!(first_bounds.size()[2] > 0.0, "Froxel should have positive depth");
+        assert!(
+            first_bounds.size()[0] > 0.0,
+            "Froxel should have positive width"
+        );
+        assert!(
+            first_bounds.size()[1] > 0.0,
+            "Froxel should have positive height"
+        );
+        assert!(
+            first_bounds.size()[2] > 0.0,
+            "Froxel should have positive depth"
+        );
     }
 
     #[test]

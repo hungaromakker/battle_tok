@@ -4,7 +4,6 @@
 //! embers and ash rising from lava. Particles are rendered as camera-facing
 //! billboards with additive blending for a glowing effect.
 
-
 /// Maximum number of particles supported (for 500+ at 60fps requirement)
 pub const MAX_PARTICLES: usize = 1024;
 
@@ -420,7 +419,7 @@ impl ParticleSystem {
         let color = [
             2.0 + color_variation * 0.5, // R: 2.0 - 2.5
             0.4 + color_variation * 0.4, // G: 0.4 - 0.8 (more yellow when high)
-            0.1,                          // B: constant low
+            0.1,                         // B: constant low
         ];
 
         Particle {
@@ -506,7 +505,11 @@ impl ParticleSystem {
             .collect();
 
         // Write to buffer
-        queue.write_buffer(&self.particle_buffer, 0, bytemuck::cast_slice(&gpu_particles));
+        queue.write_buffer(
+            &self.particle_buffer,
+            0,
+            bytemuck::cast_slice(&gpu_particles),
+        );
     }
 
     /// Update uniform buffer with view and projection matrices.

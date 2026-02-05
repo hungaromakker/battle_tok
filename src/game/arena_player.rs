@@ -79,46 +79,46 @@ impl Player {
     pub fn get_eye_position(&self) -> Vec3 {
         self.position + Vec3::new(0.0, PLAYER_EYE_HEIGHT, 0.0)
     }
-    
+
     /// Request a jump (will be processed in update)
     pub fn request_jump(&mut self) {
         self.jump_requested = true;
     }
-    
+
     /// Check if can currently jump
     pub fn can_jump(&self) -> bool {
         self.is_grounded || self.coyote_time_remaining > 0.0
     }
-    
+
     /// Update player physics
     pub fn update(&mut self, movement: &MovementKeys, camera_yaw: f32, delta_time: f32) {
         let dt = delta_time.clamp(0.0001, 0.1);
-        
+
         // Calculate forward/right directions from camera yaw (XZ plane only)
         let forward = Vec3::new(camera_yaw.sin(), 0.0, -camera_yaw.cos()).normalize();
         let right = Vec3::new(-forward.z, 0.0, forward.x).normalize();
-        
+
         // Get input direction
-        let forward_input = if movement.forward { 1.0 } else { 0.0 }
-            - if movement.backward { 1.0 } else { 0.0 };
-        let right_input = if movement.right { 1.0 } else { 0.0 }
-            - if movement.left { 1.0 } else { 0.0 };
-        
+        let forward_input =
+            if movement.forward { 1.0 } else { 0.0 } - if movement.backward { 1.0 } else { 0.0 };
+        let right_input =
+            if movement.right { 1.0 } else { 0.0 } - if movement.left { 1.0 } else { 0.0 };
+
         let input_dir = (forward * forward_input + right * right_input).normalize_or_zero();
-        
+
         let target_speed = if movement.sprint {
             PLAYER_SPRINT_SPEED
         } else {
             PLAYER_WALK_SPEED
         };
-        
+
         let target_velocity = input_dir * target_speed;
-        
+
         let has_input = input_dir.length_squared() > 0.001;
         if has_input {
             let velocity_diff = target_velocity - self.velocity;
             let accel_amount = PLAYER_ACCELERATION * dt;
-            
+
             if velocity_diff.length() <= accel_amount {
                 self.velocity = target_velocity;
             } else {
@@ -137,9 +137,9 @@ impl Player {
                 self.velocity = Vec3::ZERO;
             }
         }
-        
+
         self.position += self.velocity * dt;
-        
+
         // Handle jump request
         if self.jump_requested {
             if self.can_jump() {
@@ -149,23 +149,23 @@ impl Player {
             }
             self.jump_requested = false;
         }
-        
+
         // Apply gravity
         self.vertical_velocity -= PLAYER_GRAVITY * dt;
         self.position.y += self.vertical_velocity * dt;
-        
+
         // Update coyote time
         if !self.is_grounded {
             self.coyote_time_remaining = (self.coyote_time_remaining - dt).max(0.0);
         }
-        
+
         // Ground collision
         let ground_height = terrain_height_at(self.position.x, self.position.z, 0.0);
-        
+
         if self.position.y <= ground_height {
             self.position.y = ground_height;
             self.vertical_velocity = 0.0;
-            
+
             if !self.is_grounded {
                 self.is_grounded = true;
                 self.coyote_time_remaining = COYOTE_TIME;

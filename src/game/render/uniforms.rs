@@ -14,20 +14,20 @@ use glam::Mat4;
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct Uniforms {
-    pub view_proj: [[f32; 4]; 4],    // 64 bytes (offset 0)
-    pub camera_pos: [f32; 3],        // 12 bytes (offset 64)
-    pub time: f32,                   // 4 bytes (offset 76) - packs with camera_pos
-    pub sun_dir: [f32; 3],           // 12 bytes (offset 80)
-    pub fog_density: f32,            // 4 bytes (offset 92) - packs with sun_dir
-    pub fog_color: [f32; 3],         // 12 bytes (offset 96)
-    pub ambient: f32,                // 4 bytes (offset 108) - packs with fog_color
+    pub view_proj: [[f32; 4]; 4], // 64 bytes (offset 0)
+    pub camera_pos: [f32; 3],     // 12 bytes (offset 64)
+    pub time: f32,                // 4 bytes (offset 76) - packs with camera_pos
+    pub sun_dir: [f32; 3],        // 12 bytes (offset 80)
+    pub fog_density: f32,         // 4 bytes (offset 92) - packs with sun_dir
+    pub fog_color: [f32; 3],      // 12 bytes (offset 96)
+    pub ambient: f32,             // 4 bytes (offset 108) - packs with fog_color
     // Projectile data (up to 32 projectiles)
-    pub projectile_count: u32,       // 4 bytes (offset 112)
+    pub projectile_count: u32,          // 4 bytes (offset 112)
     pub _pad_before_padding1: [f32; 3], // 12 bytes (offset 116) - align to 16-byte boundary
-    pub _padding1: [f32; 3],         // 12 bytes (offset 128)
-    pub _pad_before_array: f32,      // 4 bytes (offset 140) - align array to 16-byte boundary
+    pub _padding1: [f32; 3],            // 12 bytes (offset 128)
+    pub _pad_before_array: f32,         // 4 bytes (offset 140) - align array to 16-byte boundary
     pub projectile_positions: [[f32; 4]; 32], // 512 bytes (offset 144)
-    // Total: 656 bytes
+                                        // Total: 656 bytes
 }
 
 impl Default for Uniforms {
@@ -57,9 +57,9 @@ const _: () = assert!(std::mem::size_of::<Uniforms>() == 656);
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct HexPrismModelUniforms {
-    pub model: [[f32; 4]; 4],           // 64 bytes - model transform
-    pub normal_matrix: [[f32; 3]; 3],   // 36 bytes - normal transform (3x3)
-    pub _padding: [f32; 3],             // 12 bytes - pad to 112 bytes total
+    pub model: [[f32; 4]; 4],         // 64 bytes - model transform
+    pub normal_matrix: [[f32; 3]; 3], // 36 bytes - normal transform (3x3)
+    pub _padding: [f32; 3],           // 12 bytes - pad to 112 bytes total
 }
 
 impl Default for HexPrismModelUniforms {
@@ -77,14 +77,14 @@ impl Default for HexPrismModelUniforms {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct SdfCannonUniforms {
-    pub view_proj: [[f32; 4]; 4],       // 64 bytes
-    pub inv_view_proj: [[f32; 4]; 4],   // 64 bytes
-    pub camera_pos: [f32; 3],           // 12 bytes
-    pub time: f32,                      // 4 bytes
-    pub sun_dir: [f32; 3],              // 12 bytes
-    pub fog_density: f32,               // 4 bytes
-    pub fog_color: [f32; 3],            // 12 bytes
-    pub ambient: f32,                   // 4 bytes
+    pub view_proj: [[f32; 4]; 4],     // 64 bytes
+    pub inv_view_proj: [[f32; 4]; 4], // 64 bytes
+    pub camera_pos: [f32; 3],         // 12 bytes
+    pub time: f32,                    // 4 bytes
+    pub sun_dir: [f32; 3],            // 12 bytes
+    pub fog_density: f32,             // 4 bytes
+    pub fog_color: [f32; 3],          // 12 bytes
+    pub ambient: f32,                 // 4 bytes
 }
 
 impl Default for SdfCannonUniforms {
@@ -107,11 +107,11 @@ impl Default for SdfCannonUniforms {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct SdfCannonData {
-    pub world_pos: [f32; 3],            // 12 bytes
-    pub _pad0: f32,                     // 4 bytes
-    pub barrel_rotation: [f32; 4],      // 16 bytes (quaternion)
-    pub color: [f32; 3],                // 12 bytes
-    pub _pad1: f32,                     // 4 bytes
+    pub world_pos: [f32; 3],       // 12 bytes
+    pub _pad0: f32,                // 4 bytes
+    pub barrel_rotation: [f32; 4], // 16 bytes (quaternion)
+    pub color: [f32; 3],           // 12 bytes
+    pub _pad1: f32,                // 4 bytes
 }
 
 impl Default for SdfCannonData {
@@ -160,13 +160,13 @@ impl Default for TerrainParams {
     fn default() -> Self {
         Self {
             // Apocalyptic scorched terrain palette (US-P2-012)
-            grass: [0.15, 0.18, 0.10],   // Scorched olive (was bright green)
+            grass: [0.15, 0.18, 0.10], // Scorched olive (was bright green)
             _pad0: 0.0,
-            dirt: [0.28, 0.20, 0.14],    // Ashen brown (volcanic ash)
+            dirt: [0.28, 0.20, 0.14], // Ashen brown (volcanic ash)
             _pad1: 0.0,
-            rock: [0.25, 0.22, 0.24],    // Dark volcanic with purple tint
+            rock: [0.25, 0.22, 0.24], // Dark volcanic with purple tint
             _pad2: 0.0,
-            snow: [0.50, 0.48, 0.45],    // Ash/dust peaks (was white snow)
+            snow: [0.50, 0.48, 0.45], // Ash/dust peaks (was white snow)
             _pad3: 0.0,
             // Height bands tuned for terrain scale
             dirt_start: 0.6,
@@ -188,16 +188,16 @@ impl Default for TerrainParams {
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct LavaParams {
     pub time: f32,
-    pub emissive_strength: f32,  // 0.8..2.5 (HDR)
-    pub scale: f32,              // 0.15..0.6
-    pub speed: f32,              // 0.1..0.6
-    pub crack_sharpness: f32,    // 0.78..0.95
-    pub normal_strength: f32,    // 0.3..1.0
+    pub emissive_strength: f32, // 0.8..2.5 (HDR)
+    pub scale: f32,             // 0.15..0.6
+    pub speed: f32,             // 0.1..0.6
+    pub crack_sharpness: f32,   // 0.78..0.95
+    pub normal_strength: f32,   // 0.3..1.0
     pub _pad0: [f32; 2],
     // Colors
-    pub core_color: [f32; 3],    // Bright molten
+    pub core_color: [f32; 3], // Bright molten
     pub _pad1: f32,
-    pub crust_color: [f32; 3],   // Dark cooled crust
+    pub crust_color: [f32; 3], // Dark cooled crust
     pub _pad2: f32,
 }
 
@@ -211,7 +211,7 @@ impl Default for LavaParams {
             crack_sharpness: 0.85,
             normal_strength: 0.6,
             _pad0: [0.0; 2],
-            core_color: [2.4, 0.65, 0.08],   // HDR orange-yellow
+            core_color: [2.4, 0.65, 0.08], // HDR orange-yellow
             _pad1: 0.0,
             crust_color: [0.05, 0.01, 0.01], // Dark red-black
             _pad2: 0.0,
@@ -225,20 +225,20 @@ impl Default for LavaParams {
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct SkyStormParams {
     pub time: f32,
-    pub cloud_speed: f32,           // 0.02..0.1
-    pub cloud_scale: f32,           // 2.0..6.0
-    pub cloud_density: f32,         // 0.3..0.8
-    pub lightning_intensity: f32,   // 0.0..1.0
-    pub lightning_frequency: f32,   // 5.0..10.0 seconds
+    pub cloud_speed: f32,         // 0.02..0.1
+    pub cloud_scale: f32,         // 2.0..6.0
+    pub cloud_density: f32,       // 0.3..0.8
+    pub lightning_intensity: f32, // 0.0..1.0
+    pub lightning_frequency: f32, // 5.0..10.0 seconds
     pub _pad0: [f32; 2],
     // Colors
-    pub col_top: [f32; 3],          // Dark sky
+    pub col_top: [f32; 3], // Dark sky
     pub _pad1: f32,
-    pub col_mid: [f32; 3],          // Purple mid
+    pub col_mid: [f32; 3], // Purple mid
     pub _pad2: f32,
-    pub col_horizon: [f32; 3],      // Orange-red horizon
+    pub col_horizon: [f32; 3], // Orange-red horizon
     pub _pad3: f32,
-    pub col_magic: [f32; 3],        // Magic veins
+    pub col_magic: [f32; 3], // Magic veins
     pub _pad4: f32,
 }
 
@@ -252,13 +252,13 @@ impl Default for SkyStormParams {
             lightning_intensity: 0.6,
             lightning_frequency: 7.0,
             _pad0: [0.0; 2],
-            col_top: [0.08, 0.06, 0.14],      // Dark purple-black
+            col_top: [0.08, 0.06, 0.14], // Dark purple-black
             _pad1: 0.0,
-            col_mid: [0.22, 0.12, 0.30],      // Purple mid
+            col_mid: [0.22, 0.12, 0.30], // Purple mid
             _pad2: 0.0,
-            col_horizon: [0.70, 0.22, 0.18],  // Orange-red fire
+            col_horizon: [0.70, 0.22, 0.18], // Orange-red fire
             _pad3: 0.0,
-            col_magic: [0.25, 0.45, 0.95],    // Magic blue
+            col_magic: [0.25, 0.45, 0.95], // Magic blue
             _pad4: 0.0,
         }
     }
@@ -269,10 +269,10 @@ impl Default for SkyStormParams {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct FogPostParams {
-    pub fog_color: [f32; 3],       // Stormy purple
-    pub density: f32,              // 0.015..0.04
-    pub height_fog_start: f32,     // Y level where height fog starts
-    pub height_fog_density: f32,   // 0.05..0.15
+    pub fog_color: [f32; 3],     // Stormy purple
+    pub density: f32,            // 0.015..0.04
+    pub height_fog_start: f32,   // Y level where height fog starts
+    pub height_fog_density: f32, // 0.05..0.15
     pub _pad0: [f32; 2],
     // Camera matrices for world pos reconstruction
     pub inv_view_proj: [[f32; 4]; 4],
@@ -300,10 +300,10 @@ impl Default for FogPostParams {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct TonemapParams {
-    pub exposure: f32,              // 1.0 default
-    pub gamma: f32,                 // 2.2 default (sRGB)
-    pub saturation: f32,            // 1.0 default
-    pub contrast: f32,              // 1.0 default
+    pub exposure: f32,   // 1.0 default
+    pub gamma: f32,      // 2.2 default (sRGB)
+    pub saturation: f32, // 1.0 default
+    pub contrast: f32,   // 1.0 default
 }
 
 impl Default for TonemapParams {

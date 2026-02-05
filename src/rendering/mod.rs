@@ -12,5 +12,5 @@ pub mod hex_prism;
 pub mod sdf_objects;
 
 // Re-export commonly used types
-pub use hex_prism::{axial_to_world, world_to_axial, HexPrism, HexPrismGrid};
+pub use hex_prism::{HexPrism, HexPrismGrid, axial_to_world, world_to_axial};
 pub use sdf_objects::{PositionedPrimitive, SdfObject, SdfOperation, SdfPrimitive};

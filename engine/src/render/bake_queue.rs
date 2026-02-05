@@ -167,8 +167,7 @@ impl RebakeJob {
     ) -> Self {
         Self {
             bake_job: BakeJob::with_noise(
-                entity_id, sdf_type, position, scale, rotation,
-                amplitude, frequency, octaves,
+                entity_id, sdf_type, position, scale, rotation, amplitude, frequency, octaves,
             ),
             old_sdf_id,
         }
@@ -184,14 +183,9 @@ pub enum BakeState {
     Baking,
     /// Entity bake completed, transitioning from equation to baked
     /// Contains: (baked_sdf_id, transition_start_time, transition_progress)
-    Transitioning {
-        baked_sdf_id: u32,
-        start_time: f32,
-    },
+    Transitioning { baked_sdf_id: u32, start_time: f32 },
     /// Entity is fully baked and using baked SDF
-    Baked {
-        baked_sdf_id: u32,
-    },
+    Baked { baked_sdf_id: u32 },
 }
 
 /// Manages the queue of SDF bake jobs and entity transitions.
@@ -347,7 +341,11 @@ impl BakeQueue {
         // Advance transitioning entities to fully baked state
         let mut completed_transitions = Vec::new();
         for (entity_id, state) in &self.entity_states {
-            if let BakeState::Transitioning { baked_sdf_id, start_time } = state {
+            if let BakeState::Transitioning {
+                baked_sdf_id,
+                start_time,
+            } = state
+            {
                 let elapsed = self.current_time - start_time;
                 if elapsed >= TRANSITION_DURATION {
                     completed_transitions.push((*entity_id, *baked_sdf_id));
@@ -357,7 +355,8 @@ impl BakeQueue {
 
         // Update completed transitions to Baked state
         for (entity_id, baked_sdf_id) in completed_transitions {
-            self.entity_states.insert(entity_id, BakeState::Baked { baked_sdf_id });
+            self.entity_states
+                .insert(entity_id, BakeState::Baked { baked_sdf_id });
         }
     }
 
@@ -449,11 +448,15 @@ impl BakeQueue {
     ///
     /// Call this when an entity is despawned to reclaim the SDF texture slot.
     /// Also frees any pending old SDF slot from a re-bake (US-024).
-    pub fn free_entity(&mut self, entity_id: EntityId, sdf_manager: &mut super::sdf_baker::BrickCache) {
+    pub fn free_entity(
+        &mut self,
+        entity_id: EntityId,
+        sdf_manager: &mut super::sdf_baker::BrickCache,
+    ) {
         if let Some(state) = self.entity_states.remove(&entity_id) {
             match state {
-                BakeState::Transitioning { baked_sdf_id, .. } |
-                BakeState::Baked { baked_sdf_id } => {
+                BakeState::Transitioning { baked_sdf_id, .. }
+                | BakeState::Baked { baked_sdf_id } => {
                     sdf_manager.free_sdf_slot(baked_sdf_id);
                     println!(
                         "[BakeQueue] Freed entity {} SDF slot {}",
@@ -521,8 +524,14 @@ mod tests {
     #[test]
     fn test_bake_job_with_noise() {
         let job = BakeJob::with_noise(
-            2, 1, [1.0, 2.0, 3.0], [0.5, 0.5, 0.5], [0.0, 0.0, 0.0, 1.0],
-            0.1, 2.0, 4,
+            2,
+            1,
+            [1.0, 2.0, 3.0],
+            [0.5, 0.5, 0.5],
+            [0.0, 0.0, 0.0, 1.0],
+            0.1,
+            2.0,
+            4,
         );
         assert_eq!(job.entity_id, 2);
         assert!(job.noise_params.is_some());
@@ -543,8 +552,20 @@ mod tests {
         assert_eq!(id2, 2);
 
         // Queue jobs
-        let job1 = BakeJob::new(id1, 0, [0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [0.0, 0.0, 0.0, 1.0]);
-        let job2 = BakeJob::new(id2, 1, [5.0, 0.0, 0.0], [2.0, 2.0, 2.0], [0.0, 0.0, 0.0, 1.0]);
+        let job1 = BakeJob::new(
+            id1,
+            0,
+            [0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [0.0, 0.0, 0.0, 1.0],
+        );
+        let job2 = BakeJob::new(
+            id2,
+            1,
+            [5.0, 0.0, 0.0],
+            [2.0, 2.0, 2.0],
+            [0.0, 0.0, 0.0, 1.0],
+        );
 
         queue.queue_bake(job1);
         queue.queue_bake(job2);
@@ -588,7 +609,10 @@ mod tests {
 
         // After update, entity should be fully baked
         queue.update(TRANSITION_DURATION);
-        assert!(matches!(queue.entity_states.get(&id), Some(BakeState::Baked { .. })));
+        assert!(matches!(
+            queue.entity_states.get(&id),
+            Some(BakeState::Baked { .. })
+        ));
         assert_eq!(queue.get_transition_progress(id), Some(1.0));
     }
 
@@ -624,9 +648,9 @@ mod tests {
             [0.0, 0.0, 0.0],
             [1.0, 1.0, 1.0],
             [0.0, 0.0, 0.0, 1.0],
-            0.2,  // New amplitude
-            3.0,  // New frequency
-            8,    // New octaves
+            0.2, // New amplitude
+            3.0, // New frequency
+            8,   // New octaves
         );
         assert_eq!(job.bake_job.entity_id, 42);
         assert_eq!(job.old_sdf_id, Some(10));
@@ -687,9 +711,30 @@ mod tests {
         let mut queue = BakeQueue::new();
 
         // Queue multiple re-bake jobs
-        queue.queue_rebake(RebakeJob::new(1, Some(10), 0, [0.0; 3], [1.0; 3], [0.0, 0.0, 0.0, 1.0]));
-        queue.queue_rebake(RebakeJob::new(2, Some(20), 0, [0.0; 3], [1.0; 3], [0.0, 0.0, 0.0, 1.0]));
-        queue.queue_rebake(RebakeJob::new(3, None, 0, [0.0; 3], [1.0; 3], [0.0, 0.0, 0.0, 1.0])); // No old SDF
+        queue.queue_rebake(RebakeJob::new(
+            1,
+            Some(10),
+            0,
+            [0.0; 3],
+            [1.0; 3],
+            [0.0, 0.0, 0.0, 1.0],
+        ));
+        queue.queue_rebake(RebakeJob::new(
+            2,
+            Some(20),
+            0,
+            [0.0; 3],
+            [1.0; 3],
+            [0.0, 0.0, 0.0, 1.0],
+        ));
+        queue.queue_rebake(RebakeJob::new(
+            3,
+            None,
+            0,
+            [0.0; 3],
+            [1.0; 3],
+            [0.0, 0.0, 0.0, 1.0],
+        )); // No old SDF
 
         assert_eq!(queue.pending_free_count(), 2); // Only 2 have old SDFs
     }

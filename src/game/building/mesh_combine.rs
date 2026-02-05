@@ -8,7 +8,7 @@
 use glam::{IVec3, Vec3};
 use std::collections::{HashMap, HashSet};
 
-use super::dual_grid::{CornerType, DualGrid, GridCell, BLOCK_SIZE};
+use super::dual_grid::{BLOCK_SIZE, CornerType, DualGrid, GridCell};
 
 /// A vertex in the combined mesh
 #[derive(Debug, Clone, Copy)]
@@ -226,13 +226,7 @@ impl MeshCombiner {
                 && pos.z >= region_min.z
                 && pos.z < region_max.z
             {
-                self.add_cell_faces(
-                    *pos,
-                    cell,
-                    grid,
-                    &mut vertices,
-                    &mut indices,
-                );
+                self.add_cell_faces(*pos, cell, grid, &mut vertices, &mut indices);
             }
         }
 
@@ -357,7 +351,10 @@ mod tests {
 
         assert_eq!(combiner.get_region(IVec3::ZERO), IVec3::ZERO);
         assert_eq!(combiner.get_region(IVec3::new(15, 0, 0)), IVec3::ZERO);
-        assert_eq!(combiner.get_region(IVec3::new(16, 0, 0)), IVec3::new(1, 0, 0));
+        assert_eq!(
+            combiner.get_region(IVec3::new(16, 0, 0)),
+            IVec3::new(1, 0, 0)
+        );
         assert_eq!(
             combiner.get_region(IVec3::new(-1, 0, 0)),
             IVec3::new(-1, 0, 0)

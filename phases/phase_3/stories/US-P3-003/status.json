@@ -1,32 +1,43 @@
 {
     "story_id": "US-P3-003",
     "title": "Create CollisionSystem",
-    "status": "pending",
-    "focus": "",
+    "status": "completed",
+    "focus": "All criteria met — CollisionSystem compiles and is re-exported",
     "criteria": [
-        {"text": "CollisionSystem::check_player_blocks() compiles with correct types", "done": false, "notes": ""},
-        {"text": "CollisionSystem::check_player_hexes() compiles with correct types", "done": false, "notes": ""},
-        {"text": "CollisionSystem::check_projectile_walls() returns Option<(Vec3, (i32,i32,i32))>", "done": false, "notes": ""},
-        {"text": "No wgpu imports - pure game logic only", "done": false, "notes": ""},
-        {"text": "Re-exported from systems module", "done": false, "notes": ""},
-        {"text": "Typecheck passes (cargo check)", "done": false, "notes": ""}
+        {"text": "CollisionSystem::check_player_blocks() compiles with correct types", "done": true, "notes": "Takes &mut Player, &BuildingBlockManager, f32. Delegates to check_capsule_aabb_collision."},
+        {"text": "CollisionSystem::check_player_hexes() compiles with correct types", "done": true, "notes": "Takes &mut Player, &HexPrismGrid. Iterates all prisms and delegates to check_capsule_hex_collision."},
+        {"text": "CollisionSystem::check_projectile_walls() returns Option<(Vec3, (i32,i32,i32))>", "done": true, "notes": "Raycasts prev_pos→current_pos via HexPrismGrid::ray_cast, returns hit position and prism coord."},
+        {"text": "No wgpu imports - pure game logic only", "done": true, "notes": "Verified with grep — zero wgpu references."},
+        {"text": "Re-exported from systems module", "done": true, "notes": "Re-exported in systems/mod.rs and game/mod.rs."},
+        {"text": "Typecheck passes (cargo check)", "done": true, "notes": "cargo check passes with 0 errors. Clippy collapsible_if lints fixed."}
     ],
     "checklist": [
-        {"item": "Read spec.md for implementation details", "done": false},
-        {"item": "Read existing collision code in physics/collision.rs", "done": false},
-        {"item": "Create src/game/systems/mod.rs", "done": false},
-        {"item": "Create src/game/systems/collision_system.rs", "done": false},
-        {"item": "Update src/game/mod.rs with systems module", "done": false},
-        {"item": "Run cargo check", "done": false}
+        {"item": "Read spec.md for implementation details", "done": true},
+        {"item": "Read existing collision code in physics/collision.rs", "done": true},
+        {"item": "Create src/game/systems/mod.rs", "done": true},
+        {"item": "Create src/game/systems/collision_system.rs", "done": true},
+        {"item": "Update src/game/mod.rs with systems module", "done": true},
+        {"item": "Run cargo check", "done": true}
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
+    "worker_notes": "All 6 acceptance criteria met. CollisionSystem wraps existing check_capsule_aabb_collision and check_capsule_hex_collision from game/physics/collision.rs, plus HexPrismGrid::ray_cast from engine/physics/collision.rs. Two AABB types exist (render vs game physics) — used game physics AABB for check_capsule_aabb_collision compatibility. Committed as 8360c4b.",
+    "notes_history": [
+        {"iteration": 1, "note": "Explored codebase: identified Player, HexPrismGrid, BuildingBlockManager, Projectile types. Found two AABB types (render vs game physics). Created collision_system.rs, updated mod.rs files, fixed AABB type mismatch and clippy collapsible_if lint. cargo check passes. All criteria met.", "timestamp": "2026-02-05T22:30:00Z"}
+    ],
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": [],
-    "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
+    "commit_hash": "8360c4b5e3b8693169d4c7cf8214e81f5c4b5226",
+    "files_modified": [
+        "src/game/systems/collision_system.rs",
+        "src/game/systems/mod.rs",
+        "src/game/mod.rs"
+    ],
+    "iteration_history": [
+        {"iteration": 1, "action": "Created CollisionSystem with check_player_blocks, check_player_hexes, check_projectile_walls. Fixed AABB type mismatch and clippy lints. All criteria met.", "notes": "Complete in single iteration", "completed_at": "2026-02-05T22:30:00Z"}
+    ],
+    "learnings": [
+        "Two distinct AABB types exist: crate::render::building_blocks::AABB and crate::game::physics::collision::AABB. The check_capsule_aabb_collision function expects the game physics AABB.",
+        "Game code uses crate:: imports (not battle_tok_engine::) due to path injection pattern in engine/src/lib.rs."
+    ],
     "created_at": "2026-02-05T22:00:00Z"
 }

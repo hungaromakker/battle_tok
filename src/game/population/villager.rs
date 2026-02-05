@@ -102,9 +102,11 @@ impl VillagerStats {
         // Gain skill based on role
         let skill_gain = 1;
         match role {
-            VillagerRole::Farmer | VillagerRole::Lumberjack |
-            VillagerRole::Stonecutter | VillagerRole::Miner |
-            VillagerRole::Merchant => {
+            VillagerRole::Farmer
+            | VillagerRole::Lumberjack
+            | VillagerRole::Stonecutter
+            | VillagerRole::Miner
+            | VillagerRole::Merchant => {
                 self.farming = (self.farming + skill_gain).min(100);
             }
             VillagerRole::Builder => {
@@ -125,9 +127,11 @@ impl VillagerStats {
     /// Get efficiency multiplier based on skills
     pub fn efficiency(&self, role: VillagerRole) -> f32 {
         let base_skill = match role {
-            VillagerRole::Farmer | VillagerRole::Lumberjack |
-            VillagerRole::Stonecutter | VillagerRole::Miner |
-            VillagerRole::Merchant => self.farming,
+            VillagerRole::Farmer
+            | VillagerRole::Lumberjack
+            | VillagerRole::Stonecutter
+            | VillagerRole::Miner
+            | VillagerRole::Merchant => self.farming,
             VillagerRole::Builder => self.building,
             VillagerRole::Soldier | VillagerRole::Archer => self.combat,
             VillagerRole::Idle => 0,
@@ -355,7 +359,8 @@ impl Population {
         }
 
         // Second pass: collect those who left
-        let leaving: Vec<u32> = self.villagers
+        let leaving: Vec<u32> = self
+            .villagers
             .iter()
             .filter(|v| v.will_leave())
             .map(|v| v.id)
@@ -385,7 +390,10 @@ impl Population {
 
     /// Get idle villagers
     pub fn idle_villagers(&self) -> Vec<&Villager> {
-        self.villagers.iter().filter(|v| v.role == VillagerRole::Idle).collect()
+        self.villagers
+            .iter()
+            .filter(|v| v.role == VillagerRole::Idle)
+            .collect()
     }
 }
 

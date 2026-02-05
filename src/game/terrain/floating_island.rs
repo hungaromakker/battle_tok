@@ -9,8 +9,10 @@
 
 use glam::Vec3;
 
+use super::generation::{
+    is_inside_hexagon, terrain_color_at, terrain_height_at, terrain_normal_at,
+};
 use crate::game::types::{Mesh, Vertex};
-use super::generation::{terrain_height_at, terrain_color_at, terrain_normal_at, is_inside_hexagon};
 
 /// Layer types for the island crust
 #[derive(Clone, Copy, Debug)]
@@ -60,11 +62,11 @@ impl Default for FloatingIslandConfig {
 /// Colors for each layer (apocalyptic palette) - Enhanced for dramatic look
 fn layer_color(layer: IslandLayer) -> [f32; 4] {
     match layer {
-        IslandLayer::Surface => [0.12, 0.14, 0.10, 1.0],     // Dark scorched grass
-        IslandLayer::Earth => [0.28, 0.20, 0.14, 1.0],       // Dark brown earth (föld)
-        IslandLayer::Rock => [0.38, 0.35, 0.32, 1.0],        // Dark gray-brown rock (köves)
-        IslandLayer::Ore => [0.50, 0.42, 0.22, 1.0],         // Golden ore hints (ritka)
-        IslandLayer::MoltenCore => [3.5, 0.9, 0.15, 1.0],    // Brighter HDR emissive lava
+        IslandLayer::Surface => [0.12, 0.14, 0.10, 1.0], // Dark scorched grass
+        IslandLayer::Earth => [0.28, 0.20, 0.14, 1.0],   // Dark brown earth (föld)
+        IslandLayer::Rock => [0.38, 0.35, 0.32, 1.0],    // Dark gray-brown rock (köves)
+        IslandLayer::Ore => [0.50, 0.42, 0.22, 1.0],     // Golden ore hints (ritka)
+        IslandLayer::MoltenCore => [3.5, 0.9, 0.15, 1.0], // Brighter HDR emissive lava
     }
 }
 
@@ -223,15 +225,15 @@ fn generate_island_walls(center: Vec3, config: FloatingIslandConfig) -> Mesh {
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
 
-    let segments = 64u32;  // More segments for jagged detail
-    let layers = (config.num_layers * 3).max(12);  // More layers for rocky detail
+    let segments = 64u32; // More segments for jagged detail
+    let layers = (config.num_layers * 3).max(12); // More layers for rocky detail
     let top_y = center.y + config.surface_height;
     let _bottom_y = top_y - config.island_thickness;
     let _layer_height = config.island_thickness / (layers as f32);
 
     // Generate vertices for each layer ring - with jagged rocky edges
     for layer in 0..=layers {
-        let t = layer as f32 / layers as f32;  // 0 = top, 1 = bottom
+        let t = layer as f32 / layers as f32; // 0 = top, 1 = bottom
         let base_y = top_y - t * config.island_thickness;
 
         // Taper radius toward bottom
@@ -259,9 +261,14 @@ fn generate_island_walls(center: Vec3, config: FloatingIslandConfig) -> Mesh {
             let hex_factor = hexagon_radius_factor(angle);
 
             // Multiple noise octaves for jagged cliff appearance
-            let noise1 = fbm(Vec3::new(angle * 5.0, base_y * 0.3, t * 8.0), 4) * config.edge_noise * 1.5;
-            let noise2 = fbm(Vec3::new(angle * 12.0 + 100.0, base_y * 0.5, t * 15.0), 3) * config.edge_noise * 0.8;
-            let noise3 = noise3d(Vec3::new(angle * 25.0, base_y * 0.8, seg as f32 * 0.3)) * config.edge_noise * 0.5;
+            let noise1 =
+                fbm(Vec3::new(angle * 5.0, base_y * 0.3, t * 8.0), 4) * config.edge_noise * 1.5;
+            let noise2 = fbm(Vec3::new(angle * 12.0 + 100.0, base_y * 0.5, t * 15.0), 3)
+                * config.edge_noise
+                * 0.8;
+            let noise3 = noise3d(Vec3::new(angle * 25.0, base_y * 0.8, seg as f32 * 0.3))
+                * config.edge_noise
+                * 0.5;
 
             // Sharp cliff edges - random outcrops
             let outcrop = if (seg as f32 * 7.3 + t * 11.0).sin() > 0.7 {
@@ -291,12 +298,18 @@ fn generate_island_walls(center: Vec3, config: FloatingIslandConfig) -> Mesh {
             let dark_var = noise3d(Vec3::new(x * 0.4, y * 0.4, z * 0.4)) * 0.15;
 
             // Darker recesses, lighter outcrops
-            let outcrop_light = if total_noise > config.edge_noise { 0.1 } else { -0.05 };
+            let outcrop_light = if total_noise > config.edge_noise {
+                0.1
+            } else {
+                -0.05
+            };
 
             let color = [
                 (base_color[0] + color_var - dark_var + outcrop_light).clamp(0.0, 3.0),
-                (base_color[1] + color_var * 0.5 - dark_var * 0.5 + outcrop_light * 0.5).clamp(0.0, 2.0),
-                (base_color[2] + color_var * 0.3 - dark_var * 0.3 + outcrop_light * 0.3).clamp(0.0, 1.5),
+                (base_color[1] + color_var * 0.5 - dark_var * 0.5 + outcrop_light * 0.5)
+                    .clamp(0.0, 2.0),
+                (base_color[2] + color_var * 0.3 - dark_var * 0.3 + outcrop_light * 0.3)
+                    .clamp(0.0, 1.5),
                 base_color[3],
             ];
 
@@ -377,9 +390,9 @@ fn generate_island_bottom(center: Vec3, config: FloatingIslandConfig) -> Mesh {
     // Generate fan triangles
     for seg in 0..segments {
         let next = (seg + 1) % segments;
-        indices.push(0);           // Center
-        indices.push(next + 1);    // Next outer
-        indices.push(seg + 1);     // Current outer (reversed winding for bottom)
+        indices.push(0); // Center
+        indices.push(next + 1); // Next outer
+        indices.push(seg + 1); // Current outer (reversed winding for bottom)
     }
 
     Mesh { vertices, indices }
@@ -401,8 +414,8 @@ pub fn generate_lava_ocean(world_size: f32, ocean_level: f32) -> Mesh {
     let mut indices = Vec::new();
 
     // Lava colors (HDR emissive) - Much brighter to match reference
-    let lava_bright = [4.5, 1.2, 0.18, 1.0];   // Intense bright lava
-    let lava_dark = [0.6, 0.12, 0.03, 1.0];    // Dark crust areas
+    let lava_bright = [4.5, 1.2, 0.18, 1.0]; // Intense bright lava
+    let lava_dark = [0.6, 0.12, 0.03, 1.0]; // Dark crust areas
     let normal = [0.0, 1.0, 0.0];
 
     let subdivisions = 64u32;

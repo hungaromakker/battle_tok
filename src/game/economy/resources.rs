@@ -114,7 +114,11 @@ impl Resources {
         let max = self.max_capacity.get(&res_type).copied().unwrap_or(-1);
 
         let new_amount = current + amount;
-        let clamped = if max >= 0 { new_amount.min(max) } else { new_amount };
+        let clamped = if max >= 0 {
+            new_amount.min(max)
+        } else {
+            new_amount
+        };
         let actual_added = clamped - current;
 
         self.amounts.insert(res_type, clamped.max(0));
@@ -216,7 +220,11 @@ impl Resources {
 
             // Remove expenses
             let can_pay = self.remove(res_type, expenses);
-            let actual_expense = if can_pay { expenses } else { before + actual_income };
+            let actual_expense = if can_pay {
+                expenses
+            } else {
+                before + actual_income
+            };
 
             let after = self.get(res_type);
 

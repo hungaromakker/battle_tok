@@ -14,79 +14,84 @@
 
 // Core rendering infrastructure (new modular system)
 pub mod gpu_context;
+pub mod mesh_pass;
 pub mod render_pass;
 pub mod scene_coordinator;
 pub mod ui_pass;
-pub mod mesh_pass;
 
 pub mod adaptive_step;
+pub mod apocalyptic_sky;
+pub mod bake_queue;
 pub mod binding_validator;
+pub mod bridge_materials;
 pub mod building_blocks;
 pub mod building_physics;
+pub mod castle_material;
 pub mod compute_pipelines;
-pub mod marching_cubes;
-pub mod sdf_operations;
-pub mod sculpting;
-pub mod bake_queue;
 pub mod culling;
 pub mod entities;
+pub mod flag_material;
+pub mod fog_post;
 pub mod froxel_assignment;
 pub mod froxel_bounds;
 pub mod froxel_buffers;
 pub mod froxel_config;
 pub mod froxel_cpu;
+pub mod froxel_dispatch;
 pub mod hex_prism;
 pub mod instancing;
+pub mod marching_cubes;
+pub mod material_system;
+pub mod particles;
 pub mod pipeline;
+pub mod point_lights;
 pub mod rebake_tracker;
-pub mod froxel_dispatch;
+pub mod sculpting;
 pub mod sdf_bake_dispatch;
 pub mod sdf_baker;
+pub mod sdf_operations;
 pub mod shader_loader;
-pub mod tile_cull_dispatch;
-pub mod sky_bake_dispatch;
 pub mod sky;
+pub mod sky_bake_dispatch;
 pub mod sky_cubemap;
 pub mod stormy_sky;
-pub mod apocalyptic_sky;
-pub mod fog_post;
-pub mod castle_material;
-pub mod bridge_materials;
-pub mod flag_material;
-pub mod point_lights;
-pub mod particles;
-pub mod material_system;
+pub mod tile_cull_dispatch;
 pub mod uniforms;
 
 // Re-export commonly used types for convenience
-pub use pipeline::{RenderConfig, RenderState, detect_software_renderer, get_recommended_resolution};
-pub use shader_loader::{create_shader_module, load_shader_file, ShaderSource};
-pub use uniforms::{
-    EntityBufferData, PlacedEntity, Season, SkySettings, TestUniforms, WeatherType,
-    pack_color, ENTITY_COLORS,
-};
 pub use instancing::{
-    CreatureInstance, MAX_CREATURE_INSTANCES, INSTANCE_BUFFER_SIZE,
-    create_instance_buffer, create_instance_buffer_init, update_instance_buffer,
-    instance_buffer_layout, pack_rgba, unpack_rgba,
+    CreatureInstance, INSTANCE_BUFFER_SIZE, MAX_CREATURE_INSTANCES, create_instance_buffer,
+    create_instance_buffer_init, instance_buffer_layout, pack_rgba, unpack_rgba,
+    update_instance_buffer,
+};
+pub use pipeline::{
+    RenderConfig, RenderState, detect_software_renderer, get_recommended_resolution,
+};
+pub use shader_loader::{ShaderSource, create_shader_module, load_shader_file};
+pub use uniforms::{
+    ENTITY_COLORS, EntityBufferData, PlacedEntity, Season, SkySettings, TestUniforms, WeatherType,
+    pack_color,
 };
 
 // Also re-export from entities module for direct access
 pub use entities::{
-    entity_type, pack_color as pack_color_rgb, unpack_color,
     ENTITY_COLORS as ENTITY_COLOR_PALETTE,
     // Advanced 96-byte entity struct for raymarcher.wgsl
-    GpuEntity, GpuEntityBuffer,
+    GpuEntity,
+    GpuEntityBuffer,
+    entity_type,
+    pack_color as pack_color_rgb,
+    unpack_color,
 };
 
 // Re-export sky rendering types
-pub use sky::{CloudTexture, CLOUD_TEXTURE_SIZE};
+pub use apocalyptic_sky::{ApocalypticSky, ApocalypticSkyConfig};
+pub use sky::{CLOUD_TEXTURE_SIZE, CloudTexture};
 pub use sky_cubemap::SkyCubemap;
 pub use stormy_sky::{StormySky, StormySkyConfig};
-pub use apocalyptic_sky::{ApocalypticSky, ApocalypticSkyConfig};
 
 // Re-export fog post-pass types (Phase 2: Depth-Based Fog Post-Pass)
-pub use fog_post::{FogPostPass, FogPostConfig};
+pub use fog_post::{FogPostConfig, FogPostPass};
 
 // Re-export castle material types (Phase 2: Castle Stone Shader)
 pub use castle_material::{CastleMaterial, CastleMaterialConfig};
@@ -96,61 +101,54 @@ pub use flag_material::{FlagMaterial, FlagMaterialConfig, FlagTeam, FlagVertex};
 
 // Re-export bridge material types (Phase 2: Chain Bridge Material Shaders)
 pub use bridge_materials::{
-    WoodPlankMaterial, WoodPlankConfig,
-    ChainMetalMaterial, ChainMetalConfig,
+    ChainMetalConfig, ChainMetalMaterial, WoodPlankConfig, WoodPlankMaterial,
 };
 
 // Re-export point light types (Phase 2: Torch Lighting System)
 pub use point_lights::{
-    PointLight, PointLightManager,
-    MAX_POINT_LIGHTS, POINT_LIGHT_BUFFER_SIZE, LIGHT_COUNT_BUFFER_SIZE,
+    LIGHT_COUNT_BUFFER_SIZE, MAX_POINT_LIGHTS, POINT_LIGHT_BUFFER_SIZE, PointLight,
+    PointLightManager,
 };
 
 // Re-export particle system types (Phase 2: Ember/Ash Particle System)
 pub use particles::{
-    Particle, GpuParticle, ParticleSystem, ParticleUniforms,
-    MAX_PARTICLES, GPU_PARTICLE_SIZE, PARTICLE_BUFFER_SIZE, PARTICLE_UNIFORMS_SIZE,
+    GPU_PARTICLE_SIZE, GpuParticle, MAX_PARTICLES, PARTICLE_BUFFER_SIZE, PARTICLE_UNIFORMS_SIZE,
+    Particle, ParticleSystem, ParticleUniforms,
 };
 
 // Re-export SDF baker types
-pub use sdf_baker::{BrickCache, SDF_RESOLUTION, MAX_BAKED_SDFS};
+pub use sdf_baker::{BrickCache, MAX_BAKED_SDFS, SDF_RESOLUTION};
 
 // Re-export tile-based culling types
 pub use culling::{
-    TileBuffer, TileBufferHeader, TileData,
-    TILE_SIZE, MAX_ENTITIES_PER_TILE, TILES_X_1080P, TILES_Y_1080P, TOTAL_TILES_1080P,
+    MAX_ENTITIES_PER_TILE, TILE_SIZE, TILES_X_1080P, TILES_Y_1080P, TOTAL_TILES_1080P, TileBuffer,
+    TileBufferHeader, TileData,
 };
 
 // Re-export bake queue types for entity baking on spawn (US-023)
 pub use bake_queue::{
-    BakeQueue, BakeJob, BakeState, NoiseParams, EntityId,
-    MAX_BAKES_PER_FRAME, TRANSITION_DURATION,
+    BakeJob, BakeQueue, BakeState, EntityId, MAX_BAKES_PER_FRAME, NoiseParams, TRANSITION_DURATION,
 };
 
 // Re-export rebake tracker types for entity re-baking on transform change (US-024)
-pub use rebake_tracker::{
-    RebakeTracker, ShapeParams, DirtyEntity,
-};
+pub use rebake_tracker::{DirtyEntity, RebakeTracker, ShapeParams};
 
 // Re-export froxel configuration types for froxel-based culling (US-028)
 pub use froxel_config::{
-    FROXEL_TILES_X, FROXEL_TILES_Y, FROXEL_DEPTH_SLICES,
-    MAX_SDFS_PER_FROXEL, TOTAL_FROXELS, depth_slice_bounds,
+    FROXEL_DEPTH_SLICES, FROXEL_TILES_X, FROXEL_TILES_Y, MAX_SDFS_PER_FROXEL, TOTAL_FROXELS,
+    depth_slice_bounds,
 };
 
 // Re-export froxel buffer types for froxel GPU data (US-029)
 pub use froxel_buffers::{
-    FroxelBounds, FroxelSDFList, FroxelBoundsBuffer, FroxelSDFListBuffer,
-    create_froxel_bounds_buffer, create_froxel_sdf_list_buffer,
-    write_froxel_bounds, write_froxel_sdf_lists,
-    FROXEL_BOUNDS_SIZE, FROXEL_SDF_LIST_SIZE,
-    FROXEL_BOUNDS_BUFFER_SIZE, FROXEL_SDF_LIST_BUFFER_SIZE,
+    FROXEL_BOUNDS_BUFFER_SIZE, FROXEL_BOUNDS_SIZE, FROXEL_SDF_LIST_BUFFER_SIZE,
+    FROXEL_SDF_LIST_SIZE, FroxelBounds, FroxelBoundsBuffer, FroxelSDFList, FroxelSDFListBuffer,
+    create_froxel_bounds_buffer, create_froxel_sdf_list_buffer, write_froxel_bounds,
+    write_froxel_sdf_lists,
 };
 
 // Re-export froxel bounds calculation types for perspective projection (US-030)
-pub use froxel_bounds::{
-    CameraProjection, FroxelBoundsTracker, calculate_froxel_bounds,
-};
+pub use froxel_bounds::{CameraProjection, FroxelBoundsTracker, calculate_froxel_bounds};
 
 // Re-export adaptive step function for distance-based ray marching (US-032)
 pub use adaptive_step::base_step_for_distance;
@@ -159,17 +157,17 @@ pub use adaptive_step::base_step_for_distance;
 pub use compute_pipelines::ComputePipelines;
 
 // Re-export froxel clear dispatcher (US-0M04)
-pub use froxel_dispatch::{dispatch_froxel_clear, dispatch_froxel_assign};
+pub use froxel_dispatch::{dispatch_froxel_assign, dispatch_froxel_clear};
 
 // Re-export SDF bake dispatcher types (US-0M03)
-pub use sdf_bake_dispatch::{SdfBakeDispatcher, GpuBakeParams, FallbackState};
+pub use sdf_bake_dispatch::{FallbackState, GpuBakeParams, SdfBakeDispatcher};
 
 // Re-export froxel assignment types for SDF-to-froxel culling (US-033)
 pub use froxel_assignment::{
-    SdfBounds, SdfBoundsBuffer, AssignmentUniforms,
-    create_assignment_bind_group_layout, create_assignment_buffers, create_assignment_bind_group,
-    write_sdf_bounds, write_assignment_uniforms,
-    MAX_SDF_COUNT, SDF_BOUNDS_SIZE, SDF_BOUNDS_BUFFER_SIZE, ASSIGNMENT_UNIFORMS_SIZE,
+    ASSIGNMENT_UNIFORMS_SIZE, AssignmentUniforms, MAX_SDF_COUNT, SDF_BOUNDS_BUFFER_SIZE,
+    SDF_BOUNDS_SIZE, SdfBounds, SdfBoundsBuffer, create_assignment_bind_group,
+    create_assignment_bind_group_layout, create_assignment_buffers, write_assignment_uniforms,
+    write_sdf_bounds,
 };
 
 // Re-export CPU-side froxel assignment fallback (US-0M10)
@@ -184,52 +182,60 @@ pub use tile_cull_dispatch::{TileCullUniforms, dispatch_tile_culling};
 // Re-export hex-prism voxel types (US-002, US-008, US-012)
 // Note: Only exporting types that currently exist. Additional exports like
 // HexPrismVertex, axial_to_world, world_to_axial, materials will be added by US-008.
-pub use hex_prism::{HexPrism, HexPrismGrid, HexPrismVertex, axial_to_world, world_to_axial};
-pub use hex_prism::materials as hex_prism_materials;
 pub use crate::physics::collision::HitInfo;
+pub use hex_prism::materials as hex_prism_materials;
+pub use hex_prism::{HexPrism, HexPrismGrid, HexPrismVertex, axial_to_world, world_to_axial};
 
 // Re-export building block types (Phase 2: Advanced Building System)
 pub use building_blocks::{
-    BuildingBlockShape, BuildingBlock, BuildingBlockManager,
-    BlockVertex, AABB,
+    AABB,
+    BlockVertex,
+    BuildingBlock,
+    BuildingBlockManager,
+    BuildingBlockShape,
+    sdf_arch,
     // SDF primitives
-    sdf_box, sdf_cylinder, sdf_sphere, sdf_dome, sdf_arch, sdf_wedge,
+    sdf_box,
+    sdf_cylinder,
+    sdf_dome,
+    sdf_intersection,
     // SDF operations
-    sdf_smooth_union, sdf_union, sdf_intersection, sdf_subtraction,
+    sdf_smooth_union,
+    sdf_sphere,
+    sdf_subtraction,
+    sdf_union,
+    sdf_wedge,
 };
 
 // Re-export building physics types (Phase 5: Realistic Building Physics)
-pub use building_physics::{
-    BuildingPhysics, BlockPhysicsState, PhysicsConfig,
-};
+pub use building_physics::{BlockPhysicsState, BuildingPhysics, PhysicsConfig};
 
 // Re-export Marching Cubes types (Phase 3: SDF-to-Mesh Conversion)
 pub use marching_cubes::{MarchingCubes, generate_merged_mesh};
 
 // Re-export SDF operations types (Phase 3: Merge Workflow)
 pub use sdf_operations::{
-    MergeState, MergeWorkflowManager, MergedMesh, DoubleClickDetector,
-    smooth_union as sdf_smooth_union_op, union as sdf_union_op,
-    intersection as sdf_intersection_op, subtraction as sdf_subtraction_op,
-    smooth_subtraction, smooth_intersection,
+    DoubleClickDetector, MergeState, MergeWorkflowManager, MergedMesh,
+    intersection as sdf_intersection_op, smooth_intersection, smooth_subtraction,
+    smooth_union as sdf_smooth_union_op, subtraction as sdf_subtraction_op, union as sdf_union_op,
 };
 
 // Re-export sculpting types (Phase 4: Extrusion and Edge Pulling)
 pub use sculpting::{
-    SculptingManager, SculptMode, SculptState, SelectionType,
-    FaceSelection, EdgeSelection, VertexSelection, FaceDirection,
-    ExtrusionOperation, ExtrusionStep,
+    EdgeSelection, ExtrusionOperation, ExtrusionStep, FaceDirection, FaceSelection, SculptMode,
+    SculptState, SculptingManager, SelectionType, VertexSelection,
 };
 
 // Re-export material system types (Phase 2: Material System Coordinator)
 pub use material_system::{
-    MaterialSystem, MaterialType, MaterialEntry,
-    SceneUniforms, SceneConfig,
+    MaterialEntry, MaterialSystem, MaterialType, SceneConfig, SceneUniforms,
 };
 
 // Re-export core rendering infrastructure types
 pub use gpu_context::{GpuContext, GpuContextConfig};
-pub use render_pass::{RenderPass, RenderPassPriority, RenderContext, FrameContext, RenderPassManager};
-pub use scene_coordinator::{SceneCoordinator, CameraState};
-pub use ui_pass::{UiRenderPass, UiVertex, UiMesh, UiComponent};
-pub use mesh_pass::{MeshRenderPass, MeshVertex, MeshUniforms, MeshBuffer, draw_mesh_buffer};
+pub use mesh_pass::{MeshBuffer, MeshRenderPass, MeshUniforms, MeshVertex, draw_mesh_buffer};
+pub use render_pass::{
+    FrameContext, RenderContext, RenderPass, RenderPassManager, RenderPassPriority,
+};
+pub use scene_coordinator::{CameraState, SceneCoordinator};
+pub use ui_pass::{UiComponent, UiMesh, UiRenderPass, UiVertex};

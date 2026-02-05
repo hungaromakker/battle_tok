@@ -205,7 +205,9 @@ impl DualGrid {
     /// Get or create a cell at position
     pub fn get_or_create_cell(&mut self, pos: IVec3) -> &mut GridCell {
         self.update_bounds(pos);
-        self.cells.entry(pos).or_insert_with(|| GridCell::empty(pos))
+        self.cells
+            .entry(pos)
+            .or_insert_with(|| GridCell::empty(pos))
     }
 
     /// Get cell at position (if exists)
@@ -295,7 +297,10 @@ impl DualGrid {
 
     /// Get deformation at a corner
     pub fn get_deformation(&self, corner_pos: IVec3) -> Vec3 {
-        self.corner_deforms.get(&corner_pos).copied().unwrap_or(Vec3::ZERO)
+        self.corner_deforms
+            .get(&corner_pos)
+            .copied()
+            .unwrap_or(Vec3::ZERO)
     }
 
     /// Get world position of a corner including deformation

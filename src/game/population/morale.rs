@@ -59,11 +59,11 @@ impl MoraleState {
     /// Color for UI
     pub fn color(&self) -> [u8; 3] {
         match self {
-            MoraleState::Desperate => [255, 0, 0],     // Red
-            MoraleState::Low => [255, 165, 0],        // Orange
-            MoraleState::Normal => [255, 255, 0],     // Yellow
-            MoraleState::High => [144, 238, 144],     // Light green
-            MoraleState::Ecstatic => [0, 255, 0],     // Green
+            MoraleState::Desperate => [255, 0, 0], // Red
+            MoraleState::Low => [255, 165, 0],     // Orange
+            MoraleState::Normal => [255, 255, 0],  // Yellow
+            MoraleState::High => [144, 238, 144],  // Light green
+            MoraleState::Ecstatic => [0, 255, 0],  // Green
         }
     }
 }
@@ -173,22 +173,28 @@ impl Morale {
         // Remove opposite modifiers
         match modifier {
             MoraleModifier::FlagSafe => {
-                self.modifiers.retain(|m| !matches!(m, MoraleModifier::FlagCaptured));
+                self.modifiers
+                    .retain(|m| !matches!(m, MoraleModifier::FlagCaptured));
             }
             MoraleModifier::FlagCaptured => {
-                self.modifiers.retain(|m| !matches!(m, MoraleModifier::FlagSafe));
+                self.modifiers
+                    .retain(|m| !matches!(m, MoraleModifier::FlagSafe));
             }
             MoraleModifier::FoodShortage => {
-                self.modifiers.retain(|m| !matches!(m, MoraleModifier::FoodSurplus));
+                self.modifiers
+                    .retain(|m| !matches!(m, MoraleModifier::FoodSurplus));
             }
             MoraleModifier::FoodSurplus => {
-                self.modifiers.retain(|m| !matches!(m, MoraleModifier::FoodShortage));
+                self.modifiers
+                    .retain(|m| !matches!(m, MoraleModifier::FoodShortage));
             }
             MoraleModifier::HousingShortage => {
-                self.modifiers.retain(|m| !matches!(m, MoraleModifier::HousingSurplus));
+                self.modifiers
+                    .retain(|m| !matches!(m, MoraleModifier::HousingSurplus));
             }
             MoraleModifier::HousingSurplus => {
-                self.modifiers.retain(|m| !matches!(m, MoraleModifier::HousingShortage));
+                self.modifiers
+                    .retain(|m| !matches!(m, MoraleModifier::HousingShortage));
             }
             _ => {}
         }
@@ -208,9 +214,8 @@ impl Morale {
 
     /// Clear temporary modifiers (battle results)
     pub fn clear_temporary(&mut self) {
-        self.modifiers.retain(|m| !matches!(m,
-            MoraleModifier::BattleLost | MoraleModifier::BattleWon
-        ));
+        self.modifiers
+            .retain(|m| !matches!(m, MoraleModifier::BattleLost | MoraleModifier::BattleWon));
         self.recalculate();
     }
 

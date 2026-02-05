@@ -133,10 +133,18 @@ mod tests {
     fn test_distance_clamped_above_200m() {
         // Beyond 200m, should stay clamped at 5.0
         let step = base_step_for_distance(500.0);
-        assert!(approx_eq(step, 5.0), "At 500m: expected 5.0 (clamped), got {}", step);
+        assert!(
+            approx_eq(step, 5.0),
+            "At 500m: expected 5.0 (clamped), got {}",
+            step
+        );
 
         let step = base_step_for_distance(1000.0);
-        assert!(approx_eq(step, 5.0), "At 1000m: expected 5.0 (clamped), got {}", step);
+        assert!(
+            approx_eq(step, 5.0),
+            "At 1000m: expected 5.0 (clamped), got {}",
+            step
+        );
     }
 
     // =========================================================================
@@ -154,7 +162,11 @@ mod tests {
     fn test_mid_range_midpoint() {
         // At 27.5m (midpoint of 5-50), should be midpoint of 0.5-2.0 = 1.25
         let step = base_step_for_distance(27.5);
-        assert!(approx_eq(step, 1.25), "At 27.5m: expected 1.25, got {}", step);
+        assert!(
+            approx_eq(step, 1.25),
+            "At 27.5m: expected 1.25, got {}",
+            step
+        );
     }
 
     #[test]
@@ -175,10 +187,18 @@ mod tests {
         let after = base_step_for_distance(5.001);
         let at = base_step_for_distance(5.0);
 
-        assert!((before - at).abs() < 0.001,
-            "Discontinuity at 5m: {} vs {}", before, at);
-        assert!((after - at).abs() < 0.001,
-            "Discontinuity at 5m: {} vs {}", after, at);
+        assert!(
+            (before - at).abs() < 0.001,
+            "Discontinuity at 5m: {} vs {}",
+            before,
+            at
+        );
+        assert!(
+            (after - at).abs() < 0.001,
+            "Discontinuity at 5m: {} vs {}",
+            after,
+            at
+        );
     }
 
     #[test]
@@ -188,10 +208,18 @@ mod tests {
         let after = base_step_for_distance(50.001);
         let at = base_step_for_distance(50.0);
 
-        assert!((before - at).abs() < 0.001,
-            "Discontinuity at 50m: {} vs {}", before, at);
-        assert!((after - at).abs() < 0.001,
-            "Discontinuity at 50m: {} vs {}", after, at);
+        assert!(
+            (before - at).abs() < 0.001,
+            "Discontinuity at 50m: {} vs {}",
+            before,
+            at
+        );
+        assert!(
+            (after - at).abs() < 0.001,
+            "Discontinuity at 50m: {} vs {}",
+            after,
+            at
+        );
     }
 
     // =========================================================================
@@ -200,16 +228,23 @@ mod tests {
 
     #[test]
     fn test_monotonically_increasing() {
-        let distances = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 10.0, 20.0, 30.0, 40.0,
-                         50.0, 75.0, 100.0, 150.0, 200.0, 300.0];
+        let distances = [
+            0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 10.0, 20.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0,
+            300.0,
+        ];
 
         for i in 1..distances.len() {
             let prev_step = base_step_for_distance(distances[i - 1]);
             let curr_step = base_step_for_distance(distances[i]);
 
-            assert!(curr_step >= prev_step,
+            assert!(
+                curr_step >= prev_step,
                 "Step size decreased from {}m ({}) to {}m ({})",
-                distances[i - 1], prev_step, distances[i], curr_step);
+                distances[i - 1],
+                prev_step,
+                distances[i],
+                curr_step
+            );
         }
     }
 
@@ -221,24 +256,40 @@ mod tests {
     fn test_negative_distance_clamped() {
         // Negative distances should be treated as 0
         let step = base_step_for_distance(-1.0);
-        assert!(approx_eq(step, 0.1), "Negative distance: expected 0.1, got {}", step);
+        assert!(
+            approx_eq(step, 0.1),
+            "Negative distance: expected 0.1, got {}",
+            step
+        );
 
         let step = base_step_for_distance(-100.0);
-        assert!(approx_eq(step, 0.1), "Negative distance: expected 0.1, got {}", step);
+        assert!(
+            approx_eq(step, 0.1),
+            "Negative distance: expected 0.1, got {}",
+            step
+        );
     }
 
     #[test]
     fn test_very_small_distance() {
         // Very small positive distance should be near 0.1
         let step = base_step_for_distance(0.001);
-        assert!(step > 0.1 && step < 0.11, "Very small distance: got {}", step);
+        assert!(
+            step > 0.1 && step < 0.11,
+            "Very small distance: got {}",
+            step
+        );
     }
 
     #[test]
     fn test_very_large_distance() {
         // Very large distance should be clamped to 5.0
         let step = base_step_for_distance(10000.0);
-        assert!(approx_eq(step, 5.0), "Very large distance: expected 5.0, got {}", step);
+        assert!(
+            approx_eq(step, 5.0),
+            "Very large distance: expected 5.0, got {}",
+            step
+        );
     }
 
     // =========================================================================
@@ -250,8 +301,12 @@ mod tests {
         // All values in close range should be between 0.1 and 0.5
         for d in [0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 4.9] {
             let step = base_step_for_distance(d);
-            assert!(step >= 0.1 && step <= 0.5,
-                "Close range ({:.1}m): {} not in [0.1, 0.5]", d, step);
+            assert!(
+                step >= 0.1 && step <= 0.5,
+                "Close range ({:.1}m): {} not in [0.1, 0.5]",
+                d,
+                step
+            );
         }
     }
 
@@ -260,8 +315,12 @@ mod tests {
         // All values in mid range should be between 0.5 and 2.0
         for d in [5.0, 10.0, 20.0, 30.0, 40.0, 49.9] {
             let step = base_step_for_distance(d);
-            assert!(step >= 0.5 && step <= 2.0,
-                "Mid range ({:.1}m): {} not in [0.5, 2.0]", d, step);
+            assert!(
+                step >= 0.5 && step <= 2.0,
+                "Mid range ({:.1}m): {} not in [0.5, 2.0]",
+                d,
+                step
+            );
         }
     }
 
@@ -270,8 +329,12 @@ mod tests {
         // All values in far range should be between 2.0 and 5.0
         for d in [50.0, 75.0, 100.0, 150.0, 200.0, 500.0] {
             let step = base_step_for_distance(d);
-            assert!(step >= 2.0 && step <= 5.0,
-                "Far range ({:.1}m): {} not in [2.0, 5.0]", d, step);
+            assert!(
+                step >= 2.0 && step <= 5.0,
+                "Far range ({:.1}m): {} not in [2.0, 5.0]",
+                d,
+                step
+            );
         }
     }
 

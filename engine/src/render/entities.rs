@@ -525,8 +525,7 @@ mod tests {
 
     #[test]
     fn test_gpu_entity_with_baked_sdf() {
-        let entity = GpuEntity::new([1.0, 2.0, 3.0], entity_type::BOX)
-            .with_baked_sdf_id(42);
+        let entity = GpuEntity::new([1.0, 2.0, 3.0], entity_type::BOX).with_baked_sdf_id(42);
 
         assert_eq!(entity.position_x, 1.0);
         assert_eq!(entity.position_y, 2.0);
@@ -625,18 +624,19 @@ mod tests {
 
     #[test]
     fn test_gpu_entity_with_precision_class() {
-        let entity = GpuEntity::default()
-            .with_precision_class(PrecisionClass::Player);
+        let entity = GpuEntity::default().with_precision_class(PrecisionClass::Player);
 
         assert_eq!(entity.precision_class, 0);
         assert_eq!(entity.get_precision_class(), PrecisionClass::Player);
         assert_eq!(entity.precision_multiplier(), 1.0);
 
-        let entity_terrain = GpuEntity::default()
-            .with_precision_class(PrecisionClass::Terrain);
+        let entity_terrain = GpuEntity::default().with_precision_class(PrecisionClass::Terrain);
 
         assert_eq!(entity_terrain.precision_class, 3);
-        assert_eq!(entity_terrain.get_precision_class(), PrecisionClass::Terrain);
+        assert_eq!(
+            entity_terrain.get_precision_class(),
+            PrecisionClass::Terrain
+        );
         assert_eq!(entity_terrain.precision_multiplier(), 2.0);
     }
 }

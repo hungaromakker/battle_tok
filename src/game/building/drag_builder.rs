@@ -10,8 +10,8 @@
 use glam::{IVec3, Vec3};
 use std::collections::HashSet;
 
-use super::dual_grid::{CornerType, DualGrid, BLOCK_SIZE};
 use super::blocks::BuildingBlock;
+use super::dual_grid::{BLOCK_SIZE, CornerType, DualGrid};
 
 /// State of the drag builder
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

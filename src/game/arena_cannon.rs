@@ -2,11 +2,11 @@
 //!
 //! Cannon state for aiming and firing in the Battle Arena.
 
-use glam::Vec3;
 use crate::physics::ballistics::Projectile;
+use glam::Vec3;
 
-use super::types::{Mesh, generate_box, generate_oriented_box};
 use super::terrain::terrain_height_at;
+use super::types::{Mesh, generate_box, generate_oriented_box};
 
 /// Smoothing factor for cannon movement (higher = faster response)
 pub const CANNON_SMOOTHING: f32 = 0.15;
@@ -16,10 +16,10 @@ pub const CANNON_ROTATION_SPEED: f32 = 1.0; // ~57 degrees per second
 /// Cannon state for aiming and firing (US-017: Cannon aiming controls)
 pub struct ArenaCannon {
     pub position: Vec3,
-    pub barrel_elevation: f32,        // Current elevation in radians (-10 to 45 degrees)
-    pub barrel_azimuth: f32,          // Current azimuth in radians (-45 to 45 degrees)
-    pub target_elevation: f32,        // Target elevation for smooth interpolation
-    pub target_azimuth: f32,          // Target azimuth for smooth interpolation
+    pub barrel_elevation: f32, // Current elevation in radians (-10 to 45 degrees)
+    pub barrel_azimuth: f32,   // Current azimuth in radians (-45 to 45 degrees)
+    pub target_elevation: f32, // Target elevation for smooth interpolation
+    pub target_azimuth: f32,   // Target azimuth for smooth interpolation
     pub barrel_length: f32,
     pub muzzle_velocity: f32,
     pub projectile_mass: f32,
@@ -80,7 +80,12 @@ impl ArenaCannon {
     pub fn fire(&self) -> Projectile {
         let muzzle_pos = self.get_muzzle_position();
         let direction = self.get_barrel_direction();
-        Projectile::spawn(muzzle_pos, direction, self.muzzle_velocity, self.projectile_mass)
+        Projectile::spawn(
+            muzzle_pos,
+            direction,
+            self.muzzle_velocity,
+            self.projectile_mass,
+        )
     }
 
     /// Adjust target elevation (smooth movement toward this target)
@@ -133,7 +138,13 @@ pub fn generate_cannon_mesh(cannon: &ArenaCannon) -> Mesh {
     let barrel_size = Vec3::new(0.3, 0.3, cannon.barrel_length);
 
     // Generate rotated barrel
-    let barrel_mesh = generate_oriented_box(barrel_center, barrel_size, dir, barrel_up, [0.2, 0.2, 0.2, 1.0]);
+    let barrel_mesh = generate_oriented_box(
+        barrel_center,
+        barrel_size,
+        dir,
+        barrel_up,
+        [0.2, 0.2, 0.2, 1.0],
+    );
     mesh.merge(&barrel_mesh);
 
     mesh

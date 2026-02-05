@@ -340,7 +340,9 @@ impl RebakeTracker {
     /// Call this when an entity is despawned.
     /// Returns the old baked SDF ID if one was stored (caller should free it).
     pub fn remove_entity(&mut self, entity_id: EntityId) -> Option<u32> {
-        self.entities.remove(&entity_id).and_then(|t| t.baked_sdf_id)
+        self.entities
+            .remove(&entity_id)
+            .and_then(|t| t.baked_sdf_id)
     }
 
     /// Get the current shape parameters for an entity.

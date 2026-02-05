@@ -144,7 +144,8 @@ impl RenderPassManager {
 
     /// List all pass names with their enabled status
     pub fn list_passes(&self) -> Vec<(&'static str, bool)> {
-        self.passes.iter()
+        self.passes
+            .iter()
             .map(|p| (p.name(), p.is_enabled()))
             .collect()
     }

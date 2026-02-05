@@ -4,9 +4,9 @@
 
 use glam::Vec3;
 
-use crate::game::building::{DualGrid, DragBuilder, MeshCombiner, BlockLibrary, BuildEvent};
-use crate::game::economy::{Resources, DayCycle, ResourceType};
-use crate::game::population::{Population, JobAI, Morale};
+use crate::game::building::{BlockLibrary, BuildEvent, DragBuilder, DualGrid, MeshCombiner};
+use crate::game::economy::{DayCycle, ResourceType, Resources};
+use crate::game::population::{JobAI, Morale, Population};
 use crate::game::ui::TopBar;
 
 /// Region size for mesh combining (in blocks)
@@ -114,7 +114,8 @@ impl GameState {
     pub fn process_day_end(&mut self) {
         // Calculate food expenses from population
         let food_consumption = self.population.total_food_consumption();
-        self.resources.set_expenses(ResourceType::Food, food_consumption);
+        self.resources
+            .set_expenses(ResourceType::Food, food_consumption);
 
         // Calculate gold expenses from military upkeep
         let gold_upkeep = self.population.total_gold_upkeep();

@@ -122,8 +122,8 @@ impl Cannon {
     /// # Arguments
     /// * `delta` - Change in degrees
     pub fn aim_up(&mut self, delta: f32) {
-        self.target_elevation = (self.target_elevation + delta)
-            .clamp(limits::MIN_ELEVATION, limits::MAX_ELEVATION);
+        self.target_elevation =
+            (self.target_elevation + delta).clamp(limits::MIN_ELEVATION, limits::MAX_ELEVATION);
     }
 
     /// Adjust barrel azimuth (positive = right, negative = left).
@@ -132,8 +132,8 @@ impl Cannon {
     /// # Arguments
     /// * `delta` - Change in degrees
     pub fn aim_right(&mut self, delta: f32) {
-        self.target_azimuth = (self.target_azimuth + delta)
-            .clamp(limits::MIN_AZIMUTH, limits::MAX_AZIMUTH);
+        self.target_azimuth =
+            (self.target_azimuth + delta).clamp(limits::MIN_AZIMUTH, limits::MAX_AZIMUTH);
     }
 
     /// Directly set target elevation (degrees).
@@ -155,10 +155,8 @@ impl Cannon {
         // Smooth interpolation toward target angles
         let smoothing = 1.0 - (1.0 - aim_speed::SMOOTHING_FACTOR).powf(delta_time * 60.0);
 
-        self.barrel_elevation +=
-            (self.target_elevation - self.barrel_elevation) * smoothing;
-        self.barrel_azimuth +=
-            (self.target_azimuth - self.barrel_azimuth) * smoothing;
+        self.barrel_elevation += (self.target_elevation - self.barrel_elevation) * smoothing;
+        self.barrel_azimuth += (self.target_azimuth - self.barrel_azimuth) * smoothing;
     }
 
     /// Get the barrel rotation quaternion (combines elevation and azimuth).
@@ -213,8 +211,7 @@ impl Cannon {
         let barrel_position = Vec3::new(0.0, dimensions::BARREL_PIVOT_HEIGHT, 0.0) + rotated_offset;
 
         // Create the barrel transform: translate to position, then rotate
-        let barrel_transform =
-            Mat4::from_translation(barrel_position) * barrel_rotation_mat;
+        let barrel_transform = Mat4::from_translation(barrel_position) * barrel_rotation_mat;
 
         // Body: rounded box at base
         let body_transform = Mat4::IDENTITY;

@@ -131,35 +131,35 @@ impl CastleMaterialConfig {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct CastleUniforms {
-    view_proj: [[f32; 4]; 4],         // 64 bytes (offset 0)
-    camera_pos_x: f32,                // 4 bytes (offset 64)
-    camera_pos_y: f32,                // 4 bytes (offset 68)
-    camera_pos_z: f32,                // 4 bytes (offset 72)
-    time: f32,                        // 4 bytes (offset 76)
-    sun_dir_x: f32,                   // 4 bytes (offset 80)
-    sun_dir_y: f32,                   // 4 bytes (offset 84)
-    sun_dir_z: f32,                   // 4 bytes (offset 88)
-    sun_intensity: f32,               // 4 bytes (offset 92)
-    torch_color_r: f32,               // 4 bytes (offset 96)
-    torch_color_g: f32,               // 4 bytes (offset 100)
-    torch_color_b: f32,               // 4 bytes (offset 104)
-    torch_strength: f32,              // 4 bytes (offset 108)
-    ambient_strength: f32,            // 4 bytes (offset 112)
-    fog_density: f32,                 // 4 bytes (offset 116)
-    fog_color_r: f32,                 // 4 bytes (offset 120)
-    fog_color_g: f32,                 // 4 bytes (offset 124)
-    fog_color_b: f32,                 // 4 bytes (offset 128)
-    stone_color_r: f32,               // 4 bytes (offset 132)
-    stone_color_g: f32,               // 4 bytes (offset 136)
-    stone_color_b: f32,               // 4 bytes (offset 140)
-    mortar_color_r: f32,              // 4 bytes (offset 144)
-    mortar_color_g: f32,              // 4 bytes (offset 148)
-    mortar_color_b: f32,              // 4 bytes (offset 152)
-    grime_strength: f32,              // 4 bytes (offset 156)
-    brick_scale: f32,                 // 4 bytes (offset 160)
-    _pad1: f32,                       // 4 bytes (offset 164) - padding
-    _pad2: f32,                       // 4 bytes (offset 168) - padding
-    _pad3: f32,                       // 4 bytes (offset 172) - align to 176
+    view_proj: [[f32; 4]; 4], // 64 bytes (offset 0)
+    camera_pos_x: f32,        // 4 bytes (offset 64)
+    camera_pos_y: f32,        // 4 bytes (offset 68)
+    camera_pos_z: f32,        // 4 bytes (offset 72)
+    time: f32,                // 4 bytes (offset 76)
+    sun_dir_x: f32,           // 4 bytes (offset 80)
+    sun_dir_y: f32,           // 4 bytes (offset 84)
+    sun_dir_z: f32,           // 4 bytes (offset 88)
+    sun_intensity: f32,       // 4 bytes (offset 92)
+    torch_color_r: f32,       // 4 bytes (offset 96)
+    torch_color_g: f32,       // 4 bytes (offset 100)
+    torch_color_b: f32,       // 4 bytes (offset 104)
+    torch_strength: f32,      // 4 bytes (offset 108)
+    ambient_strength: f32,    // 4 bytes (offset 112)
+    fog_density: f32,         // 4 bytes (offset 116)
+    fog_color_r: f32,         // 4 bytes (offset 120)
+    fog_color_g: f32,         // 4 bytes (offset 124)
+    fog_color_b: f32,         // 4 bytes (offset 128)
+    stone_color_r: f32,       // 4 bytes (offset 132)
+    stone_color_g: f32,       // 4 bytes (offset 136)
+    stone_color_b: f32,       // 4 bytes (offset 140)
+    mortar_color_r: f32,      // 4 bytes (offset 144)
+    mortar_color_g: f32,      // 4 bytes (offset 148)
+    mortar_color_b: f32,      // 4 bytes (offset 152)
+    grime_strength: f32,      // 4 bytes (offset 156)
+    brick_scale: f32,         // 4 bytes (offset 160)
+    _pad1: f32,               // 4 bytes (offset 164) - padding
+    _pad2: f32,               // 4 bytes (offset 168) - padding
+    _pad3: f32,               // 4 bytes (offset 172) - align to 176
 }
 
 // Verify struct size at compile time
@@ -183,7 +183,12 @@ impl CastleMaterial {
         surface_format: wgpu::TextureFormat,
         point_light_manager: &PointLightManager,
     ) -> Self {
-        Self::with_config(device, surface_format, CastleMaterialConfig::default(), point_light_manager)
+        Self::with_config(
+            device,
+            surface_format,
+            CastleMaterialConfig::default(),
+            point_light_manager,
+        )
     }
 
     /// Create a new castle material with custom configuration
@@ -344,13 +349,7 @@ impl CastleMaterial {
     }
 
     /// Update uniform buffer with current camera and time
-    pub fn update(
-        &self,
-        queue: &wgpu::Queue,
-        view_proj: Mat4,
-        camera_pos: Vec3,
-        time: f32,
-    ) {
+    pub fn update(&self, queue: &wgpu::Queue, view_proj: Mat4, camera_pos: Vec3, time: f32) {
         let uniforms = CastleUniforms {
             view_proj: view_proj.to_cols_array_2d(),
             camera_pos_x: camera_pos.x,

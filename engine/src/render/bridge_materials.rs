@@ -103,27 +103,27 @@ impl WoodPlankConfig {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct WoodPlankUniforms {
-    view_proj: [[f32; 4]; 4],         // 64 bytes (offset 0)
-    camera_pos_x: f32,                // 4 bytes (offset 64)
-    camera_pos_y: f32,                // 4 bytes (offset 68)
-    camera_pos_z: f32,                // 4 bytes (offset 72)
-    time: f32,                        // 4 bytes (offset 76)
-    sun_dir_x: f32,                   // 4 bytes (offset 80)
-    sun_dir_y: f32,                   // 4 bytes (offset 84)
-    sun_dir_z: f32,                   // 4 bytes (offset 88)
-    sun_intensity: f32,               // 4 bytes (offset 92)
-    ambient_strength: f32,            // 4 bytes (offset 96)
-    fog_density: f32,                 // 4 bytes (offset 100)
-    fog_color_r: f32,                 // 4 bytes (offset 104)
-    fog_color_g: f32,                 // 4 bytes (offset 108)
-    fog_color_b: f32,                 // 4 bytes (offset 112)
-    wood_color_r: f32,                // 4 bytes (offset 116)
-    wood_color_g: f32,                // 4 bytes (offset 120)
-    wood_color_b: f32,                // 4 bytes (offset 124)
-    grain_scale: f32,                 // 4 bytes (offset 128)
-    grain_strength: f32,              // 4 bytes (offset 132)
-    _pad1: f32,                       // 4 bytes (offset 136) - padding to 144
-    _pad2: f32,                       // 4 bytes (offset 140) - padding to 144
+    view_proj: [[f32; 4]; 4], // 64 bytes (offset 0)
+    camera_pos_x: f32,        // 4 bytes (offset 64)
+    camera_pos_y: f32,        // 4 bytes (offset 68)
+    camera_pos_z: f32,        // 4 bytes (offset 72)
+    time: f32,                // 4 bytes (offset 76)
+    sun_dir_x: f32,           // 4 bytes (offset 80)
+    sun_dir_y: f32,           // 4 bytes (offset 84)
+    sun_dir_z: f32,           // 4 bytes (offset 88)
+    sun_intensity: f32,       // 4 bytes (offset 92)
+    ambient_strength: f32,    // 4 bytes (offset 96)
+    fog_density: f32,         // 4 bytes (offset 100)
+    fog_color_r: f32,         // 4 bytes (offset 104)
+    fog_color_g: f32,         // 4 bytes (offset 108)
+    fog_color_b: f32,         // 4 bytes (offset 112)
+    wood_color_r: f32,        // 4 bytes (offset 116)
+    wood_color_g: f32,        // 4 bytes (offset 120)
+    wood_color_b: f32,        // 4 bytes (offset 124)
+    grain_scale: f32,         // 4 bytes (offset 128)
+    grain_strength: f32,      // 4 bytes (offset 132)
+    _pad1: f32,               // 4 bytes (offset 136) - padding to 144
+    _pad2: f32,               // 4 bytes (offset 140) - padding to 144
 }
 
 // Verify struct size at compile time (must be multiple of 16)
@@ -296,13 +296,7 @@ impl WoodPlankMaterial {
     }
 
     /// Update uniform buffer with current camera and time
-    pub fn update(
-        &self,
-        queue: &wgpu::Queue,
-        view_proj: Mat4,
-        camera_pos: Vec3,
-        time: f32,
-    ) {
+    pub fn update(&self, queue: &wgpu::Queue, view_proj: Mat4, camera_pos: Vec3, time: f32) {
         let uniforms = WoodPlankUniforms {
             view_proj: view_proj.to_cols_array_2d(),
             camera_pos_x: camera_pos.x,
@@ -378,7 +372,7 @@ impl Default for ChainMetalConfig {
             fog_density: 0.5,
             fog_color: Vec3::new(0.12, 0.1, 0.08),
             steel_color: Vec3::new(0.55, 0.58, 0.62), // Steel gray
-            shine: 0.8, // Strong Fresnel rim
+            shine: 0.8,                               // Strong Fresnel rim
             roughness: 0.3,
             metallic: 0.9,
         }
@@ -395,7 +389,7 @@ impl ChainMetalConfig {
             fog_density: 0.6,
             fog_color: Vec3::new(0.35, 0.15, 0.1), // Orange-brown fog
             steel_color: Vec3::new(0.45, 0.42, 0.4), // Darker, weathered steel
-            shine: 1.0, // Strong rim from lava glow
+            shine: 1.0,                            // Strong rim from lava glow
             roughness: 0.4,
             metallic: 0.85,
         }
@@ -410,7 +404,7 @@ impl ChainMetalConfig {
             fog_density: 0.3,
             fog_color: Vec3::new(0.5, 0.55, 0.6),
             steel_color: Vec3::new(0.65, 0.68, 0.72), // Brighter steel
-            shine: 1.2, // Very shiny
+            shine: 1.2,                               // Very shiny
             roughness: 0.15,
             metallic: 0.95,
         }
@@ -425,7 +419,7 @@ impl ChainMetalConfig {
             fog_density: 0.5,
             fog_color: Vec3::new(0.2, 0.18, 0.15),
             steel_color: Vec3::new(0.45, 0.35, 0.28), // Rusty brown-gray
-            shine: 0.4, // Less shiny due to rust
+            shine: 0.4,                               // Less shiny due to rust
             roughness: 0.6,
             metallic: 0.6,
         }
@@ -437,27 +431,27 @@ impl ChainMetalConfig {
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct ChainMetalUniforms {
-    view_proj: [[f32; 4]; 4],         // 64 bytes (offset 0)
-    camera_pos_x: f32,                // 4 bytes (offset 64)
-    camera_pos_y: f32,                // 4 bytes (offset 68)
-    camera_pos_z: f32,                // 4 bytes (offset 72)
-    time: f32,                        // 4 bytes (offset 76)
-    sun_dir_x: f32,                   // 4 bytes (offset 80)
-    sun_dir_y: f32,                   // 4 bytes (offset 84)
-    sun_dir_z: f32,                   // 4 bytes (offset 88)
-    sun_intensity: f32,               // 4 bytes (offset 92)
-    ambient_strength: f32,            // 4 bytes (offset 96)
-    fog_density: f32,                 // 4 bytes (offset 100)
-    fog_color_r: f32,                 // 4 bytes (offset 104)
-    fog_color_g: f32,                 // 4 bytes (offset 108)
-    fog_color_b: f32,                 // 4 bytes (offset 112)
-    steel_color_r: f32,               // 4 bytes (offset 116)
-    steel_color_g: f32,               // 4 bytes (offset 120)
-    steel_color_b: f32,               // 4 bytes (offset 124)
-    shine: f32,                       // 4 bytes (offset 128)
-    roughness: f32,                   // 4 bytes (offset 132)
-    metallic: f32,                    // 4 bytes (offset 136)
-    _pad1: f32,                       // 4 bytes (offset 140) - align to 16
+    view_proj: [[f32; 4]; 4], // 64 bytes (offset 0)
+    camera_pos_x: f32,        // 4 bytes (offset 64)
+    camera_pos_y: f32,        // 4 bytes (offset 68)
+    camera_pos_z: f32,        // 4 bytes (offset 72)
+    time: f32,                // 4 bytes (offset 76)
+    sun_dir_x: f32,           // 4 bytes (offset 80)
+    sun_dir_y: f32,           // 4 bytes (offset 84)
+    sun_dir_z: f32,           // 4 bytes (offset 88)
+    sun_intensity: f32,       // 4 bytes (offset 92)
+    ambient_strength: f32,    // 4 bytes (offset 96)
+    fog_density: f32,         // 4 bytes (offset 100)
+    fog_color_r: f32,         // 4 bytes (offset 104)
+    fog_color_g: f32,         // 4 bytes (offset 108)
+    fog_color_b: f32,         // 4 bytes (offset 112)
+    steel_color_r: f32,       // 4 bytes (offset 116)
+    steel_color_g: f32,       // 4 bytes (offset 120)
+    steel_color_b: f32,       // 4 bytes (offset 124)
+    shine: f32,               // 4 bytes (offset 128)
+    roughness: f32,           // 4 bytes (offset 132)
+    metallic: f32,            // 4 bytes (offset 136)
+    _pad1: f32,               // 4 bytes (offset 140) - align to 16
 }
 
 // Verify struct size at compile time (must be multiple of 16)
@@ -630,13 +624,7 @@ impl ChainMetalMaterial {
     }
 
     /// Update uniform buffer with current camera and time
-    pub fn update(
-        &self,
-        queue: &wgpu::Queue,
-        view_proj: Mat4,
-        camera_pos: Vec3,
-        time: f32,
-    ) {
+    pub fn update(&self, queue: &wgpu::Queue, view_proj: Mat4, camera_pos: Vec3, time: f32) {
         let uniforms = ChainMetalUniforms {
             view_proj: view_proj.to_cols_array_2d(),
             camera_pos_x: camera_pos.x,

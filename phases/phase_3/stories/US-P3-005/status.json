@@ -1,31 +1,41 @@
 {
     "story_id": "US-P3-005",
     "title": "Create DestructionSystem",
-    "status": "pending",
-    "focus": "",
+    "status": "completed",
+    "focus": "All criteria met — DestructionSystem fully implemented",
     "criteria": [
-        {"text": "DestructionSystem owns falling_prisms and debris vectors", "done": false, "notes": ""},
-        {"text": "destroy_prism() handles cascade logic correctly", "done": false, "notes": ""},
-        {"text": "update() handles gravity, collision, and debris lifecycle", "done": false, "notes": ""},
-        {"text": "Uses existing helpers from physics/support.rs", "done": false, "notes": ""},
-        {"text": "No wgpu imports", "done": false, "notes": ""},
-        {"text": "Typecheck passes (cargo check)", "done": false, "notes": ""}
+        {"text": "DestructionSystem owns falling_prisms and debris vectors", "done": true, "notes": "Private Vec<FallingPrism> and Vec<DebrisParticle> fields with public accessors"},
+        {"text": "destroy_prism() handles cascade logic correctly", "done": true, "notes": "Removes prism, spawns debris, recursively cascades via find_unsupported_cascade"},
+        {"text": "update() handles gravity, collision, and debris lifecycle", "done": true, "notes": "Delegates to FallingPrism::update/DebrisParticle::update, handles ground impact + wall collision + expiry"},
+        {"text": "Uses existing helpers from physics/support.rs", "done": true, "notes": "Uses find_unsupported_cascade from crate::game::physics::support"},
+        {"text": "No wgpu imports", "done": true, "notes": "Zero GPU coupling — only uses glam, game::destruction, game::physics, render::hex_prism types"},
+        {"text": "Typecheck passes (cargo check)", "done": true, "notes": "cargo check and cargo clippy pass clean"}
     ],
     "checklist": [
-        {"item": "Read spec.md for implementation details", "done": false},
-        {"item": "Read destruction code in battle_arena.rs and destruction.rs", "done": false},
-        {"item": "Create src/game/systems/destruction_system.rs", "done": false},
-        {"item": "Update src/game/systems/mod.rs", "done": false},
-        {"item": "Run cargo check", "done": false}
+        {"item": "Read spec.md for implementation details", "done": true},
+        {"item": "Read destruction code in battle_arena.rs and destruction.rs", "done": true},
+        {"item": "Create src/game/systems/destruction_system.rs", "done": true},
+        {"item": "Update src/game/systems/mod.rs", "done": true},
+        {"item": "Run cargo check", "done": true}
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
+    "worker_notes": "DestructionSystem created with 204 lines. Encapsulates destroy→cascade→fall→debris lifecycle. Key design: update() takes &mut HexPrismGrid since falling prisms can collide with wall prisms and trigger further cascades. Added Default impl per clippy recommendation. add_debris() method for external debris sources (meteors, blocks).",
+    "notes_history": [
+        {"iteration": 1, "note": "All criteria met in single iteration. Created DestructionSystem with destroy_prism(), check_support_cascade(), update(), and accessors. Uses find_unsupported_cascade from physics/support.rs. No wgpu imports. cargo check + clippy clean.", "timestamp": "2026-02-05T22:30:00Z"}
+    ],
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": [],
-    "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
+    "commit_hash": "6737ba200badc812295fd500d846470321ef6b96",
+    "files_modified": [
+        "src/game/systems/destruction_system.rs",
+        "src/game/systems/mod.rs"
+    ],
+    "iteration_history": [
+        {"iteration": 1, "action": "Created DestructionSystem struct with full destroy→cascade→fall→debris pipeline", "notes": "All 6 acceptance criteria met. cargo check + clippy clean.", "completed_at": "2026-02-05T22:30:00Z"}
+    ],
+    "learnings": [
+        "update() needs &mut HexPrismGrid because falling prisms can collide with stationary wall prisms, triggering destroy_prism() cascades",
+        "find_unsupported_cascade uses closure-based grid_contains pattern for decoupled support checking"
+    ],
     "created_at": "2026-02-05T22:00:00Z"
 }

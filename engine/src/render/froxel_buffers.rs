@@ -279,7 +279,10 @@ impl std::fmt::Debug for FroxelBoundsBuffer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FroxelBoundsBuffer")
             .field("count", &self.count)
-            .field("bounds", &format_args!("[FroxelBounds; {}]", self.bounds.len()))
+            .field(
+                "bounds",
+                &format_args!("[FroxelBounds; {}]", self.bounds.len()),
+            )
             .finish()
     }
 }

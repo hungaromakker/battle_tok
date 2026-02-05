@@ -31,7 +31,7 @@ pub struct GpuContextConfig {
 impl Default for GpuContextConfig {
     fn default() -> Self {
         Self {
-            vsync: false,  // Default to uncapped for performance
+            vsync: false, // Default to uncapped for performance
             high_performance: true,
             debug: cfg!(debug_assertions),
         }
@@ -50,7 +50,8 @@ impl GpuContext {
         });
 
         // Create surface
-        let surface = instance.create_surface(Arc::clone(&window))
+        let surface = instance
+            .create_surface(Arc::clone(&window))
             .expect("Failed to create surface");
 
         // Request adapter
@@ -66,15 +67,13 @@ impl GpuContext {
         .expect("Failed to find GPU adapter");
 
         // Create device and queue
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("Battle Tök Device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                memory_hints: wgpu::MemoryHints::Performance,
-                ..Default::default()
-            },
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("Battle Tök Device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            memory_hints: wgpu::MemoryHints::Performance,
+            ..Default::default()
+        }))
         .expect("Failed to create GPU device");
 
         // Configure surface
@@ -89,9 +88,15 @@ impl GpuContext {
         // Select present mode based on vsync preference
         let present_mode = if config.vsync {
             wgpu::PresentMode::AutoVsync
-        } else if surface_caps.present_modes.contains(&wgpu::PresentMode::Immediate) {
+        } else if surface_caps
+            .present_modes
+            .contains(&wgpu::PresentMode::Immediate)
+        {
             wgpu::PresentMode::Immediate
-        } else if surface_caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
+        } else if surface_caps
+            .present_modes
+            .contains(&wgpu::PresentMode::Mailbox)
+        {
             wgpu::PresentMode::Mailbox
         } else {
             wgpu::PresentMode::AutoVsync
@@ -110,7 +115,8 @@ impl GpuContext {
         surface.configure(&device, &surface_config);
 
         // Create depth texture
-        let (depth_texture, depth_view) = Self::create_depth_texture(&device, size.width, size.height);
+        let (depth_texture, depth_view) =
+            Self::create_depth_texture(&device, size.width, size.height);
 
         Self {
             device,
@@ -123,7 +129,11 @@ impl GpuContext {
     }
 
     /// Create depth texture with given dimensions
-    fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32) -> (wgpu::Texture, wgpu::TextureView) {
+    fn create_depth_texture(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Depth Texture"),
             size: wgpu::Extent3d {
@@ -150,7 +160,8 @@ impl GpuContext {
             self.surface.configure(&self.device, &self.surface_config);
 
             // Recreate depth texture
-            let (depth_texture, depth_view) = Self::create_depth_texture(&self.device, width, height);
+            let (depth_texture, depth_view) =
+                Self::create_depth_texture(&self.device, width, height);
             self.depth_texture = depth_texture;
             self.depth_view = depth_view;
         }
@@ -173,11 +184,12 @@ impl GpuContext {
 
     /// Create a uniform buffer with initial data
     pub fn create_uniform_buffer<T: bytemuck::Pod>(&self, label: &str, data: &T) -> wgpu::Buffer {
-        self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(label),
-            contents: bytemuck::bytes_of(data),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        })
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytemuck::bytes_of(data),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            })
     }
 
     /// Create an empty uniform buffer of given size
@@ -192,11 +204,12 @@ impl GpuContext {
 
     /// Create a vertex buffer with initial data
     pub fn create_vertex_buffer<T: bytemuck::Pod>(&self, label: &str, data: &[T]) -> wgpu::Buffer {
-        self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(label),
-            contents: bytemuck::cast_slice(data),
-            usage: wgpu::BufferUsages::VERTEX,
-        })
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytemuck::cast_slice(data),
+                usage: wgpu::BufferUsages::VERTEX,
+            })
     }
 
     /// Create a dynamic vertex buffer (can be updated)
@@ -211,11 +224,12 @@ impl GpuContext {
 
     /// Create an index buffer with initial data
     pub fn create_index_buffer(&self, label: &str, data: &[u32]) -> wgpu::Buffer {
-        self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(label),
-            contents: bytemuck::cast_slice(data),
-            usage: wgpu::BufferUsages::INDEX,
-        })
+        self.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytemuck::cast_slice(data),
+                usage: wgpu::BufferUsages::INDEX,
+            })
     }
 
     /// Create a dynamic index buffer (can be updated)
@@ -230,7 +244,8 @@ impl GpuContext {
 
     /// Write data to a buffer
     pub fn write_buffer<T: bytemuck::Pod>(&self, buffer: &wgpu::Buffer, data: &[T]) {
-        self.queue.write_buffer(buffer, 0, bytemuck::cast_slice(data));
+        self.queue
+            .write_buffer(buffer, 0, bytemuck::cast_slice(data));
     }
 
     /// Create a standard mesh pipeline (position, normal, color)
@@ -241,79 +256,84 @@ impl GpuContext {
         bind_group_layout: &wgpu::BindGroupLayout,
         depth_enabled: bool,
     ) -> wgpu::RenderPipeline {
-        let shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some(&format!("{} Shader", label)),
-            source: wgpu::ShaderSource::Wgsl(shader_source.into()),
-        });
+        let shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(&format!("{} Shader", label)),
+                source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+            });
 
-        let pipeline_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some(&format!("{} Pipeline Layout", label)),
-            bind_group_layouts: &[bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let pipeline_layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(&format!("{} Pipeline Layout", label)),
+                bind_group_layouts: &[bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
-        self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(&format!("{} Pipeline", label)),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: 40, // 3 + 3 + 4 floats = 40 bytes
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x3,
-                            offset: 0,
-                            shader_location: 0,
-                        },
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x3,
-                            offset: 12,
-                            shader_location: 1,
-                        },
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x4,
-                            offset: 24,
-                            shader_location: 2,
-                        },
-                    ],
-                }],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: self.surface_config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: if depth_enabled {
-                Some(wgpu::DepthStencilState {
-                    format: wgpu::TextureFormat::Depth32Float,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                })
-            } else {
-                None
-            },
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        })
+        self.device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(&format!("{} Pipeline", label)),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: 40, // 3 + 3 + 4 floats = 40 bytes
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x3,
+                                offset: 0,
+                                shader_location: 0,
+                            },
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x3,
+                                offset: 12,
+                                shader_location: 1,
+                            },
+                            wgpu::VertexAttribute {
+                                format: wgpu::VertexFormat::Float32x4,
+                                offset: 24,
+                                shader_location: 2,
+                            },
+                        ],
+                    }],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: self.surface_config.format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: if depth_enabled {
+                    Some(wgpu::DepthStencilState {
+                        format: wgpu::TextureFormat::Depth32Float,
+                        depth_write_enabled: true,
+                        depth_compare: wgpu::CompareFunction::Less,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState::default(),
+                    })
+                } else {
+                    None
+                },
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            })
     }
 }

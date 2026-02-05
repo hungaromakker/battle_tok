@@ -20,21 +20,33 @@ impl MovementState {
     /// Get movement direction as normalized vector
     pub fn get_direction(&self) -> Vec3 {
         let mut dir = Vec3::ZERO;
-        
-        if self.forward { dir.z -= 1.0; }
-        if self.backward { dir.z += 1.0; }
-        if self.left { dir.x -= 1.0; }
-        if self.right { dir.x += 1.0; }
-        if self.up { dir.y += 1.0; }
-        if self.down { dir.y -= 1.0; }
-        
+
+        if self.forward {
+            dir.z -= 1.0;
+        }
+        if self.backward {
+            dir.z += 1.0;
+        }
+        if self.left {
+            dir.x -= 1.0;
+        }
+        if self.right {
+            dir.x += 1.0;
+        }
+        if self.up {
+            dir.y += 1.0;
+        }
+        if self.down {
+            dir.y -= 1.0;
+        }
+
         if dir != Vec3::ZERO {
             dir = dir.normalize();
         }
-        
+
         dir
     }
-    
+
     /// Get speed multiplier based on sprint state
     pub fn speed_multiplier(&self) -> f32 {
         if self.sprint { 2.0 } else { 1.0 }
@@ -55,20 +67,28 @@ impl AimingState {
     pub fn is_aiming(&self) -> bool {
         self.aim_up || self.aim_down || self.aim_left || self.aim_right
     }
-    
+
     /// Get elevation delta (-1.0 to 1.0)
     pub fn get_elevation_delta(&self) -> f32 {
         let mut delta = 0.0;
-        if self.aim_up { delta += 1.0; }
-        if self.aim_down { delta -= 1.0; }
+        if self.aim_up {
+            delta += 1.0;
+        }
+        if self.aim_down {
+            delta -= 1.0;
+        }
         delta
     }
-    
+
     /// Get azimuth delta (-1.0 to 1.0)
     pub fn get_azimuth_delta(&self) -> f32 {
         let mut delta = 0.0;
-        if self.aim_left { delta -= 1.0; }
-        if self.aim_right { delta += 1.0; }
+        if self.aim_left {
+            delta -= 1.0;
+        }
+        if self.aim_right {
+            delta += 1.0;
+        }
         delta
     }
 }

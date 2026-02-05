@@ -39,5 +39,5 @@ pub mod types;
 
 // Re-export commonly used types at the physics module level
 pub use ballistics::{BallisticsConfig, Projectile, ProjectileState};
-pub use collision::{aabb_surface_normal, ray_aabb_intersect, HexPrism, HexPrismGrid, HitInfo};
+pub use collision::{HexPrism, HexPrismGrid, HitInfo, aabb_surface_normal, ray_aabb_intersect};
 pub use types::{Quat, Vec3};

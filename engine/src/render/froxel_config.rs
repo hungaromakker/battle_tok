@@ -113,7 +113,10 @@ mod tests {
             assert!(
                 (this_far - next_near).abs() < 0.0001,
                 "Slice {} far ({}) should match slice {} near ({})",
-                i, this_far, i + 1, next_near
+                i,
+                this_far,
+                i + 1,
+                next_near
             );
         }
     }
@@ -134,7 +137,8 @@ mod tests {
         assert!(
             last_slice_range > first_slice_range * 10.0,
             "Exponential distribution: last slice range ({}) should be >> first ({})",
-            last_slice_range, first_slice_range
+            last_slice_range,
+            first_slice_range
         );
     }
 }

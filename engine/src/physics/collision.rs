@@ -91,9 +91,21 @@ pub fn ray_aabb_intersect(
     // Compute inverse direction for efficient division
     // Handle near-zero directions by using large values
     let inv_dir = Vec3::new(
-        if ray_dir.x.abs() > 1e-10 { 1.0 / ray_dir.x } else { f32::MAX * ray_dir.x.signum() },
-        if ray_dir.y.abs() > 1e-10 { 1.0 / ray_dir.y } else { f32::MAX * ray_dir.y.signum() },
-        if ray_dir.z.abs() > 1e-10 { 1.0 / ray_dir.z } else { f32::MAX * ray_dir.z.signum() },
+        if ray_dir.x.abs() > 1e-10 {
+            1.0 / ray_dir.x
+        } else {
+            f32::MAX * ray_dir.x.signum()
+        },
+        if ray_dir.y.abs() > 1e-10 {
+            1.0 / ray_dir.y
+        } else {
+            f32::MAX * ray_dir.y.signum()
+        },
+        if ray_dir.z.abs() > 1e-10 {
+            1.0 / ray_dir.z
+        } else {
+            f32::MAX * ray_dir.z.signum()
+        },
     );
 
     // Compute intersection times with the two YZ planes (x = aabb_min.x and x = aabb_max.x)
@@ -536,12 +548,7 @@ mod tests {
 
     #[test]
     fn test_hit_info_new() {
-        let hit = HitInfo::new(
-            Vec3::new(1.0, 2.0, 3.0),
-            Vec3::Y,
-            (0, 1, 2),
-            5.0,
-        );
+        let hit = HitInfo::new(Vec3::new(1.0, 2.0, 3.0), Vec3::Y, (0, 1, 2), 5.0);
         assert_eq!(hit.position, Vec3::new(1.0, 2.0, 3.0));
         assert_eq!(hit.normal, Vec3::Y);
         assert_eq!(hit.prism_coord, (0, 1, 2));

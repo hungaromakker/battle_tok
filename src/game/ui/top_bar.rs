@@ -6,10 +6,10 @@
 //! - Resources with smooth icon designs
 //! - Population counter
 
-use crate::game::types::{Mesh, Vertex};
-use crate::game::economy::{Resources, ResourceType, DayCycle, TimeOfDay};
-use crate::game::population::Population;
 use super::text::{add_quad, draw_text};
+use crate::game::economy::{DayCycle, ResourceType, Resources, TimeOfDay};
+use crate::game::population::Population;
+use crate::game::types::{Mesh, Vertex};
 
 /// Height of the top bar in pixels
 pub const TOP_BAR_HEIGHT: f32 = 56.0;
