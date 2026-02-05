@@ -14,7 +14,7 @@ use super::building_blocks::{BuildingBlockManager, BuildingBlockShape, AABB};
 /// Physics state for a building block
 #[derive(Debug, Clone)]
 pub struct BlockPhysicsState {
-    /// Current velocity
+    /// Current velocity (m/s)
     pub velocity: Vec3,
     /// Is the block resting on something solid?
     pub grounded: bool,
@@ -24,10 +24,27 @@ pub struct BlockPhysicsState {
     pub fall_time: f32,
     /// Should this block disintegrate?
     pub should_disintegrate: bool,
-    /// Angular velocity for tumbling during fall
+    /// Angular velocity for tumbling during fall (rad/s)
     pub angular_velocity: Vec3,
-    /// Accumulated rotation during fall
+    /// Accumulated rotation during fall (radians)
     pub fall_rotation: Vec3,
+    
+    // === New force-based physics fields ===
+    
+    /// Accumulated force this frame (Newtons) - reset each frame after applying
+    pub accumulated_force: Vec3,
+    /// Highest impact force received (Newtons) - used for break threshold check
+    pub peak_impact: f32,
+    /// Is the block detached from structure and can be picked up?
+    pub is_loose: bool,
+    /// Block mass in kg (calculated from volume * material density)
+    pub mass: f32,
+    /// Current roll axis for spheres/cylinders (None = sliding, not rolling)
+    pub rolling_axis: Option<Vec3>,
+    /// Progress through a tumble for cubes (0.0-1.0, triggers 90° rotation)
+    pub tumble_progress: f32,
+    /// Material index for physics properties lookup
+    pub material_index: u8,
 }
 
 impl Default for BlockPhysicsState {
@@ -40,7 +57,40 @@ impl Default for BlockPhysicsState {
             should_disintegrate: false,
             angular_velocity: Vec3::ZERO,
             fall_rotation: Vec3::ZERO,
+            // New fields
+            accumulated_force: Vec3::ZERO,
+            peak_impact: 0.0,
+            is_loose: false,
+            mass: 10.0, // Default mass, will be recalculated on register
+            rolling_axis: None,
+            tumble_progress: 0.0,
+            material_index: 0,
         }
+    }
+}
+
+impl BlockPhysicsState {
+    /// Apply an impulse (instantaneous force) to the block
+    /// impulse = force * dt, so velocity change = impulse / mass
+    pub fn apply_impulse(&mut self, impulse: Vec3) {
+        if self.mass > 0.0 {
+            self.velocity += impulse / self.mass;
+        }
+    }
+    
+    /// Apply a continuous force (will be integrated over dt in update)
+    pub fn apply_force(&mut self, force: Vec3) {
+        self.accumulated_force += force;
+    }
+    
+    /// Record an impact force for break threshold checking
+    pub fn record_impact(&mut self, force_magnitude: f32) {
+        self.peak_impact = self.peak_impact.max(force_magnitude);
+    }
+    
+    /// Reset per-frame values (call at end of physics update)
+    pub fn reset_frame(&mut self) {
+        self.accumulated_force = Vec3::ZERO;
     }
 }
 
@@ -59,10 +109,16 @@ pub struct PhysicsConfig {
     pub support_check_delay: f32,
     /// Time a falling block takes to disintegrate (seconds)
     pub disintegration_time: f32,
-    /// Velocity damping factor when hitting ground
+    /// Velocity damping factor when hitting ground (restitution)
     pub bounce_damping: f32,
     /// Minimum velocity to stop bouncing
     pub velocity_threshold: f32,
+    /// Default static friction coefficient (used if material not specified)
+    pub default_friction_static: f32,
+    /// Default dynamic friction coefficient
+    pub default_friction_dynamic: f32,
+    /// Air resistance coefficient
+    pub air_drag: f32,
 }
 
 impl Default for PhysicsConfig {
@@ -76,7 +132,64 @@ impl Default for PhysicsConfig {
             disintegration_time: 2.0,
             bounce_damping: 0.3,
             velocity_threshold: 0.1,
+            default_friction_static: 0.6,
+            default_friction_dynamic: 0.4,
+            air_drag: 0.01,
         }
+    }
+}
+
+/// Get friction coefficients for a material index
+/// Returns (static_friction, dynamic_friction)
+pub fn get_friction_coefficients(material_index: u8) -> (f32, f32) {
+    // Material friction values (indexed by u8 material)
+    // 0=Stone, 1=Wood, 2=StoneDark, 3=Sandstone, 4=Slate, 5=Brick, 6=Moss, 7=Metal, 8=Marble, 9=Obsidian
+    match material_index {
+        0 => (0.70, 0.50), // Stone Gray - high friction
+        1 => (0.50, 0.40), // Wood Brown - medium friction
+        2 => (0.75, 0.55), // Stone Dark - very high friction
+        3 => (0.60, 0.45), // Sandstone - medium-high
+        4 => (0.55, 0.40), // Slate - medium
+        5 => (0.65, 0.50), // Brick Red - high
+        6 => (0.80, 0.60), // Moss Green - very high (soft)
+        7 => (0.30, 0.20), // Metal Gray - low friction (slippery)
+        8 => (0.40, 0.30), // Marble White - low-medium
+        9 => (0.35, 0.25), // Obsidian - low (smooth glass)
+        _ => (0.60, 0.40), // Default
+    }
+}
+
+/// Get break threshold for a material (Newtons)
+pub fn get_break_threshold(material_index: u8) -> f32 {
+    match material_index {
+        0 => 5000.0,  // Stone Gray
+        1 => 1500.0,  // Wood Brown - weakest
+        2 => 6000.0,  // Stone Dark - stronger
+        3 => 2500.0,  // Sandstone - weak stone
+        4 => 3500.0,  // Slate
+        5 => 3000.0,  // Brick Red
+        6 => 800.0,   // Moss Green - very weak
+        7 => 10000.0, // Metal Gray - strongest
+        8 => 4000.0,  // Marble White
+        9 => 2000.0,  // Obsidian - brittle
+        _ => 3000.0,  // Default
+    }
+}
+
+/// Get material density (kg/m³)
+pub fn get_material_density(material_index: u8) -> f32 {
+    match material_index {
+        0 => 2500.0, // Stone Gray
+        1 => 600.0,  // Wood Brown - light
+        2 => 2700.0, // Stone Dark
+        3 => 2200.0, // Sandstone
+        4 => 2800.0, // Slate - dense
+        5 => 1900.0, // Brick Red
+        6 => 500.0,  // Moss Green - very light
+        7 => 7800.0, // Metal Gray - heavy
+        8 => 2700.0, // Marble White
+        9 => 2400.0, // Obsidian
+        _ => 2000.0, // Default
     }
 }
 
@@ -128,6 +241,43 @@ impl BuildingPhysics {
         self.graph_dirty = true;
         // Schedule initial support check
         self.pending_checks.insert(block_id, self.config.support_check_delay);
+    }
+    
+    /// Register a new block with material and volume for mass calculation
+    pub fn register_block_with_physics(&mut self, block_id: u32, material_index: u8, volume: f32, density: f32) {
+        let mut state = BlockPhysicsState::default();
+        state.material_index = material_index;
+        state.mass = volume * density;
+        self.states.insert(block_id, state);
+        self.graph_dirty = true;
+        self.pending_checks.insert(block_id, self.config.support_check_delay);
+    }
+    
+    /// Apply an impulse to a block (e.g., from projectile hit or player push)
+    pub fn apply_impulse(&mut self, block_id: u32, impulse: Vec3) {
+        if let Some(state) = self.states.get_mut(&block_id) {
+            state.apply_impulse(impulse);
+            // Record impact magnitude
+            let impact_force = impulse.length() / 0.016; // Approximate force from impulse (assuming ~60fps)
+            state.record_impact(impact_force);
+        }
+    }
+    
+    /// Apply a continuous force to a block
+    pub fn apply_force(&mut self, block_id: u32, force: Vec3) {
+        if let Some(state) = self.states.get_mut(&block_id) {
+            state.apply_force(force);
+        }
+    }
+    
+    /// Check if a block is loose (detached and pickable)
+    pub fn is_loose(&self, block_id: u32) -> bool {
+        self.states.get(&block_id).map(|s| s.is_loose).unwrap_or(false)
+    }
+    
+    /// Get peak impact force for a block
+    pub fn get_peak_impact(&self, block_id: u32) -> f32 {
+        self.states.get(&block_id).map(|s| s.peak_impact).unwrap_or(0.0)
     }
 
     /// Unregister a block from the physics system

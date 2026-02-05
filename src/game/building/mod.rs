@@ -14,7 +14,7 @@ pub mod drag_builder;
 pub mod mesh_combine;
 
 pub use dual_grid::{DualGrid, GridCell, GridCorner, CornerType, BLOCK_SIZE, HALF_BLOCK};
-pub use materials::{Material, MaterialProperties, MATERIALS};
+pub use materials::{Material, MaterialProperties, MaterialPhysics, MATERIALS, MATERIAL_PHYSICS, get_material_physics};
 pub use blocks::{BuildingBlock, BlockShape, BlockLibrary};
 pub use drag_builder::{DragBuilder, DragState, BuildEvent};
 pub use mesh_combine::{MeshCombiner, CombinedMesh, CombinedVertex};

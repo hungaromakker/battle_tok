@@ -33,6 +33,7 @@ pub mod sky;
 pub mod sky_cubemap;
 pub mod stormy_sky;
 pub mod castle_material;
+pub mod flag_material;
 pub mod point_lights;
 pub mod uniforms;
 
@@ -64,6 +65,9 @@ pub use stormy_sky::{StormySky, StormySkyConfig};
 
 // Re-export castle material types (Phase 2: Castle Stone Shader)
 pub use castle_material::{CastleMaterial, CastleMaterialConfig};
+
+// Re-export flag material types (Phase 2: Team Flag Shader)
+pub use flag_material::{FlagMaterial, FlagMaterialConfig, FlagTeam, FlagVertex};
 
 // Re-export point light types (Phase 2: Torch Lighting System)
 pub use point_lights::{

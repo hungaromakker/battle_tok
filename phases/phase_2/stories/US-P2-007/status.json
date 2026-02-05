@@ -1,34 +1,46 @@
 {
     "story_id": "US-P2-007",
     "title": "Create Team Flag Shader with Wind Animation",
-    "status": "pending",
-    "focus": "",
+    "status": "completed",
+    "focus": "All acceptance criteria met - flag shader with wind animation complete",
     "criteria": [
-        {"text": "Flag mesh deforms with wind wave", "done": false, "notes": ""},
-        {"text": "Wave stronger at edge, weaker near pole", "done": false, "notes": ""},
-        {"text": "Team color displays correctly", "done": false, "notes": ""},
-        {"text": "Horizontal stripe band visible", "done": false, "notes": ""},
-        {"text": "Shader compiles without errors", "done": false, "notes": ""},
-        {"text": "cargo check passes", "done": false, "notes": ""}
+        {"text": "Flag mesh deforms with wind wave", "done": true, "notes": "Vertex shader applies sin() wave displacement with primary and secondary frequencies"},
+        {"text": "Wave stronger at edge, weaker near pole", "done": true, "notes": "wave_amount = uv.x * (1.0 - uv.y * 0.5) - stronger at edge (uv.x=1), weaker at pole (uv.x=0)"},
+        {"text": "Team color displays correctly", "done": true, "notes": "FlagTeam enum with Red/Blue variants, FlagMaterialConfig.for_team() provides team colors"},
+        {"text": "Horizontal stripe band visible", "done": true, "notes": "smoothstep band at uv.y=0.45-0.55 blends with stripe_color at 85% mix"},
+        {"text": "Shader compiles without errors", "done": true, "notes": "flag.wgsl compiles successfully via include_str! in flag_material.rs"},
+        {"text": "cargo check passes", "done": true, "notes": "Verified cargo check passes with no errors (only pre-existing warnings)"}
     ],
     "checklist": [
-        {"item": "Read spec.md and understand vertex wind animation", "done": false},
-        {"item": "Create shaders/flag.wgsl with FlagParams struct", "done": false},
-        {"item": "Implement vertex shader with wave displacement", "done": false},
-        {"item": "Implement fragment shader with stripe pattern", "done": false},
-        {"item": "Create engine/src/render/flag_material.rs", "done": false},
-        {"item": "Add method to set team color", "done": false},
-        {"item": "Add export in mod.rs", "done": false},
-        {"item": "Run cargo check", "done": false}
+        {"item": "Read spec.md and understand vertex wind animation", "done": true},
+        {"item": "Create shaders/flag.wgsl with FlagParams struct", "done": true},
+        {"item": "Implement vertex shader with wave displacement", "done": true},
+        {"item": "Implement fragment shader with stripe pattern", "done": true},
+        {"item": "Create engine/src/render/flag_material.rs", "done": true},
+        {"item": "Add method to set team color", "done": true},
+        {"item": "Add export in mod.rs", "done": true},
+        {"item": "Run cargo check", "done": true}
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
+    "worker_notes": "All criteria met. Created flag.wgsl with FlagUniforms (128 bytes), vertex shader with sin() wave displacement (stronger at edge, weaker near pole), and fragment shader with horizontal stripe pattern. Created flag_material.rs with FlagMaterial struct, FlagTeam enum (Red/Blue), FlagMaterialConfig with presets, and FlagVertex helper for mesh generation. Exported in mod.rs. cargo check passes.",
+    "notes_history": [
+        {"iteration": 1, "note": "Completed all implementation: flag.wgsl shader with wind animation and stripe pattern, flag_material.rs with FlagMaterial/FlagTeam/FlagMaterialConfig, exports in mod.rs. cargo check passes.", "timestamp": "2026-02-05T15:30:00Z"}
+    ],
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": [],
-    "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
+    "commit_hash": "08e231cc3de578ece8e2265bdd7f70a8fa9d0500",
+    "files_modified": [
+        "shaders/flag.wgsl",
+        "engine/src/render/flag_material.rs",
+        "engine/src/render/mod.rs"
+    ],
+    "iteration_history": [
+        {"iteration": 1, "action": "Created flag shader and material module", "notes": "All acceptance criteria met in first iteration", "completed_at": "2026-02-05T15:30:00Z"}
+    ],
+    "learnings": [
+        "Flag wind animation uses UV.x to scale wave amplitude - pole (x=0) stays fixed, free edge (x=1) waves most",
+        "Team colors should use FlagTeam enum for type safety rather than raw Vec3 colors",
+        "Horizontal stripe uses smoothstep difference for anti-aliased band"
+    ],
     "created_at": "2026-02-05T15:15:00"
 }

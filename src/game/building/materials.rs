@@ -5,8 +5,126 @@
 //! - Strength (structural support capacity)
 //! - Build time (how fast to place)
 //! - Visual appearance
+//! - Physics properties (friction, break threshold, density)
 
 use glam::Vec3;
+
+/// Physics properties for materials
+/// Used by the block physics system for realistic movement and destruction
+#[derive(Debug, Clone, Copy)]
+pub struct MaterialPhysics {
+    /// Static friction coefficient (0.0-1.0) - resistance to start moving
+    pub friction_static: f32,
+    /// Dynamic friction coefficient (0.0-1.0) - resistance while moving
+    pub friction_dynamic: f32,
+    /// Force threshold (Newtons) to disintegrate the block
+    pub break_threshold: f32,
+    /// Density in kg/m³ for mass calculation
+    pub density: f32,
+    /// Restitution/bounce coefficient (0.0 = no bounce, 1.0 = perfect bounce)
+    pub restitution: f32,
+}
+
+impl MaterialPhysics {
+    /// Calculate mass from volume (in m³)
+    pub fn mass_from_volume(&self, volume: f32) -> f32 {
+        self.density * volume
+    }
+}
+
+/// Physics properties for each material type (indexed by material u8)
+/// Indices: 0=Stone Gray, 1=Wood Brown, 2=Stone Dark, 3=Sandstone, 4=Slate,
+///          5=Brick Red, 6=Moss Green, 7=Metal Gray, 8=Marble White, 9=Obsidian
+pub const MATERIAL_PHYSICS: &[MaterialPhysics] = &[
+    // 0: Stone Gray
+    MaterialPhysics {
+        friction_static: 0.7,
+        friction_dynamic: 0.5,
+        break_threshold: 5000.0,
+        density: 2500.0,
+        restitution: 0.2,
+    },
+    // 1: Wood Brown
+    MaterialPhysics {
+        friction_static: 0.5,
+        friction_dynamic: 0.4,
+        break_threshold: 1500.0,
+        density: 600.0,
+        restitution: 0.3,
+    },
+    // 2: Stone Dark
+    MaterialPhysics {
+        friction_static: 0.75,
+        friction_dynamic: 0.55,
+        break_threshold: 6000.0,
+        density: 2700.0,
+        restitution: 0.15,
+    },
+    // 3: Sandstone
+    MaterialPhysics {
+        friction_static: 0.6,
+        friction_dynamic: 0.45,
+        break_threshold: 2500.0,
+        density: 2200.0,
+        restitution: 0.2,
+    },
+    // 4: Slate
+    MaterialPhysics {
+        friction_static: 0.55,
+        friction_dynamic: 0.4,
+        break_threshold: 3500.0,
+        density: 2800.0,
+        restitution: 0.15,
+    },
+    // 5: Brick Red
+    MaterialPhysics {
+        friction_static: 0.65,
+        friction_dynamic: 0.5,
+        break_threshold: 3000.0,
+        density: 1900.0,
+        restitution: 0.25,
+    },
+    // 6: Moss Green (organic, soft)
+    MaterialPhysics {
+        friction_static: 0.8,
+        friction_dynamic: 0.6,
+        break_threshold: 800.0,
+        density: 500.0,
+        restitution: 0.4,
+    },
+    // 7: Metal Gray
+    MaterialPhysics {
+        friction_static: 0.3,
+        friction_dynamic: 0.2,
+        break_threshold: 10000.0,
+        density: 7800.0,
+        restitution: 0.5,
+    },
+    // 8: Marble White
+    MaterialPhysics {
+        friction_static: 0.4,
+        friction_dynamic: 0.3,
+        break_threshold: 4000.0,
+        density: 2700.0,
+        restitution: 0.25,
+    },
+    // 9: Obsidian Black (volcanic glass - hard but brittle)
+    MaterialPhysics {
+        friction_static: 0.35,
+        friction_dynamic: 0.25,
+        break_threshold: 2000.0, // Brittle despite being hard
+        density: 2400.0,
+        restitution: 0.1,
+    },
+];
+
+/// Get physics properties for a material index
+/// Returns stone physics as default for invalid indices
+pub fn get_material_physics(material_index: u8) -> &'static MaterialPhysics {
+    MATERIAL_PHYSICS
+        .get(material_index as usize)
+        .unwrap_or(&MATERIAL_PHYSICS[0])
+}
 
 /// Material types for building
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
