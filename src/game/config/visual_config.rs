@@ -55,14 +55,14 @@ impl Default for VisualConfig {
     /// - Lava: HDR orange-red glow
     fn default() -> Self {
         Self {
-            // Fog — from battle_arena.rs uniform setup
-            fog_density: 0.004,
-            fog_color: Vec3::new(0.65, 0.45, 0.55),
+            // Fog — warm dark atmosphere (fiery, not purple)
+            fog_density: 0.003,
+            fog_color: Vec3::new(0.25, 0.10, 0.06),
 
-            // Directional light — from battle_arena.rs SdfCannonUniforms
-            sun_direction: Vec3::new(0.3, 0.25, -0.92),
-            sun_color: Vec3::new(1.2, 0.6, 0.35),
-            ambient_intensity: 0.25,
+            // Directional light — low sun, warm orange for dramatic rim lighting
+            sun_direction: Vec3::new(0.2, 0.15, -0.95),
+            sun_color: Vec3::new(1.4, 0.5, 0.25),
+            ambient_intensity: 0.20,
 
             // Torches — from battle_arena.rs PointLightManager setup
             torch_intensity: 1.0,

@@ -71,25 +71,26 @@ impl Default for ApocalypticSkyConfig {
 
 impl ApocalypticSkyConfig {
     /// Create preset matching the reference image - dramatic storm over lava
+    /// Reference: molten planet with fiery red/orange atmosphere, dark void with embers
     pub fn battle_arena() -> Self {
         Self {
-            cloud_speed: 0.15,
-            cloud_density: 2.5, // Denser, more dramatic clouds
-            cloud_scale: 1.0,
-            cloud_coverage: 0.75, // More cloud coverage
+            cloud_speed: 0.12,
+            cloud_density: 2.0, // Moderate density - don't obscure the sky too much
+            cloud_scale: 0.8,
+            cloud_coverage: 0.55, // Leave gaps to see nebula/planet
 
-            // Deep purple zenith matching reference - more saturated
-            zenith_color: Vec3::new(0.08, 0.02, 0.22),
-            // Orange-red horizon with more intensity
-            horizon_color: Vec3::new(0.85, 0.35, 0.12),
+            // Deep dark red-black zenith (matching fiery space void)
+            zenith_color: Vec3::new(0.12, 0.02, 0.03),
+            // Bright fiery orange-red horizon (lava glow + fire atmosphere)
+            horizon_color: Vec3::new(1.2, 0.4, 0.08),
 
-            // Intense lava glow from below
-            lava_glow_color: Vec3::new(1.8, 0.55, 0.15),
-            lava_glow_strength: 3.5,
+            // Intense lava glow from below - key for the "broken atmosphere" look
+            lava_glow_color: Vec3::new(3.0, 0.8, 0.15),
+            lava_glow_strength: 4.0,
 
             // Low sun for dramatic rim lighting on clouds
-            sun_dir: Vec3::new(0.1, 0.05, -1.0).normalize(),
-            sun_intensity: 1.0,
+            sun_dir: Vec3::new(0.1, 0.08, -1.0).normalize(),
+            sun_intensity: 1.5,
 
             lightning_intensity: 0.0,
             lightning_pos: (0.5, 0.5),

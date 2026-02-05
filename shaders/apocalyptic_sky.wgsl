@@ -57,12 +57,14 @@ struct VertexOutput {
     @location(0) uv: vec2<f32>,
 }
 
-// Fullscreen triangle vertex shader
+// Fullscreen triangle vertex shader - single oversized triangle covers entire viewport
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     var out: VertexOutput;
-    let x = f32(i32(vertex_index) / 2) * 4.0 - 1.0;
-    let y = f32(i32(vertex_index) % 2) * 4.0 - 1.0;
+    // Standard fullscreen triangle: vertices at (-1,-1), (3,-1), (-1,3)
+    // This single triangle covers the entire [-1,1] NDC range
+    let x = f32(i32(vertex_index & 1u) * 4) - 1.0;
+    let y = f32(i32((vertex_index >> 1u) & 1u) * 4) - 1.0;
     out.position = vec4<f32>(x, y, 0.0, 1.0);
     out.uv = vec2<f32>((x + 1.0) * 0.5, (1.0 - y) * 0.5);
     return out;
@@ -185,18 +187,21 @@ fn storm_cloud_layer(p: vec3<f32>, time: f32) -> f32 {
 // ============================================================================
 
 fn nebula_color(dir: vec3<f32>, time: f32) -> vec3<f32> {
-    // Create swirling nebula patterns
+    // Create swirling nebula patterns - matching fiery broken atmosphere reference
     let nebula_pos = dir * 3.0 + vec3<f32>(time * 0.01, time * 0.005, 0.0);
 
     let n1 = fbm3d(nebula_pos, 4);
     let n2 = fbm3d(nebula_pos * 1.5 + 5.0, 3);
+    let n3 = fbm3d(nebula_pos * 0.8 - 3.0, 3);
 
-    // Nebula colors: deep red, purple, orange
-    let red = vec3<f32>(0.8, 0.15, 0.05) * n1 * 2.0;
-    let purple = vec3<f32>(0.4, 0.1, 0.5) * n2 * 1.5;
-    let orange = vec3<f32>(1.0, 0.4, 0.1) * pow(n1 * n2, 2.0) * 3.0;
+    // Fiery nebula: deep crimson, dark orange, ember sparks
+    let crimson = vec3<f32>(1.2, 0.12, 0.04) * n1 * 2.5;
+    let dark_orange = vec3<f32>(0.8, 0.25, 0.05) * n2 * 2.0;
+    let ember = vec3<f32>(1.5, 0.6, 0.1) * pow(n1 * n2, 2.0) * 4.0;
+    // Subtle dark purple for depth
+    let deep_void = vec3<f32>(0.15, 0.03, 0.12) * n3 * 1.0;
 
-    return red + purple + orange;
+    return crimson + dark_orange + ember + deep_void;
 }
 
 fn stars(dir: vec3<f32>) -> f32 {
@@ -221,39 +226,52 @@ fn molten_planet(dir: vec3<f32>, planet_dir: vec3<f32>, planet_radius: f32, time
     let dot_val = dot(dir, planet_dir);
     let angular_dist = acos(clamp(dot_val, -1.0, 1.0));
 
-    // Check if ray hits planet
-    if (angular_dist > planet_radius * 1.5) {
+    // Check if ray hits planet or its atmosphere
+    if (angular_dist > planet_radius * 2.5) {
         return vec3<f32>(0.0);
     }
 
-    // Planet surface position
     let t = angular_dist / planet_radius;
 
-    // Atmosphere glow around planet
-    if (t > 1.0) {
-        let atmo_t = (t - 1.0) / 0.5;
-        let atmo_glow = exp(-atmo_t * 3.0);
-        return vec3<f32>(1.5, 0.4, 0.1) * atmo_glow;
+    // Outer atmospheric haze - wide red/orange glow
+    if (t > 1.2) {
+        let atmo_t = (t - 1.2) / 1.3;
+        let atmo_glow = exp(-atmo_t * 2.0);
+        return vec3<f32>(1.0, 0.2, 0.05) * atmo_glow * 0.5;
     }
 
-    // Planet surface with lava cracks
+    // Inner atmosphere - bright corona ring
+    if (t > 1.0) {
+        let corona_t = (t - 1.0) / 0.2;
+        let corona = exp(-corona_t * 4.0);
+        // Bright white-orange corona like in the reference
+        return vec3<f32>(3.0, 1.2, 0.4) * corona;
+    }
+
+    // Planet surface with lava cracks - matching reference molten planet
     let surface_uv = vec2<f32>(
         atan2(dir.x - planet_dir.x, dir.z - planet_dir.z),
         t
     );
 
-    // Lava patterns on surface
-    let lava_noise = fbm2d(surface_uv * 10.0 + time * 0.1, 4);
-    let cracks = smoothstep(0.4, 0.6, lava_noise);
+    // Multiple lava crack scales for detail
+    let lava_large = fbm2d(surface_uv * 6.0 + time * 0.05, 4);
+    let lava_fine = fbm2d(surface_uv * 15.0 + time * 0.08, 3);
+    let cracks = smoothstep(0.35, 0.55, lava_large) + smoothstep(0.5, 0.7, lava_fine) * 0.4;
+    let crack_val = clamp(cracks, 0.0, 1.0);
 
-    // Dark crust with bright lava cracks
-    let crust = vec3<f32>(0.15, 0.08, 0.05);
-    let lava = vec3<f32>(3.0, 0.8, 0.15);  // HDR emissive
+    // Very dark crust with bright molten cracks
+    let crust = vec3<f32>(0.06, 0.02, 0.01);       // Near-black rock
+    let lava_hot = vec3<f32>(4.0, 1.0, 0.12);       // Bright HDR molten
+    let lava_warm = vec3<f32>(1.5, 0.3, 0.05);      // Dimmer lava
 
-    // Limb darkening
-    let limb = pow(1.0 - t, 0.5);
+    let surface = mix(crust, mix(lava_warm, lava_hot, crack_val), crack_val);
 
-    return mix(crust, lava, cracks) * limb;
+    // Limb darkening with bright rim
+    let limb = pow(1.0 - t, 0.4);
+    let rim = pow(t, 3.0) * 0.3; // Subtle bright rim at edge
+
+    return surface * limb + vec3<f32>(1.5, 0.4, 0.1) * rim;
 }
 
 // ============================================================================
@@ -337,8 +355,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // MOLTEN PLANET (visible in upper sky)
     // ========================================================================
 
-    let planet_dir = normalize(vec3<f32>(0.4, 0.5, -0.7));
-    let planet_radius = 0.12;
+    // Large molten planet dominating the sky (matching reference image)
+    let planet_dir = normalize(vec3<f32>(0.3, 0.35, -0.8));
+    let planet_radius = 0.22; // Much larger - key feature of the skybox
     let planet = molten_planet(ray_dir, planet_dir, planet_radius, time);
     if (length(planet) > 0.01) {
         sky_color = sky_color + planet;
@@ -387,12 +406,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                     let sun_dir = normalize(vec3<f32>(uniforms.sun_dir_x, uniforms.sun_dir_y, uniforms.sun_dir_z));
                     let sun_dot = dot(ray_dir, sun_dir) * 0.5 + 0.5;
 
-                    // Very dark cloud core (deep purple-black)
-                    let dark_cloud = vec3<f32>(0.04, 0.02, 0.08);
-                    // Bright orange-lit cloud edges (dramatically lit by lava)
-                    let lit_cloud = vec3<f32>(0.85, 0.45, 0.20);
-                    // Hot magenta/pink rim lighting
-                    let rim_color = vec3<f32>(1.2, 0.35, 0.45);
+                    // Dark cloud core (deep red-black, not purple)
+                    let dark_cloud = vec3<f32>(0.06, 0.01, 0.01);
+                    // Fiery orange-red lit cloud edges
+                    let lit_cloud = vec3<f32>(1.0, 0.35, 0.08);
+                    // Hot orange-yellow rim lighting (fire atmosphere)
+                    let rim_color = vec3<f32>(1.5, 0.5, 0.12);
 
                     // Mix based on density and light - more dramatic contrast
                     let light_penetration = pow(1.0 - total_density, 1.5) * sun_dot;
@@ -402,14 +421,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                     let edge_factor = pow(1.0 - total_density, 2.5);
                     sample_color = sample_color + rim_color * edge_factor * sun_dot * 2.0;
 
-                    // Strong lava glow from below - this is key for the reference look
-                    let bottom_glow = pow(1.0 - cloud_pos.y, 1.5) * uniforms.lava_glow_strength * 0.6;
-                    let lava_light = vec3<f32>(1.2, 0.4, 0.1) * bottom_glow * (1.0 - total_density * 0.7);
+                    // Strong lava glow from below - key for the fiery atmosphere look
+                    let bottom_glow = pow(1.0 - cloud_pos.y, 1.5) * uniforms.lava_glow_strength * 0.8;
+                    let lava_light = vec3<f32>(1.5, 0.4, 0.08) * bottom_glow * (1.0 - total_density * 0.5);
                     sample_color = sample_color + lava_light;
 
-                    // Add purple top lighting from zenith
-                    let top_glow = pow(cloud_pos.y, 2.0) * 0.3;
-                    sample_color = sample_color + vec3<f32>(0.3, 0.1, 0.4) * top_glow;
+                    // Dark red-black top (void of space)
+                    let top_glow = pow(cloud_pos.y, 2.0) * 0.15;
+                    sample_color = sample_color + vec3<f32>(0.15, 0.02, 0.02) * top_glow;
 
                     // Accumulate with enhanced alpha
                     let sample_alpha = total_density * 0.3;
@@ -446,24 +465,25 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // HORIZON FOG
     // ========================================================================
 
-    let fog_factor = pow(1.0 - abs(up), 6.0);
-    let fog_color = vec3<f32>(0.4, 0.2, 0.15);
-    sky_color = mix(sky_color, fog_color, fog_factor * 0.4);
+    // Fiery horizon haze - warm orange glow at the horizon line
+    let fog_factor = pow(1.0 - abs(up), 5.0);
+    let fog_color = vec3<f32>(0.6, 0.18, 0.05);
+    sky_color = mix(sky_color, fog_color, fog_factor * 0.5);
 
     // ========================================================================
     // POST PROCESSING
     // ========================================================================
 
-    // ACES-ish tonemapping for HDR content
+    // ACES tonemapping (HDR -> LDR) - keeps bright lava/emissive under control
     let a = 2.51;
     let b = 0.03;
     let c = 2.43;
     let d = 0.59;
-    let e = 0.14;
-    sky_color = clamp((sky_color * (a * sky_color + b)) / (sky_color * (c * sky_color + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
+    let e_val = 0.14;
+    sky_color = clamp((sky_color * (a * sky_color + b)) / (sky_color * (c * sky_color + d) + e_val), vec3<f32>(0.0), vec3<f32>(1.0));
 
-    // Gamma correction
-    sky_color = pow(sky_color, vec3<f32>(1.0 / 2.2));
+    // NOTE: No manual gamma correction - sRGB surface format handles it automatically.
+    // Manual pow(1/2.2) on sRGB surface = double gamma = washed out/pale colors.
 
     return vec4<f32>(sky_color, 1.0);
 }

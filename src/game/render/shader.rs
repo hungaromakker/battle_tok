@@ -284,9 +284,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Distance fog with height modulation
     let fog_amount = (1.0 - exp(-dist * uniforms.fog_density * height_factor)) * 0.85;
     
-    // Fog color varies with distance (apocalyptic atmosphere)
-    let fog_near = vec3<f32>(0.45, 0.30, 0.35);  // Warm smoke near
-    let fog_far = vec3<f32>(0.30, 0.18, 0.28);   // Dark purple-brown far
+    // Fog color varies with distance (fiery apocalyptic atmosphere)
+    let fog_near = vec3<f32>(0.35, 0.15, 0.08);  // Warm orange-brown smoke near
+    let fog_far = vec3<f32>(0.18, 0.06, 0.04);   // Dark red-brown far
     let fog_blend = clamp(dist / 80.0, 0.0, 1.0);
     let final_fog_color = mix(fog_near, fog_far, fog_blend);
     
@@ -299,9 +299,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // ACES Tonemapping
     color = aces_tonemap(color);
     
-    // Apocalyptic color grading (warm orange tint, purple shadows)
-    let lift = vec3<f32>(0.03, 0.015, 0.025);
-    let gain = vec3<f32>(1.08, 0.98, 0.92);
+    // Apocalyptic color grading (warm orange-red tint, dark shadows)
+    let lift = vec3<f32>(0.02, 0.005, 0.003);
+    let gain = vec3<f32>(1.10, 0.95, 0.88);
     color = color * gain + lift;
     
     // Vignette
@@ -309,10 +309,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     
     // Very subtle film grain
     color = film_grain(color, in.screen_uv, uniforms.time, 0.015);
-    
-    // Gamma correction
-    color = gamma_correct(color);
-    
+
+    // NOTE: No manual gamma correction here - sRGB surface format handles it automatically.
+    // Manual gamma_correct() on top of sRGB surface = double gamma = washed out colors.
+
     return vec4<f32>(color, in.color.a);
 }
 "#;
