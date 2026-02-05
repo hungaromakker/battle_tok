@@ -61,8 +61,8 @@ use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
 // Import physics from engine
 use battle_tok_engine::physics::ballistics::{BallisticsConfig, Projectile, ProjectileState};
 
-// Import stormy skybox
-use battle_tok_engine::render::{StormySky, StormySkyConfig};
+// Import apocalyptic skybox (replaces StormySky)
+use battle_tok_engine::render::{ApocalypticSky, ApocalypticSkyConfig};
 
 // Import Phase 2 visual upgrade systems
 use battle_tok_engine::render::{
@@ -105,6 +105,8 @@ use battle_tok_engine::game::{
     TerrainParams, get_terrain_params, set_terrain_params,
     terrain_height_at, generate_elevated_hex_terrain, generate_lava_plane,
     generate_bridge, BridgeConfig,
+    // Floating island system
+    FloatingIslandConfig, generate_floating_island, generate_lava_ocean,
     // Trees
     PlacedTree, generate_trees_on_terrain, generate_all_trees_mesh,
     // Destruction
@@ -191,8 +193,8 @@ struct BattleArenaApp {
     ui_uniform_buffer: Option<wgpu::Buffer>,
     ui_bind_group: Option<wgpu::BindGroup>,
 
-    // Dark and stormy skybox
-    stormy_sky: Option<StormySky>,
+    // Apocalyptic skybox with volumetric clouds
+    apocalyptic_sky: Option<ApocalypticSky>,
     lightning_timer: f32, // Timer for periodic lightning (3-8 sec intervals)
 
     // Phase 2 Visual Systems
@@ -299,7 +301,7 @@ impl BattleArenaApp {
             ui_pipeline: None,
             ui_uniform_buffer: None,
             ui_bind_group: None,
-            stormy_sky: None,
+            apocalyptic_sky: None,
             lightning_timer: 3.0, // First lightning in 3 seconds
             // Phase 2 Visual Systems
             point_lights: None,
@@ -949,8 +951,8 @@ impl BattleArenaApp {
         }
 
         // Initialize apocalyptic battle arena skybox (before device is moved)
-        // Using battle_arena preset: purple sky, orange horizon, lightning, dramatic atmosphere
-        let stormy_sky = StormySky::with_config(&device, surface_format, StormySkyConfig::battle_arena());
+        // Using battle_arena preset: volumetric clouds, purple sky, orange horizon, lightning
+        let apocalyptic_sky = ApocalypticSky::with_config(&device, surface_format, ApocalypticSkyConfig::battle_arena());
 
         // ============================================
         // Phase 2 Visual Systems Initialization
@@ -1031,7 +1033,7 @@ impl BattleArenaApp {
         self.ui_pipeline = Some(ui_pipeline);
         self.ui_uniform_buffer = Some(ui_uniform_buffer);
         self.ui_bind_group = Some(ui_bind_group);
-        self.stormy_sky = Some(stormy_sky);
+        self.apocalyptic_sky = Some(apocalyptic_sky);
 
         // Store Phase 2 visual systems
         self.point_lights = Some(point_lights);
@@ -1063,7 +1065,7 @@ impl BattleArenaApp {
         self.lightning_timer -= delta_time;
         if self.lightning_timer <= 0.0 {
             // Trigger lightning flash
-            if let Some(ref mut stormy_sky) = self.stormy_sky {
+            if let Some(ref mut apocalyptic_sky) = self.apocalyptic_sky {
                 stormy_sky.trigger_lightning();
             }
             // Reset timer to random value between 3.0 and 8.0 seconds
@@ -2773,7 +2775,7 @@ impl BattleArenaApp {
         // ============================================
         // Update stormy skybox uniforms
         // ============================================
-        if let Some(ref mut stormy_sky) = self.stormy_sky {
+        if let Some(ref mut apocalyptic_sky) = self.apocalyptic_sky {
             stormy_sky.update(
                 queue,
                 view_proj,
@@ -2810,7 +2812,7 @@ impl BattleArenaApp {
         // ============================================
         // PASS 0: Stormy skybox (background)
         // ============================================
-        if let Some(ref stormy_sky) = self.stormy_sky {
+        if let Some(ref stormy_sky) = self.apocalyptic_sky {
             stormy_sky.render_to_view(&mut encoder, &view);
         }
 

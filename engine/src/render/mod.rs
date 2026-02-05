@@ -32,6 +32,7 @@ pub mod sky_bake_dispatch;
 pub mod sky;
 pub mod sky_cubemap;
 pub mod stormy_sky;
+pub mod apocalyptic_sky;
 pub mod fog_post;
 pub mod castle_material;
 pub mod bridge_materials;
@@ -66,6 +67,7 @@ pub use entities::{
 pub use sky::{CloudTexture, CLOUD_TEXTURE_SIZE};
 pub use sky_cubemap::SkyCubemap;
 pub use stormy_sky::{StormySky, StormySkyConfig};
+pub use apocalyptic_sky::{ApocalypticSky, ApocalypticSkyConfig};
 
 // Re-export fog post-pass types (Phase 2: Depth-Based Fog Post-Pass)
 pub use fog_post::{FogPostPass, FogPostConfig};

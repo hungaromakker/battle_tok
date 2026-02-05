@@ -43,6 +43,7 @@ pub use terrain::{TerrainParams, WATER_LEVEL, get_terrain_params, set_terrain_pa
 pub use terrain::{terrain_height_at, terrain_color_at, terrain_normal_at, is_inside_hexagon};
 pub use terrain::{generate_elevated_hex_terrain, generate_water_plane, generate_lava_plane, generate_hex_platform};
 pub use terrain::{BridgeConfig, BridgeAABB, generate_bridge, generate_bridge_collision, is_point_on_bridge, get_bridge_height};
+pub use terrain::{FloatingIslandConfig, IslandLayer, generate_floating_island, generate_lava_ocean};
 pub use builder::{BuildCommand, BuilderMode, BuildToolbar, BridgeTool, SelectedFace};
 pub use builder::{SHAPE_NAMES, BLOCK_GRID_SIZE, BLOCK_SNAP_DISTANCE, PHYSICS_CHECK_INTERVAL};
 pub use builder::{screen_to_ray, determine_hit_face, calculate_adjacent_block_position, snap_to_grid, find_snap_position, ray_terrain_intersection};
