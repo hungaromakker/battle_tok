@@ -166,11 +166,15 @@ pub struct Meteor {
     pub position: Vec3,
     pub velocity: Vec3,
     pub size: f32,
-    /// HDR emissive color (fire orange-red)
+    /// HDR emissive color (fire orange-red, values 3.5+ for bloom)
     pub color: [f32; 4],
     pub lifetime: f32,
     pub trail_timer: f32,
     pub active: bool,
+    /// Rotation angles (euler) for tumbling visual effect
+    pub rotation: Vec3,
+    /// Angular velocity for tumbling
+    pub angular_velocity: Vec3,
 }
 
 impl Meteor {
@@ -200,9 +204,14 @@ impl Meteor {
         // Size varies
         let size = 0.5 + seed.fract() * 1.0;
 
-        // HDR emissive fire color
-        let brightness = 2.0 + seed.fract() * 1.5;
-        let color = [brightness, brightness * 0.35, brightness * 0.08, 1.0];
+        // HDR emissive fire color - bright enough for bloom (3.5+)
+        let brightness = 3.5 + seed.fract() * 2.0; // 3.5 to 5.5 for dramatic fireballs
+        let color = [brightness, brightness * 0.28, brightness * 0.06, 1.0];
+
+        // Tumbling rotation - random angular velocity for visual interest
+        let ang_x = ((seed * 3.14159).sin() * 43758.5453).fract() * 4.0 - 2.0;
+        let ang_y = ((seed * 2.71828).cos() * 43758.5453).fract() * 3.0 - 1.5;
+        let ang_z = ((seed * 1.61803).sin() * 43758.5453).fract() * 5.0 - 2.5;
 
         Self {
             position,
@@ -212,10 +221,12 @@ impl Meteor {
             lifetime: 10.0,
             trail_timer: 0.0,
             active: true,
+            rotation: Vec3::ZERO,
+            angular_velocity: Vec3::new(ang_x, ang_y, ang_z),
         }
     }
 
-    /// Update meteor physics
+    /// Update meteor physics and tumbling rotation
     pub fn update(&mut self, delta_time: f32) -> Option<Vec3> {
         if !self.active {
             return None;
@@ -230,6 +241,9 @@ impl Meteor {
         // Move
         self.position += self.velocity * delta_time;
 
+        // Tumbling rotation for visual interest
+        self.rotation += self.angular_velocity * delta_time;
+
         // Check ground impact
         let ground_height = terrain_height_at(self.position.x, self.position.z, 0.0);
         if self.position.y < ground_height + self.size * 0.5 {
@@ -243,6 +257,24 @@ impl Meteor {
         }
 
         None
+    }
+
+    /// Check if meteor should spawn a trail particle (every 50ms)
+    pub fn should_spawn_trail(&mut self) -> bool {
+        if self.trail_timer >= 0.05 {
+            self.trail_timer = 0.0;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get the trail particle spawn position (slightly behind meteor)
+    pub fn trail_spawn_position(&self) -> [f32; 3] {
+        // Offset slightly in opposite direction of velocity for trailing effect
+        let offset = self.velocity.normalize_or_zero() * -self.size * 0.5;
+        let pos = self.position + offset;
+        [pos.x, pos.y, pos.z]
     }
 
     pub fn is_alive(&self) -> bool {
@@ -294,7 +326,7 @@ impl MeteorSpawner {
     }
 }
 
-/// Spawn fire debris when meteor impacts
+/// Spawn fire debris when meteor impacts - dramatic HDR burst
 pub fn spawn_meteor_impact(position: Vec3, count: usize) -> Vec<DebrisParticle> {
     let mut particles = Vec::with_capacity(count);
 
@@ -314,13 +346,38 @@ pub fn spawn_meteor_impact(position: Vec3, count: usize) -> Vec<DebrisParticle> 
             (angle + 0.5).sin() * 0.2,
         );
 
-        // Fire debris (material 10 = fire)
+        // Fire debris (material 10 = fire) with bright HDR colors for bloom
         let mut particle = DebrisParticle::new(spawn_pos, velocity, 10);
-        particle.color = [2.5, 0.8, 0.15, 1.0]; // HDR orange fire
+        // HDR orange fire - values 3.5+ for dramatic bloom effect
+        let brightness = 3.5 + (i as f32 * 0.618).fract() * 1.5;
+        particle.color = [brightness, brightness * 0.28, brightness * 0.05, 1.0];
         particle.size = 0.08 + (i as f32 * 0.618).fract() * 0.12;
         particle.lifetime = 1.5 + (i as f32 * 0.414).fract() * 1.0;
         particles.push(particle);
     }
 
     particles
+}
+
+/// Create trail ember particle data for the particle system
+/// Returns (position, color, size) tuple for spawning via ParticleSystem
+pub fn meteor_trail_ember(meteor: &Meteor, seed: f32) -> ([f32; 3], [f32; 3], f32) {
+    // Position: slightly randomized around meteor trail position
+    let base_pos = meteor.trail_spawn_position();
+    let offset_x = ((seed * 12.9898).sin() * 43758.5453).fract() * 0.3 - 0.15;
+    let offset_z = ((seed * 78.233).sin() * 43758.5453).fract() * 0.3 - 0.15;
+    let position = [
+        base_pos[0] + offset_x,
+        base_pos[1],
+        base_pos[2] + offset_z,
+    ];
+
+    // HDR ember color - bright orange/yellow for trail (slightly less bright than meteor core)
+    let brightness = 2.5 + (seed * 0.618).fract() * 1.0;
+    let color = [brightness, brightness * 0.35, brightness * 0.08];
+
+    // Size: small ember particles
+    let size = 0.1 + (seed * 1.414).fract() * 0.15;
+
+    (position, color, size)
 }

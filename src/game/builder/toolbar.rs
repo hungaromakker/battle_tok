@@ -1,10 +1,88 @@
 //! Build Toolbar
 //!
 //! Minecraft-style hotbar for selecting building block shapes.
+//! Also includes block inventory for pickup/stash system.
 
 use glam::Vec3;
 use crate::render::BuildingBlockShape;
 use super::tools::{BridgeTool, SHAPE_NAMES, BLOCK_GRID_SIZE};
+
+/// A stashed block that can be placed later
+#[derive(Debug, Clone, Copy)]
+pub struct StashedBlock {
+    /// The shape of the stashed block
+    pub shape: BuildingBlockShape,
+    /// Material index (0-9)
+    pub material: u8,
+}
+
+/// Inventory for picked up blocks
+#[derive(Debug, Clone)]
+pub struct BlockInventory {
+    /// Stashed blocks ready to be placed
+    pub stashed_blocks: Vec<StashedBlock>,
+    /// Maximum capacity
+    pub max_capacity: usize,
+}
+
+impl Default for BlockInventory {
+    fn default() -> Self {
+        Self {
+            stashed_blocks: Vec::new(),
+            max_capacity: 10,
+        }
+    }
+}
+
+impl BlockInventory {
+    /// Create a new inventory with specified capacity
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            stashed_blocks: Vec::with_capacity(capacity),
+            max_capacity: capacity,
+        }
+    }
+    
+    /// Stash a block into the inventory
+    /// Returns true if successful, false if inventory is full
+    pub fn stash(&mut self, shape: BuildingBlockShape, material: u8) -> bool {
+        if self.stashed_blocks.len() >= self.max_capacity {
+            return false;
+        }
+        self.stashed_blocks.push(StashedBlock { shape, material });
+        true
+    }
+    
+    /// Take a block from the inventory (LIFO - takes most recently stashed)
+    pub fn take(&mut self) -> Option<StashedBlock> {
+        self.stashed_blocks.pop()
+    }
+    
+    /// Peek at the next block that would be taken without removing it
+    pub fn peek(&self) -> Option<&StashedBlock> {
+        self.stashed_blocks.last()
+    }
+    
+    /// Get current count of stashed blocks
+    pub fn count(&self) -> usize {
+        self.stashed_blocks.len()
+    }
+    
+    /// Check if inventory is empty
+    pub fn is_empty(&self) -> bool {
+        self.stashed_blocks.is_empty()
+    }
+    
+    /// Check if inventory is full
+    pub fn is_full(&self) -> bool {
+        self.stashed_blocks.len() >= self.max_capacity
+    }
+    
+    /// Clear all stashed blocks
+    pub fn clear(&mut self) {
+        self.stashed_blocks.clear();
+    }
+}
 
 /// Build toolbar for selecting building block shapes
 pub struct BuildToolbar {
@@ -26,6 +104,12 @@ pub struct BuildToolbar {
     pub bridge_tool: BridgeTool,
     /// Time since last physics support check
     pub physics_check_timer: f32,
+    /// Inventory for picked up blocks
+    pub inventory: BlockInventory,
+    /// Time the mouse has been held down (for pickup detection)
+    pub mouse_hold_time: f32,
+    /// Whether we're currently trying to pick up a block
+    pub pickup_in_progress: bool,
 }
 
 impl Default for BuildToolbar {
@@ -47,6 +131,9 @@ impl Default for BuildToolbar {
             show_preview: true,
             bridge_tool: BridgeTool::default(),
             physics_check_timer: 0.0,
+            inventory: BlockInventory::default(),
+            mouse_hold_time: 0.0,
+            pickup_in_progress: false,
         }
     }
 }

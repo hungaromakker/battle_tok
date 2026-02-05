@@ -1,35 +1,46 @@
 {
     "story_id": "US-P2-009",
     "title": "Enhance Depth-Based Fog Post-Pass",
-    "status": "pending",
-    "focus": "",
+    "status": "completed",
+    "focus": "All criteria met - depth-based fog post-pass implemented",
     "criteria": [
-        {"text": "Distant objects fade into fog", "done": false, "notes": ""},
-        {"text": "Ground level foggier than elevated areas", "done": false, "notes": ""},
-        {"text": "Fog color matches stormy atmosphere", "done": false, "notes": ""},
-        {"text": "Sky is not fogged (far plane skipped)", "done": false, "notes": ""},
-        {"text": "Depth buffer reads correctly", "done": false, "notes": ""},
-        {"text": "cargo check passes", "done": false, "notes": ""}
+        {"text": "Distant objects fade into fog", "done": true, "notes": "Distance fog with exponential falloff: 1.0 - exp(-dist * density) in fog_post.wgsl"},
+        {"text": "Ground level foggier than elevated areas", "done": true, "notes": "Height fog using height_fog_start and height_fog_density params, thicker below specified Y level"},
+        {"text": "Fog color matches stormy atmosphere", "done": true, "notes": "Default purple-brown fog color (0.55, 0.45, 0.70), configurable via FogPostConfig"},
+        {"text": "Sky is not fogged (far plane skipped)", "done": true, "notes": "Depth check: if (depth >= 0.9999) returns scene_color unchanged"},
+        {"text": "Depth buffer reads correctly", "done": true, "notes": "World position reconstruction from depth using inv_view_proj matrix, fixed struct alignment padding"},
+        {"text": "cargo check passes", "done": true, "notes": "Build successful with no errors (pre-existing warnings in other files)"}
     ],
     "checklist": [
-        {"item": "Read spec.md and understand depth reconstruction", "done": false},
-        {"item": "Add depth texture bindings to fog shader", "done": false},
-        {"item": "Implement reconstruct_world_pos function", "done": false},
-        {"item": "Calculate distance fog with exponential falloff", "done": false},
-        {"item": "Add height-based fog variation", "done": false},
-        {"item": "Skip fogging for sky (depth check)", "done": false},
-        {"item": "Create/update fog_post.rs Rust module", "done": false},
-        {"item": "Add export in mod.rs", "done": false},
-        {"item": "Run cargo check", "done": false}
+        {"item": "Read spec.md and understand depth reconstruction", "done": true},
+        {"item": "Add depth texture bindings to fog shader", "done": true},
+        {"item": "Implement reconstruct_world_pos function", "done": true},
+        {"item": "Calculate distance fog with exponential falloff", "done": true},
+        {"item": "Add height-based fog variation", "done": true},
+        {"item": "Skip fogging for sky (depth check)", "done": true},
+        {"item": "Create/update fog_post.rs Rust module", "done": true},
+        {"item": "Add export in mod.rs", "done": true},
+        {"item": "Run cargo check", "done": true}
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
+    "worker_notes": "Completed depth-based fog post-pass implementation. The shader fog_post.wgsl already had the core fog logic, but needed struct alignment fix (_pad0 added). Created new fog_post.rs Rust module with FogPostPass struct and FogPostConfig for easy integration. Added exports in mod.rs. Build passes.",
+    "notes_history": [
+        {"iteration": 1, "note": "Completed all implementation - shader had correct logic, added missing padding, created Rust module", "timestamp": "2026-02-05T15:30:00Z"}
+    ],
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": [],
     "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
+    "files_modified": [
+        "shaders/fog_post.wgsl",
+        "engine/src/render/fog_post.rs",
+        "engine/src/render/mod.rs"
+    ],
+    "iteration_history": [
+        {"iteration": 1, "action": "Implemented fog post-pass", "notes": "Fixed shader struct alignment, created FogPostPass Rust module, added exports", "completed_at": "2026-02-05T15:30:00Z"}
+    ],
+    "learnings": [
+        "WGSL mat4x4 requires 16-byte alignment - need padding after preceding fields",
+        "FogPostPass follows same pattern as StormySky - fullscreen triangle, uniform buffer, bind group layout"
+    ],
     "created_at": "2026-02-05T15:15:00"
 }

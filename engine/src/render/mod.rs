@@ -32,6 +32,7 @@ pub mod sky_bake_dispatch;
 pub mod sky;
 pub mod sky_cubemap;
 pub mod stormy_sky;
+pub mod fog_post;
 pub mod castle_material;
 pub mod bridge_materials;
 pub mod flag_material;
@@ -64,6 +65,9 @@ pub use entities::{
 pub use sky::{CloudTexture, CLOUD_TEXTURE_SIZE};
 pub use sky_cubemap::SkyCubemap;
 pub use stormy_sky::{StormySky, StormySkyConfig};
+
+// Re-export fog post-pass types (Phase 2: Depth-Based Fog Post-Pass)
+pub use fog_post::{FogPostPass, FogPostConfig};
 
 // Re-export castle material types (Phase 2: Castle Stone Shader)
 pub use castle_material::{CastleMaterial, CastleMaterialConfig};

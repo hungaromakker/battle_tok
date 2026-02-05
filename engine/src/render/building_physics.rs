@@ -456,6 +456,10 @@ impl BuildingPhysics {
 
         // Collect blocks that need physics update
         let block_ids: Vec<u32> = self.states.keys().copied().collect();
+        
+        // Collect position updates to apply after state processing
+        let mut position_updates: Vec<(u32, Vec3)> = Vec::new();
+        let mut blocks_for_collision_check: Vec<(u32, BuildingBlockShape)> = Vec::new();
 
         for block_id in block_ids {
             // Get block data we need (copy to avoid borrow issues)
@@ -466,166 +470,179 @@ impl BuildingPhysics {
                 (block.position, block.aabb(), block.shape)
             };
 
-            // Get current state
-            let state = match self.states.get_mut(&block_id) {
-                Some(s) => s,
-                None => continue,
-            };
-            
-            // Get material-specific friction
-            let (friction_static, friction_dynamic) = get_friction_coefficients(state.material_index);
-
-            // === FORCE INTEGRATION ===
-            // Apply accumulated forces: F = ma → a = F/m → v += a*dt
-            if state.mass > 0.0 && state.accumulated_force.length_squared() > 0.001 {
-                let acceleration = state.accumulated_force / state.mass;
-                state.velocity += acceleration * dt;
-            }
-            
-            // === FRICTION CALCULATION ===
-            // When grounded, apply friction opposing horizontal motion
-            if state.grounded {
-                let horizontal_velocity = Vec3::new(state.velocity.x, 0.0, state.velocity.z);
-                let speed = horizontal_velocity.length();
+            // Process state updates in a scope to release the borrow
+            let (new_position, should_check_collisions) = {
+                // Get current state
+                let state = match self.states.get_mut(&block_id) {
+                    Some(s) => s,
+                    None => continue,
+                };
                 
-                if speed > 0.001 {
-                    // Normal force = mass * gravity (on flat ground)
-                    let normal_force = state.mass * self.config.gravity;
+                // Get material-specific friction
+                let (friction_static, friction_dynamic) = get_friction_coefficients(state.material_index);
+
+                // === FORCE INTEGRATION ===
+                // Apply accumulated forces: F = ma → a = F/m → v += a*dt
+                if state.mass > 0.0 && state.accumulated_force.length_squared() > 0.001 {
+                    let acceleration = state.accumulated_force / state.mass;
+                    state.velocity += acceleration * dt;
+                }
+                
+                // === FRICTION CALCULATION ===
+                // When grounded, apply friction opposing horizontal motion
+                if state.grounded {
+                    let horizontal_velocity = Vec3::new(state.velocity.x, 0.0, state.velocity.z);
+                    let speed = horizontal_velocity.length();
                     
-                    // Use static friction if nearly stationary, dynamic otherwise
-                    let friction_coeff = if speed < 0.1 {
-                        friction_static
-                    } else {
-                        friction_dynamic
-                    };
-                    
-                    // Friction force magnitude = μ * N
-                    let friction_magnitude = friction_coeff * normal_force;
-                    
-                    // Friction acceleration = F / m = μ * g
-                    let friction_accel = friction_magnitude / state.mass;
-                    
-                    // Friction opposes motion direction
-                    let friction_dir = -horizontal_velocity.normalize();
-                    
-                    // Calculate velocity reduction (capped to not reverse direction)
-                    let velocity_reduction = friction_accel * dt;
-                    
-                    if velocity_reduction >= speed {
-                        // Friction stops the block completely
-                        state.velocity.x = 0.0;
-                        state.velocity.z = 0.0;
-                    } else {
-                        // Apply friction deceleration
-                        state.velocity += friction_dir * velocity_reduction;
+                    if speed > 0.001 {
+                        // Normal force = mass * gravity (on flat ground)
+                        let normal_force = state.mass * self.config.gravity;
+                        
+                        // Use static friction if nearly stationary, dynamic otherwise
+                        let friction_coeff = if speed < 0.1 {
+                            friction_static
+                        } else {
+                            friction_dynamic
+                        };
+                        
+                        // Friction force magnitude = μ * N
+                        let friction_magnitude = friction_coeff * normal_force;
+                        
+                        // Friction acceleration = F / m = μ * g
+                        let friction_accel = friction_magnitude / state.mass;
+                        
+                        // Friction opposes motion direction
+                        let friction_dir = -horizontal_velocity.normalize();
+                        
+                        // Calculate velocity reduction (capped to not reverse direction)
+                        let velocity_reduction = friction_accel * dt;
+                        
+                        if velocity_reduction >= speed {
+                            // Friction stops the block completely
+                            state.velocity.x = 0.0;
+                            state.velocity.z = 0.0;
+                        } else {
+                            // Apply friction deceleration
+                            state.velocity += friction_dir * velocity_reduction;
+                        }
                     }
                 }
-            }
-            
-            // === AIR DRAG ===
-            // Apply air resistance (quadratic drag: F = -kv²)
-            if !state.grounded {
-                let speed_sq = state.velocity.length_squared();
-                if speed_sq > 0.01 {
-                    let drag_force = self.config.air_drag * speed_sq;
-                    let drag_accel = drag_force / state.mass.max(1.0);
-                    let drag_dir = -state.velocity.normalize();
-                    state.velocity += drag_dir * drag_accel * dt;
-                }
-            }
-
-            // Skip further processing if grounded and stable (after friction applied)
-            if state.grounded && state.velocity.length() < self.config.velocity_threshold {
-                state.velocity = Vec3::ZERO;
-                state.reset_frame();
-                continue;
-            }
-
-            // Check support - block starts falling if not supported
-            if !state.grounded && !state.structurally_supported {
-                // Apply gravity
-                state.velocity.y -= self.config.gravity * dt;
-
-                // Add slight angular velocity for tumbling effect
-                if state.fall_time < 0.1 {
-                    state.angular_velocity = Vec3::new(
-                        (block_id as f32 * 0.1).sin() * 2.0,
-                        (block_id as f32 * 0.2).cos() * 1.0,
-                        (block_id as f32 * 0.15).sin() * 2.0,
-                    );
+                
+                // === AIR DRAG ===
+                // Apply air resistance (quadratic drag: F = -kv²)
+                if !state.grounded {
+                    let speed_sq = state.velocity.length_squared();
+                    if speed_sq > 0.01 {
+                        let drag_force = self.config.air_drag * speed_sq;
+                        let drag_accel = drag_force / state.mass.max(1.0);
+                        let drag_dir = -state.velocity.normalize();
+                        state.velocity += drag_dir * drag_accel * dt;
+                    }
                 }
 
-                state.fall_rotation += state.angular_velocity * dt;
-                state.fall_time += dt;
-
-                // Check for disintegration
-                if state.fall_time > self.config.disintegration_time {
-                    state.should_disintegrate = true;
-                    self.blocks_to_remove.push(block_id);
-                }
-            }
-            
-            // Reset frame-specific values at end
-            state.reset_frame();
-
-            // Apply velocity
-            let new_position = position + state.velocity * dt;
-
-            // Ground collision
-            let block_bottom = match shape {
-                BuildingBlockShape::Cube { half_extents } => new_position.y - half_extents.y,
-                BuildingBlockShape::Sphere { radius } => new_position.y - radius,
-                _ => aabb.min.y + (new_position.y - position.y),
-            };
-
-            if block_bottom <= self.config.ground_level {
-                // Calculate impact force: F = m * Δv / Δt
-                // For collision, Δt is very small (~1 frame), so we estimate
-                let impact_velocity = state.velocity.y.abs();
-                let impact_force = state.mass * impact_velocity / dt.max(0.001);
-                state.record_impact(impact_force);
-                
-                // Mark as loose if it was falling (detached from structure)
-                if !state.structurally_supported && state.fall_time > 0.1 {
-                    state.is_loose = true;
-                }
-                
-                // Hit ground
-                state.grounded = true;
-                state.structurally_supported = true;
-                
-                // Use material-specific restitution for bounce
-                let (_, friction_dynamic) = get_friction_coefficients(state.material_index);
-                state.velocity.y = -state.velocity.y * self.config.bounce_damping;
-                
-                // Apply friction to horizontal velocity (use material friction)
-                state.velocity.x *= 1.0 - friction_dynamic;
-                state.velocity.z *= 1.0 - friction_dynamic;
-                state.angular_velocity *= 0.5;
-
-                // Snap to ground if velocity is low
-                if state.velocity.length() < self.config.velocity_threshold {
+                // Skip further processing if grounded and stable (after friction applied)
+                if state.grounded && state.velocity.length() < self.config.velocity_threshold {
                     state.velocity = Vec3::ZERO;
-                    state.angular_velocity = Vec3::ZERO;
-                    state.fall_time = 0.0;
+                    state.reset_frame();
+                    continue;
                 }
 
-                // Adjust position to be on ground
-                let ground_offset = self.config.ground_level - block_bottom;
-                if let Some(block_mut) = manager.get_block_mut(block_id) {
-                    block_mut.position.y += ground_offset;
-                }
-            } else {
-                // Update position
-                if let Some(block_mut) = manager.get_block_mut(block_id) {
-                    block_mut.position = new_position;
-                }
-            }
+                // Check support - block starts falling if not supported
+                if !state.grounded && !state.structurally_supported {
+                    // Apply gravity
+                    state.velocity.y -= self.config.gravity * dt;
 
-            // Collision with other blocks
-            self.check_block_collisions(block_id, manager);
+                    // Add slight angular velocity for tumbling effect
+                    if state.fall_time < 0.1 {
+                        state.angular_velocity = Vec3::new(
+                            (block_id as f32 * 0.1).sin() * 2.0,
+                            (block_id as f32 * 0.2).cos() * 1.0,
+                            (block_id as f32 * 0.15).sin() * 2.0,
+                        );
+                    }
+
+                    state.fall_rotation += state.angular_velocity * dt;
+                    state.fall_time += dt;
+
+                    // Check for disintegration
+                    if state.fall_time > self.config.disintegration_time {
+                        state.should_disintegrate = true;
+                        self.blocks_to_remove.push(block_id);
+                    }
+                }
+                
+                // Apply velocity to get new position
+                let new_position = position + state.velocity * dt;
+
+                // Ground collision
+                let block_bottom = match shape {
+                    BuildingBlockShape::Cube { half_extents } => new_position.y - half_extents.y,
+                    BuildingBlockShape::Sphere { radius } => new_position.y - radius,
+                    _ => aabb.min.y + (new_position.y - position.y),
+                };
+
+                let final_position = if block_bottom <= self.config.ground_level {
+                    // Calculate impact force: F = m * Δv / Δt
+                    let impact_velocity = state.velocity.y.abs();
+                    let impact_force = state.mass * impact_velocity / dt.max(0.001);
+                    state.record_impact(impact_force);
+                    
+                    // Mark as loose if it was falling (detached from structure)
+                    if !state.structurally_supported && state.fall_time > 0.1 {
+                        state.is_loose = true;
+                    }
+                    
+                    // Hit ground
+                    state.grounded = true;
+                    state.structurally_supported = true;
+                    
+                    // Bounce
+                    state.velocity.y = -state.velocity.y * self.config.bounce_damping;
+                    
+                    // Apply friction to horizontal velocity
+                    state.velocity.x *= 1.0 - friction_dynamic;
+                    state.velocity.z *= 1.0 - friction_dynamic;
+                    state.angular_velocity *= 0.5;
+
+                    // Snap to ground if velocity is low
+                    if state.velocity.length() < self.config.velocity_threshold {
+                        state.velocity = Vec3::ZERO;
+                        state.angular_velocity = Vec3::ZERO;
+                        state.fall_time = 0.0;
+                    }
+
+                    // Adjust position to be on ground
+                    let ground_offset = self.config.ground_level - block_bottom;
+                    Vec3::new(new_position.x, new_position.y + ground_offset, new_position.z)
+                } else {
+                    new_position
+                };
+                
+                // Reset frame-specific values
+                state.reset_frame();
+                
+                (final_position, true)
+            };
             
-            // Update shape-specific rolling/sliding behavior
+            // Queue position update
+            position_updates.push((block_id, new_position));
+            
+            // Queue collision check
+            if should_check_collisions {
+                blocks_for_collision_check.push((block_id, shape));
+            }
+        }
+        
+        // Apply position updates to manager
+        for (block_id, new_pos) in position_updates {
+            if let Some(block_mut) = manager.get_block_mut(block_id) {
+                block_mut.position = new_pos;
+            }
+        }
+        
+        // Perform collision checks and rolling updates
+        for (block_id, shape) in blocks_for_collision_check {
+            self.check_block_collisions(block_id, manager);
             self.update_rolling_behavior(block_id, &shape, dt);
         }
 
