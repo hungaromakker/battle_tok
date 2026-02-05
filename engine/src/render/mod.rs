@@ -65,6 +65,12 @@ pub use stormy_sky::{StormySky, StormySkyConfig};
 // Re-export castle material types (Phase 2: Castle Stone Shader)
 pub use castle_material::{CastleMaterial, CastleMaterialConfig};
 
+// Re-export point light types (Phase 2: Torch Lighting System)
+pub use point_lights::{
+    PointLight, PointLightManager,
+    MAX_POINT_LIGHTS, POINT_LIGHT_BUFFER_SIZE, LIGHT_COUNT_BUFFER_SIZE,
+};
+
 // Re-export SDF baker types
 pub use sdf_baker::{BrickCache, SDF_RESOLUTION, MAX_BAKED_SDFS};
 
