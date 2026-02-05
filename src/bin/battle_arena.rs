@@ -614,7 +614,7 @@ impl BattleArenaApp {
         // ============================================
         // CREATE BATTLE SCENE (all game state)
         // ============================================
-        let scene = BattleScene::new(ArenaConfig::default(), VisualConfig::default());
+        let mut scene = BattleScene::new(ArenaConfig::default(), VisualConfig::default());
 
         // ============================================
         // Generate static mesh from scene's terrain config
@@ -685,6 +685,9 @@ impl BattleArenaApp {
         let bridge_config = BridgeConfig::default();
         let bridge_mesh = generate_bridge(bridge_start, bridge_end, &bridge_config);
         static_mesh.merge(&bridge_mesh);
+
+        // Register bridge with scene for player ground collision
+        scene.set_bridge(bridge_start, bridge_end);
 
         println!("[Floating Islands] Bridge chain connects the two floating battle platforms");
 
@@ -812,7 +815,7 @@ impl BattleArenaApp {
         let mut point_lights = PointLightManager::new(&device);
         let torch_color = scene.visuals.torch_color.to_array();
         let torch_radius = scene.visuals.torch_radius;
-        let torch_y = 18.0;
+        let torch_y = 3.0; // Above ground level (islands at Y=0)
         point_lights.add_torch([10.0, torch_y, 55.0], torch_color, torch_radius);
         point_lights.add_torch([-10.0, torch_y, 55.0], torch_color, torch_radius);
         point_lights.add_torch([10.0, torch_y, 35.0], torch_color, torch_radius);
@@ -821,7 +824,7 @@ impl BattleArenaApp {
         point_lights.add_torch([-10.0, torch_y, -55.0], torch_color, torch_radius);
         point_lights.add_torch([10.0, torch_y, -35.0], torch_color, torch_radius);
         point_lights.add_torch([-10.0, torch_y, -35.0], torch_color, torch_radius);
-        let bridge_torch_y = 16.0;
+        let bridge_torch_y = 2.0; // Bridge at ground level
         point_lights.add_torch([3.0, bridge_torch_y, 15.0], torch_color, 8.0);
         point_lights.add_torch([-3.0, bridge_torch_y, 15.0], torch_color, 8.0);
         point_lights.add_torch([3.0, bridge_torch_y, -15.0], torch_color, 8.0);
@@ -1165,6 +1168,9 @@ impl BattleArenaApp {
         let bridge_cfg = BridgeConfig::default();
         let bridge_mesh = generate_bridge(bridge_start, bridge_end, &bridge_cfg);
         static_mesh.merge(&bridge_mesh);
+
+        // Update bridge for player ground collision
+        scene.set_bridge(bridge_start, bridge_end);
 
         gpu.static_vertex_buffer =
             gpu.device

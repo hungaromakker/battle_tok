@@ -11,6 +11,7 @@ use glam::Vec3;
 // ============================================================================
 
 /// Bridge configuration parameters
+#[derive(Clone, Debug)]
 pub struct BridgeConfig {
     /// Width of the bridge walkway (meters)
     pub width: f32,

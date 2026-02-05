@@ -48,27 +48,32 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let normal = normalize(in.normal);
     let sun_dir = normalize(uniforms.sun_dir);
 
-    // Basic sun lighting
+    // Sun lighting - warm with good intensity
     let sun_diffuse = max(dot(normal, sun_dir), 0.0);
-    let sun_color = vec3<f32>(1.2, 0.9, 0.8); // Warm sun
+    let sun_color = vec3<f32>(1.4, 0.85, 0.55); // Warm orange-gold sun
 
-    // Ambient lighting (apocalyptic purple tint)
-    let ambient_color = vec3<f32>(0.35, 0.25, 0.45);
+    // Ambient lighting - warm dark tones (not purple)
+    let ambient_color = vec3<f32>(0.25, 0.15, 0.12);
 
-    // Lava glow from below (orange)
+    // Lava underglow - warm orange from below
     let up_dot = max(dot(normal, vec3<f32>(0.0, -1.0, 0.0)), 0.0);
-    let lava_glow = vec3<f32>(0.45, 0.25, 0.15) * up_dot;
+    let lava_glow = vec3<f32>(0.35, 0.12, 0.05) * up_dot;
 
-    // Rim lighting (fiery orange)
+    // Fill light from sky (subtle blue-gray to prevent pure black shadows)
+    let sky_dot = max(dot(normal, vec3<f32>(0.0, 1.0, 0.0)), 0.0);
+    let sky_fill = vec3<f32>(0.08, 0.06, 0.10) * sky_dot;
+
+    // Rim lighting (fiery orange, subtle)
     let view_dir = normalize(uniforms.camera_pos - in.world_pos);
     let rim = 1.0 - max(dot(view_dir, normal), 0.0);
-    let rim_power = pow(rim, 3.0);
-    let rim_color = vec3<f32>(0.9, 0.5, 0.25) * rim_power * 0.5;
+    let rim_power = pow(rim, 4.0);
+    let rim_color = vec3<f32>(0.6, 0.3, 0.12) * rim_power * 0.4;
 
     // Combine lighting
     var lighting = ambient_color * uniforms.ambient
-                 + sun_color * sun_diffuse * 0.7
+                 + sun_color * sun_diffuse * 0.8
                  + lava_glow
+                 + sky_fill
                  + rim_color;
 
     // Add projectile glow (for nearby projectiles)
@@ -84,10 +89,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Apply lighting to base color
     var final_color = in.color.rgb * lighting;
 
-    // Distance fog
+    // Distance fog - warm dark fog
     let camera_dist = distance(in.world_pos, uniforms.camera_pos);
     let fog_factor = 1.0 - exp(-camera_dist * uniforms.fog_density);
-    final_color = mix(final_color, uniforms.fog_color, clamp(fog_factor, 0.0, 0.9));
+    final_color = mix(final_color, uniforms.fog_color, clamp(fog_factor, 0.0, 0.85));
 
     return vec4<f32>(final_color, in.color.a);
 }

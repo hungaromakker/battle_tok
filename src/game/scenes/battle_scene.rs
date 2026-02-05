@@ -8,7 +8,7 @@
 
 use glam::Vec3;
 
-use crate::game::arena_player::{MovementKeys, Player};
+use crate::game::arena_player::{ArenaGround, BridgeDef, IslandDef, MovementKeys, Player};
 use crate::game::config::{ArenaConfig, VisualConfig};
 use crate::game::destruction::get_material_color;
 use crate::game::input::{AimingState, MovementState};
@@ -54,6 +54,13 @@ pub struct BattleScene {
     // -- Economy + population --
     pub game_state: GameState,
 
+    // -- Ground context for player collision --
+    pub arena_ground: ArenaGround,
+
+    // -- Bridge endpoints (stored for ground collision) --
+    pub bridge_start: Vec3,
+    pub bridge_end: Vec3,
+
     // -- Flags --
     pub terrain_needs_rebuild: bool,
 }
@@ -78,9 +85,9 @@ impl BattleScene {
             100.0,
         );
 
-        // Player starts on the attacker island
+        // Player starts on the attacker island (at ground level + small offset)
         let start_pos = config.island_attacker.position
-            + Vec3::new(0.0, config.island_attacker.surface_height + 2.0, 0.0);
+            + Vec3::new(0.0, config.island_attacker.surface_height + 1.0, 0.0);
         let mut player = Player::default();
         player.position = start_pos;
 
@@ -88,6 +95,25 @@ impl BattleScene {
         let arena_center =
             (config.island_attacker.position + config.island_defender.position) * 0.5;
         let meteors = MeteorSystem::new(arena_center, config.meteor_spawn_radius);
+
+        // Build arena ground context for player collision
+        let arena_ground = ArenaGround {
+            islands: vec![
+                IslandDef {
+                    center: config.island_attacker.position,
+                    radius: config.island_attacker.radius,
+                    surface_y: config.island_attacker.surface_height,
+                },
+                IslandDef {
+                    center: config.island_defender.position,
+                    radius: config.island_defender.radius,
+                    surface_y: config.island_defender.surface_height,
+                },
+            ],
+            bridge: None, // Set after bridge mesh is generated in battle_arena.rs
+            kill_y: config.lava_y - 2.0, // Die slightly below lava surface
+            respawn_pos: start_pos,
+        };
 
         Self {
             // Config
@@ -115,6 +141,11 @@ impl BattleScene {
             // Economy
             game_state: GameState::new(),
 
+            // Ground context
+            arena_ground,
+            bridge_start: Vec3::ZERO,
+            bridge_end: Vec3::ZERO,
+
             // Flags
             terrain_needs_rebuild: true,
         }
@@ -134,7 +165,7 @@ impl BattleScene {
     /// 9. Building structural physics
     /// 10. Economy / day-cycle tick
     pub fn update(&mut self, delta: f32, movement: &MovementState, aiming: &AimingState) {
-        // 1. Player movement
+        // 1. Player movement (island-aware ground collision)
         let keys = MovementKeys {
             forward: movement.forward,
             backward: movement.backward,
@@ -144,7 +175,7 @@ impl BattleScene {
             down: movement.down,
             sprint: movement.sprint,
         };
-        self.player.update(&keys, self.camera_yaw, delta);
+        self.player.update(&keys, self.camera_yaw, delta, &self.arena_ground);
 
         // 2. Cannon aiming
         self.cannon.aim(aiming, delta);
@@ -197,6 +228,18 @@ impl BattleScene {
 
         // 10. Economy / day cycle
         self.game_state.update(delta);
+    }
+
+    /// Set the bridge endpoints for ground collision after mesh generation.
+    pub fn set_bridge(&mut self, start: Vec3, end: Vec3) {
+        use crate::game::terrain::BridgeConfig as TerrainBridgeConfig;
+        self.bridge_start = start;
+        self.bridge_end = end;
+        self.arena_ground.bridge = Some(BridgeDef {
+            start,
+            end,
+            config: TerrainBridgeConfig::default(),
+        });
     }
 
     /// Fire the cannon, spawning a projectile from the barrel.

@@ -10,7 +10,7 @@
 use glam::Vec3;
 
 use super::generation::{
-    is_inside_hexagon, terrain_color_at, terrain_height_at, terrain_normal_at,
+    is_inside_hexagon, terrain_color_at, terrain_height_at_island, terrain_normal_at_island,
 };
 use crate::game::types::{Mesh, Vertex};
 
@@ -59,14 +59,14 @@ impl Default for FloatingIslandConfig {
     }
 }
 
-/// Colors for each layer (apocalyptic palette) - Enhanced for dramatic look
+/// Colors for each layer - rich earth tones with visible layers (föld)
 fn layer_color(layer: IslandLayer) -> [f32; 4] {
     match layer {
-        IslandLayer::Surface => [0.12, 0.14, 0.10, 1.0], // Dark scorched grass
-        IslandLayer::Earth => [0.28, 0.20, 0.14, 1.0],   // Dark brown earth (föld)
-        IslandLayer::Rock => [0.38, 0.35, 0.32, 1.0],    // Dark gray-brown rock (köves)
-        IslandLayer::Ore => [0.50, 0.42, 0.22, 1.0],     // Golden ore hints (ritka)
-        IslandLayer::MoltenCore => [3.5, 0.9, 0.15, 1.0], // Brighter HDR emissive lava
+        IslandLayer::Surface => [0.22, 0.25, 0.15, 1.0], // Grass/topsoil
+        IslandLayer::Earth => [0.35, 0.25, 0.18, 1.0],   // Brown earth (föld)
+        IslandLayer::Rock => [0.42, 0.38, 0.35, 1.0],    // Gray-brown rock (köves rész)
+        IslandLayer::Ore => [0.50, 0.42, 0.22, 1.0],     // Golden ore hints (ritka tárgyak)
+        IslandLayer::MoltenCore => [2.5, 0.7, 0.12, 1.0], // Molten lava (láva)
     }
 }
 
@@ -181,8 +181,8 @@ fn generate_island_surface(center: Vec3, config: FloatingIslandConfig) -> Mesh {
             let x = center.x + local_x;
             let z = center.z + local_z;
 
-            let y = terrain_height_at(x, z, base_y);
-            let normal = terrain_normal_at(x, z, base_y);
+            let y = terrain_height_at_island(x, z, base_y, center.x, center.z, config.radius);
+            let normal = terrain_normal_at_island(x, z, base_y, center.x, center.z, config.radius);
             let color = terrain_color_at(y, normal, base_y);
 
             vertices.push(Vertex {
@@ -413,9 +413,9 @@ pub fn generate_lava_ocean(world_size: f32, ocean_level: f32) -> Mesh {
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
 
-    // Lava colors (HDR emissive) - Much brighter to match reference
-    let lava_bright = [4.5, 1.2, 0.18, 1.0]; // Intense bright lava
-    let lava_dark = [0.6, 0.12, 0.03, 1.0]; // Dark crust areas
+    // Lava colors (HDR emissive) - glowing but not blinding
+    let lava_bright = [2.5, 0.7, 0.12, 1.0]; // Bright lava glow
+    let lava_dark = [0.5, 0.10, 0.03, 1.0]; // Dark crust areas
     let normal = [0.0, 1.0, 0.0];
 
     let subdivisions = 64u32;

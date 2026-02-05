@@ -18,25 +18,27 @@ pub struct TerrainParams {
 
 impl Default for TerrainParams {
     fn default() -> Self {
+        // F1 preset: flat terrain for building and combat testing
         Self {
-            height_scale: 1.0,
-            mountains: 0.7,
-            rocks: 0.3,
-            hills: 0.5,
-            detail: 0.4,
-            water: 0.3,
+            height_scale: 0.1,
+            mountains: 0.0,
+            rocks: 0.0,
+            hills: 0.2,
+            detail: 0.1,
+            water: 0.0,
         }
     }
 }
 
 // Global terrain parameters (mutable via UI)
+// Default: F1 flat terrain for building and combat testing
 static mut TERRAIN_PARAMS: TerrainParams = TerrainParams {
-    height_scale: 1.0,
-    mountains: 0.7,
-    rocks: 0.3,
-    hills: 0.5,
-    detail: 0.4,
-    water: 0.3,
+    height_scale: 0.1,
+    mountains: 0.0,
+    rocks: 0.0,
+    hills: 0.2,
+    detail: 0.1,
+    water: 0.0,
 };
 
 /// Get current terrain parameters

@@ -1,10 +1,13 @@
 //! Arena Player Module
 //!
 //! First-person player controller with physics-based movement for the Battle Arena.
+//! Island-aware ground collision: player can fall off island edges into the void.
 
 use glam::Vec3;
 
-use super::terrain::terrain_height_at;
+use super::terrain::{
+    get_bridge_height, is_inside_hexagon, terrain_height_at_island, BridgeConfig,
+};
 
 /// Movement key state
 #[derive(Default)]
@@ -44,6 +47,35 @@ pub const PLAYER_ACCELERATION: f32 = 50.0;
 pub const PLAYER_DECELERATION: f32 = 30.0;
 /// Time after leaving ground where jump is still allowed
 pub const COYOTE_TIME: f32 = 0.1;
+
+/// Describes a hexagonal island for ground collision.
+#[derive(Clone, Copy, Debug)]
+pub struct IslandDef {
+    /// World-space center (XZ)
+    pub center: Vec3,
+    /// Hexagonal radius (circumradius)
+    pub radius: f32,
+    /// Base Y of the terrain surface (usually 0.0 for ground-level islands)
+    pub surface_y: f32,
+}
+
+/// Bridge endpoints for ground collision.
+#[derive(Clone, Debug)]
+pub struct BridgeDef {
+    pub start: Vec3,
+    pub end: Vec3,
+    pub config: BridgeConfig,
+}
+
+/// Arena ground context passed each frame so the player knows about islands + bridge.
+pub struct ArenaGround {
+    pub islands: Vec<IslandDef>,
+    pub bridge: Option<BridgeDef>,
+    /// Y-level at which the player dies (lava)
+    pub kill_y: f32,
+    /// Respawn position
+    pub respawn_pos: Vec3,
+}
 
 /// First-person player with physics-based movement
 pub struct Player {
@@ -90,8 +122,18 @@ impl Player {
         self.is_grounded || self.coyote_time_remaining > 0.0
     }
 
-    /// Update player physics
-    pub fn update(&mut self, movement: &MovementKeys, camera_yaw: f32, delta_time: f32) {
+    /// Update player physics with island-aware ground collision.
+    ///
+    /// The player only has ground beneath them when standing on an island
+    /// (inside its hexagonal boundary) or on the bridge. Walking off the
+    /// edge causes a free-fall. Hitting `kill_y` respawns the player.
+    pub fn update(
+        &mut self,
+        movement: &MovementKeys,
+        camera_yaw: f32,
+        delta_time: f32,
+        ground: &ArenaGround,
+    ) {
         let dt = delta_time.clamp(0.0001, 0.1);
 
         // Calculate forward/right directions from camera yaw (XZ plane only)
@@ -159,22 +201,82 @@ impl Player {
             self.coyote_time_remaining = (self.coyote_time_remaining - dt).max(0.0);
         }
 
-        // Ground collision
-        let ground_height = terrain_height_at(self.position.x, self.position.z, 0.0);
+        // ====================================================
+        // Island-aware ground collision
+        // ====================================================
+        // Check each island: if player is inside its hexagonal boundary,
+        // sample terrain height and use it as ground.
+        let mut ground_height: Option<f32> = None;
 
-        if self.position.y <= ground_height {
-            self.position.y = ground_height;
+        for island in &ground.islands {
+            let dx = self.position.x - island.center.x;
+            let dz = self.position.z - island.center.z;
+
+            if is_inside_hexagon(dx, dz, island.radius) {
+                let h = terrain_height_at_island(
+                    self.position.x,
+                    self.position.z,
+                    island.surface_y,
+                    island.center.x,
+                    island.center.z,
+                    island.radius,
+                );
+                ground_height = Some(match ground_height {
+                    Some(prev) => prev.max(h),
+                    None => h,
+                });
+            }
+        }
+
+        // Also check bridge
+        if let Some(ref bridge) = ground.bridge {
+            if let Some(bridge_y) = get_bridge_height(
+                self.position.x,
+                self.position.z,
+                bridge.start,
+                bridge.end,
+                &bridge.config,
+            ) {
+                ground_height = Some(match ground_height {
+                    Some(prev) => prev.max(bridge_y),
+                    None => bridge_y,
+                });
+            }
+        }
+
+        // Ground collision: only if there IS ground beneath us
+        match ground_height {
+            Some(gh) => {
+                if self.position.y <= gh {
+                    self.position.y = gh;
+                    self.vertical_velocity = 0.0;
+
+                    if !self.is_grounded {
+                        self.is_grounded = true;
+                        self.coyote_time_remaining = COYOTE_TIME;
+                    }
+                } else if self.is_grounded {
+                    self.is_grounded = false;
+                    self.coyote_time_remaining = COYOTE_TIME;
+                }
+            }
+            None => {
+                // No ground — free-falling in the void
+                if self.is_grounded {
+                    self.is_grounded = false;
+                    self.coyote_time_remaining = COYOTE_TIME;
+                }
+            }
+        }
+
+        // ====================================================
+        // Lava kill plane — respawn if below kill_y
+        // ====================================================
+        if self.position.y < ground.kill_y {
+            self.position = ground.respawn_pos;
+            self.velocity = Vec3::ZERO;
             self.vertical_velocity = 0.0;
-
-            if !self.is_grounded {
-                self.is_grounded = true;
-                self.coyote_time_remaining = COYOTE_TIME;
-            }
-        } else {
-            if self.is_grounded {
-                self.is_grounded = false;
-                self.coyote_time_remaining = COYOTE_TIME;
-            }
+            self.is_grounded = false;
         }
     }
 }

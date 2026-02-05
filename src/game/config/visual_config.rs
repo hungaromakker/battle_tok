@@ -55,23 +55,23 @@ impl Default for VisualConfig {
     /// - Lava: HDR orange-red glow
     fn default() -> Self {
         Self {
-            // Fog — warm dark atmosphere (fiery, not purple)
-            fog_density: 0.003,
-            fog_color: Vec3::new(0.25, 0.10, 0.06),
+            // Fog — warm dark, subtle
+            fog_density: 0.004,
+            fog_color: Vec3::new(0.15, 0.08, 0.05),
 
-            // Directional light — low sun, warm orange for dramatic rim lighting
-            sun_direction: Vec3::new(0.2, 0.15, -0.95),
-            sun_color: Vec3::new(1.4, 0.5, 0.25),
-            ambient_intensity: 0.20,
+            // Directional light — higher sun for better terrain visibility
+            sun_direction: Vec3::new(0.3, 0.25, -0.9),
+            sun_color: Vec3::new(1.4, 0.7, 0.35),
+            ambient_intensity: 0.30,
 
-            // Torches — from battle_arena.rs PointLightManager setup
+            // Torches
             torch_intensity: 1.0,
             torch_flicker_speed: 12.0,
             torch_radius: 10.0,
             torch_color: Vec3::new(1.0, 0.6, 0.2),
 
-            // Lava glow — from terrain/hex_terrain.rs lava_color
-            lava_glow_color: Vec3::new(1.8, 0.5, 0.1),
+            // Lava glow
+            lava_glow_color: Vec3::new(1.5, 0.4, 0.1),
             lava_glow_strength: 1.0,
         }
     }

@@ -74,23 +74,23 @@ impl ApocalypticSkyConfig {
     /// Reference: molten planet with fiery red/orange atmosphere, dark void with embers
     pub fn battle_arena() -> Self {
         Self {
-            cloud_speed: 0.12,
-            cloud_density: 2.0, // Moderate density - don't obscure the sky too much
-            cloud_scale: 0.8,
-            cloud_coverage: 0.55, // Leave gaps to see nebula/planet
+            cloud_speed: 0.08,
+            cloud_density: 1.8,
+            cloud_scale: 0.7,
+            cloud_coverage: 0.6,
 
-            // Deep dark red-black zenith (matching fiery space void)
-            zenith_color: Vec3::new(0.12, 0.02, 0.03),
-            // Bright fiery orange-red horizon (lava glow + fire atmosphere)
-            horizon_color: Vec3::new(1.2, 0.4, 0.08),
+            // Deep rich dark red-brown zenith (visible, not black)
+            zenith_color: Vec3::new(0.18, 0.04, 0.06),
+            // Warm orange horizon (not overexposed)
+            horizon_color: Vec3::new(0.7, 0.25, 0.08),
 
-            // Intense lava glow from below - key for the "broken atmosphere" look
-            lava_glow_color: Vec3::new(3.0, 0.8, 0.15),
-            lava_glow_strength: 4.0,
+            // Lava glow from below - warm but controlled
+            lava_glow_color: Vec3::new(1.5, 0.4, 0.1),
+            lava_glow_strength: 2.5,
 
             // Low sun for dramatic rim lighting on clouds
-            sun_dir: Vec3::new(0.1, 0.08, -1.0).normalize(),
-            sun_intensity: 1.5,
+            sun_dir: Vec3::new(0.2, 0.12, -0.95).normalize(),
+            sun_intensity: 1.2,
 
             lightning_intensity: 0.0,
             lightning_pos: (0.5, 0.5),

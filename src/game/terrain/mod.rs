@@ -17,7 +17,7 @@ pub use floating_island::{
 };
 pub use generation::{
     blend_colors, is_inside_hexagon, smooth_step, terrain_color_at, terrain_height_at,
-    terrain_normal_at,
+    terrain_height_at_island, terrain_normal_at, terrain_normal_at_island,
 };
 pub use hex_terrain::{
     generate_elevated_hex_terrain, generate_hex_platform, generate_lava_plane, generate_water_plane,

@@ -42,7 +42,7 @@ pub use types::{generate_box, generate_oriented_box, generate_rotated_box, gener
 pub use arena_cannon::{
     ArenaCannon, CANNON_ROTATION_SPEED, CANNON_SMOOTHING, generate_cannon_mesh,
 };
-pub use arena_player::{AimingKeys, MovementKeys, Player};
+pub use arena_player::{AimingKeys, ArenaGround, BridgeDef, IslandDef, MovementKeys, Player};
 pub use arena_player::{
     PLAYER_EYE_HEIGHT, PLAYER_GRAVITY, PLAYER_JUMP_VELOCITY, PLAYER_SPRINT_SPEED, PLAYER_WALK_SPEED,
 };

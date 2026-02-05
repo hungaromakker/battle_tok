@@ -7,8 +7,20 @@ use glam::Vec3;
 use super::params::get_terrain_params;
 use crate::game::types::{fbm_noise, ridged_noise, turbulent_noise};
 
-/// Sample terrain height using UI-adjustable parameters
-pub fn terrain_height_at(x: f32, z: f32, base_y: f32) -> f32 {
+/// Sample terrain height using UI-adjustable parameters.
+///
+/// `center_x` / `center_z` define the island center so that the
+/// edge-falloff factor is computed relative to the island, not the
+/// world origin.  Legacy callers that pass `(0.0, 0.0)` get the
+/// old behaviour.
+pub fn terrain_height_at_island(
+    x: f32,
+    z: f32,
+    base_y: f32,
+    center_x: f32,
+    center_z: f32,
+    island_radius: f32,
+) -> f32 {
     let params = get_terrain_params();
 
     const MAX_MOUNTAIN: f32 = 8.0;
@@ -16,7 +28,9 @@ pub fn terrain_height_at(x: f32, z: f32, base_y: f32) -> f32 {
     const MAX_HILL: f32 = 2.0;
     const MAX_DETAIL: f32 = 0.5;
 
-    let dist_from_center = (x * x + z * z).sqrt() / 30.0;
+    let dx = x - center_x;
+    let dz = z - center_z;
+    let dist_from_center = (dx * dx + dz * dz).sqrt() / island_radius;
     let edge_factor = (dist_from_center * 1.2).min(1.0);
 
     let mut height = 0.0;
@@ -46,6 +60,11 @@ pub fn terrain_height_at(x: f32, z: f32, base_y: f32) -> f32 {
     base_y + height
 }
 
+/// Legacy wrapper — uses world origin as island center with radius 30.
+pub fn terrain_height_at(x: f32, z: f32, base_y: f32) -> f32 {
+    terrain_height_at_island(x, z, base_y, 0.0, 0.0, 30.0)
+}
+
 /// Apocalyptic terrain color with scorched/burnt palette
 pub fn terrain_color_at(height: f32, normal: Vec3, base_y: f32) -> [f32; 4] {
     let params = get_terrain_params();
@@ -54,25 +73,25 @@ pub fn terrain_color_at(height: f32, normal: Vec3, base_y: f32) -> [f32; 4] {
 
     let water_level = params.water * 2.0;
 
-    // Scorched/burnt grass palette (apocalyptic)
-    let grass_dark = [0.08, 0.10, 0.06, 1.0]; // Very dark scorched
-    let grass_mid = [0.12, 0.14, 0.08, 1.0]; // Dark scorched
-    let grass_light = [0.18, 0.18, 0.12, 1.0]; // Lighter scorched
-    let grass_dry = [0.22, 0.18, 0.12, 1.0]; // Dry dead
+    // Earth/ground palette - solid, natural-looking terrain
+    let grass_dark = [0.15, 0.18, 0.10, 1.0]; // Dark grass
+    let grass_mid = [0.22, 0.25, 0.14, 1.0]; // Mid grass
+    let grass_light = [0.28, 0.30, 0.18, 1.0]; // Lighter grass
+    let grass_dry = [0.30, 0.25, 0.16, 1.0]; // Dry grass
 
-    // Dark volcanic rock palette
-    let rock_dark = [0.10, 0.08, 0.08, 1.0]; // Dark volcanic
-    let rock_mid = [0.22, 0.20, 0.18, 1.0]; // Mid volcanic
-    let rock_light = [0.35, 0.32, 0.30, 1.0]; // Lighter rock
-    let rock_moss = [0.15, 0.18, 0.12, 1.0]; // Charred moss remnants
+    // Rock palette - solid earth tones
+    let rock_dark = [0.18, 0.15, 0.13, 1.0]; // Dark rock
+    let rock_mid = [0.32, 0.28, 0.24, 1.0]; // Mid rock
+    let rock_light = [0.42, 0.38, 0.34, 1.0]; // Lighter rock
+    let rock_moss = [0.20, 0.24, 0.16, 1.0]; // Moss on rock
 
-    // Ash and dirt palette
-    let sand_wet = [0.20, 0.18, 0.15, 1.0]; // Ash-covered
-    let sand_dry = [0.35, 0.32, 0.28, 1.0]; // Dry ash
-    let dirt_base = [0.18, 0.14, 0.10, 1.0]; // Dark scorched dirt
-    let mud_wet = [0.12, 0.10, 0.08, 1.0]; // Dark mud
+    // Dirt and earth palette
+    let sand_wet = [0.28, 0.22, 0.16, 1.0]; // Wet earth
+    let sand_dry = [0.40, 0.35, 0.28, 1.0]; // Dry earth
+    let dirt_base = [0.25, 0.20, 0.15, 1.0]; // Base earth (föld)
+    let mud_wet = [0.18, 0.14, 0.10, 1.0]; // Dark mud
 
-    // Lava pools instead of water (this is apocalyptic after all)
+    // Lava pools (only visible if water param > 0)
     let water_shallow = [1.8, 0.5, 0.1, 0.90]; // Bright lava surface (HDR)
     let water_deep = [0.8, 0.2, 0.05, 0.95]; // Cooler lava crust
 
@@ -142,7 +161,27 @@ pub fn blend_colors(a: &[f32; 4], b: &[f32; 4], t: f32) -> [f32; 4] {
     ]
 }
 
-/// Compute normal from terrain height gradient
+/// Compute normal from terrain height gradient (island-aware).
+pub fn terrain_normal_at_island(
+    x: f32,
+    z: f32,
+    base_y: f32,
+    cx: f32,
+    cz: f32,
+    radius: f32,
+) -> Vec3 {
+    let epsilon = 0.2;
+    let h_center = terrain_height_at_island(x, z, base_y, cx, cz, radius);
+    let h_dx = terrain_height_at_island(x + epsilon, z, base_y, cx, cz, radius);
+    let h_dz = terrain_height_at_island(x, z + epsilon, base_y, cx, cz, radius);
+
+    let tangent_x = Vec3::new(epsilon, h_dx - h_center, 0.0);
+    let tangent_z = Vec3::new(0.0, h_dz - h_center, epsilon);
+
+    tangent_z.cross(tangent_x).normalize()
+}
+
+/// Compute normal from terrain height gradient (legacy wrapper).
 pub fn terrain_normal_at(x: f32, z: f32, base_y: f32) -> Vec3 {
     let epsilon = 0.2;
     let h_center = terrain_height_at(x, z, base_y);

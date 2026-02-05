@@ -465,10 +465,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // HORIZON FOG
     // ========================================================================
 
-    // Fiery horizon haze - warm orange glow at the horizon line
-    let fog_factor = pow(1.0 - abs(up), 5.0);
-    let fog_color = vec3<f32>(0.6, 0.18, 0.05);
-    sky_color = mix(sky_color, fog_color, fog_factor * 0.5);
+    // Warm horizon haze - subtle, not overexposed
+    let fog_factor = pow(1.0 - abs(up), 8.0);
+    let fog_color = vec3<f32>(0.35, 0.12, 0.04);
+    sky_color = mix(sky_color, fog_color, fog_factor * 0.3);
 
     // ========================================================================
     // POST PROCESSING
