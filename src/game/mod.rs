@@ -116,7 +116,7 @@ pub use population::{Population, Villager, VillagerRole, VillagerStats};
 pub use state::GameState;
 
 // Systems re-exports
-pub use systems::{CollisionSystem, ProjectileSystem, ProjectileUpdate};
+pub use systems::{BuildingSystem, CollisionSystem, ProjectileSystem, ProjectileUpdate};
 
 // Config re-exports
 pub use config::VisualConfig;
