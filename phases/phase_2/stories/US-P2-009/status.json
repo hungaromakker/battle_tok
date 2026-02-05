@@ -1,0 +1,35 @@
+{
+    "story_id": "US-P2-009",
+    "title": "Enhance Depth-Based Fog Post-Pass",
+    "status": "pending",
+    "focus": "",
+    "criteria": [
+        {"text": "Distant objects fade into fog", "done": false, "notes": ""},
+        {"text": "Ground level foggier than elevated areas", "done": false, "notes": ""},
+        {"text": "Fog color matches stormy atmosphere", "done": false, "notes": ""},
+        {"text": "Sky is not fogged (far plane skipped)", "done": false, "notes": ""},
+        {"text": "Depth buffer reads correctly", "done": false, "notes": ""},
+        {"text": "cargo check passes", "done": false, "notes": ""}
+    ],
+    "checklist": [
+        {"item": "Read spec.md and understand depth reconstruction", "done": false},
+        {"item": "Add depth texture bindings to fog shader", "done": false},
+        {"item": "Implement reconstruct_world_pos function", "done": false},
+        {"item": "Calculate distance fog with exponential falloff", "done": false},
+        {"item": "Add height-based fog variation", "done": false},
+        {"item": "Skip fogging for sky (depth check)", "done": false},
+        {"item": "Create/update fog_post.rs Rust module", "done": false},
+        {"item": "Add export in mod.rs", "done": false},
+        {"item": "Run cargo check", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": [],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "created_at": "2026-02-05T15:15:00"
+}

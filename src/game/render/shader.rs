@@ -120,22 +120,22 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 }
 
 // ============================================================================
-// ENHANCED TERRAIN MATERIALS (height bands + slope detection)
+// ENHANCED TERRAIN MATERIALS (apocalyptic battle arena style)
 // ============================================================================
 
-// Material colors (tuned for natural look)
-const GRASS_COLOR: vec3<f32> = vec3<f32>(0.18, 0.32, 0.10);
-const DIRT_COLOR: vec3<f32> = vec3<f32>(0.35, 0.25, 0.15);
-const ROCK_COLOR: vec3<f32> = vec3<f32>(0.40, 0.38, 0.35);
-const SNOW_COLOR: vec3<f32> = vec3<f32>(0.95, 0.95, 0.98);
+// Material colors (dark, volcanic, apocalyptic)
+const GRASS_COLOR: vec3<f32> = vec3<f32>(0.12, 0.15, 0.08);  // Dark scorched grass
+const DIRT_COLOR: vec3<f32> = vec3<f32>(0.25, 0.18, 0.12);   // Ashen brown dirt
+const ROCK_COLOR: vec3<f32> = vec3<f32>(0.22, 0.20, 0.22);   // Dark volcanic rock
+const SNOW_COLOR: vec3<f32> = vec3<f32>(0.55, 0.50, 0.48);   // Ash/dust instead of snow
 
 // Height band thresholds (world units)
-const DIRT_START: f32 = 1.0;
-const DIRT_END: f32 = 2.5;
-const ROCK_START: f32 = 2.0;
-const ROCK_END: f32 = 4.5;
-const SNOW_START: f32 = 4.0;
-const SNOW_END: f32 = 6.0;
+const DIRT_START: f32 = 0.5;
+const DIRT_END: f32 = 1.8;
+const ROCK_START: f32 = 1.2;
+const ROCK_END: f32 = 3.5;
+const SNOW_START: f32 = 3.0;
+const SNOW_END: f32 = 5.0;
 
 fn terrain_noise(p: vec2<f32>) -> f32 {
     let h = dot(p, vec2<f32>(127.1, 311.7));
@@ -230,9 +230,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ks = f;
     let kd = (vec3<f32>(1.0) - ks) * (1.0 - metallic);
     
-    // Sun light
-    let sun_color = vec3<f32>(1.0, 0.95, 0.85);  // Warm sunlight
-    let sun_intensity = 2.5;  // HDR intensity
+    // Sun light (low on horizon, fiery orange glow from lava)
+    let sun_color = vec3<f32>(1.2, 0.6, 0.35);  // Orange-red apocalyptic light
+    let sun_intensity = 1.8;  // Reduced - most light from lava/fire
     let radiance = sun_color * sun_intensity;
     
     // Direct lighting contribution
@@ -248,23 +248,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     
     // ============================================================
-    // AMBIENT / HEMISPHERE LIGHTING
+    // AMBIENT / HEMISPHERE LIGHTING (apocalyptic atmosphere)
     // ============================================================
-    let sky_color = vec3<f32>(0.45, 0.55, 0.75);
-    let ground_color = vec3<f32>(0.25, 0.20, 0.15);
+    let sky_color = vec3<f32>(0.35, 0.25, 0.45);   // Purple stormy sky
+    let ground_color = vec3<f32>(0.45, 0.25, 0.15); // Warm lava glow from below
     let sky_blend = normal.y * 0.5 + 0.5;
     let ambient_color = mix(ground_color, sky_color, sky_blend);
-    
+
     // Simple AO based on normal (facing down = more occluded)
-    let ao = normal.y * 0.3 + 0.7;
-    
-    let ambient_light = albedo * ambient_color * 0.35 * ao;
+    let ao = normal.y * 0.25 + 0.75;
+
+    let ambient_light = albedo * ambient_color * 0.45 * ao;
     
     // ============================================================
-    // RIM LIGHT (edge highlighting)
+    // RIM LIGHT (fiery edge highlighting)
     // ============================================================
     let rim = pow(1.0 - n_dot_v, 4.0);
-    let rim_color = vec3<f32>(0.6, 0.7, 0.85) * rim * 0.15;
+    let rim_color = vec3<f32>(0.9, 0.5, 0.25) * rim * 0.25;  // Orange-red rim from lava glow
     
     // ============================================================
     // COMBINE LIGHTING
@@ -284,10 +284,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Distance fog with height modulation
     let fog_amount = (1.0 - exp(-dist * uniforms.fog_density * height_factor)) * 0.85;
     
-    // Fog color varies with distance (stormy purple atmosphere)
-    let fog_near = vec3<f32>(0.55, 0.48, 0.65);  // Purple-tinted near
-    let fog_far = vec3<f32>(0.40, 0.35, 0.55);   // Deeper purple far
-    let fog_blend = clamp(dist / 100.0, 0.0, 1.0);
+    // Fog color varies with distance (apocalyptic atmosphere)
+    let fog_near = vec3<f32>(0.45, 0.30, 0.35);  // Warm smoke near
+    let fog_far = vec3<f32>(0.30, 0.18, 0.28);   // Dark purple-brown far
+    let fog_blend = clamp(dist / 80.0, 0.0, 1.0);
     let final_fog_color = mix(fog_near, fog_far, fog_blend);
     
     color = mix(color, final_fog_color, fog_amount);
@@ -299,9 +299,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // ACES Tonemapping
     color = aces_tonemap(color);
     
-    // Subtle color grading (warm shadows, cool highlights)
-    let lift = vec3<f32>(0.015, 0.01, 0.02);
-    let gain = vec3<f32>(1.03, 1.01, 0.98);
+    // Apocalyptic color grading (warm orange tint, purple shadows)
+    let lift = vec3<f32>(0.03, 0.015, 0.025);
+    let gain = vec3<f32>(1.08, 0.98, 0.92);
     color = color * gain + lift;
     
     // Vignette

@@ -1,0 +1,34 @@
+{
+    "story_id": "US-P2-004",
+    "title": "Create Point Light System for Torches",
+    "status": "pending",
+    "focus": "",
+    "criteria": [
+        {"text": "Can add/remove torches dynamically", "done": false, "notes": ""},
+        {"text": "Torches flicker with sin pattern", "done": false, "notes": ""},
+        {"text": "Buffer updates correctly each frame", "done": false, "notes": ""},
+        {"text": "Bind group accessible for shaders", "done": false, "notes": ""},
+        {"text": "cargo check passes", "done": false, "notes": ""}
+    ],
+    "checklist": [
+        {"item": "Read spec.md and understand point light structure", "done": false},
+        {"item": "Create PointLight struct with Pod/Zeroable", "done": false},
+        {"item": "Create PointLightManager struct", "done": false},
+        {"item": "Implement new() constructor with buffer creation", "done": false},
+        {"item": "Implement add_torch() and remove_torch()", "done": false},
+        {"item": "Implement update() with flicker logic", "done": false},
+        {"item": "Create bind_group_layout and bind_group", "done": false},
+        {"item": "Add export in mod.rs", "done": false},
+        {"item": "Run cargo check", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": [],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "created_at": "2026-02-05T15:15:00"
+}

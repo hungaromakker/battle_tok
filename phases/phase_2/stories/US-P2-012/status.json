@@ -1,0 +1,32 @@
+{
+    "story_id": "US-P2-012",
+    "title": "Update Terrain Colors to Apocalyptic Palette",
+    "status": "pending",
+    "focus": "",
+    "criteria": [
+        {"text": "Terrain appears dark and scorched", "done": false, "notes": ""},
+        {"text": "Grass areas are dark olive/brown", "done": false, "notes": ""},
+        {"text": "Peaks are ash-colored, not white snow", "done": false, "notes": ""},
+        {"text": "Rock dominates steep areas", "done": false, "notes": ""},
+        {"text": "cargo check passes", "done": false, "notes": ""}
+    ],
+    "checklist": [
+        {"item": "Read spec.md and understand apocalyptic palette", "done": false},
+        {"item": "Find where TerrainParams is initialized in Rust", "done": false},
+        {"item": "Update grass color to (0.15, 0.18, 0.10)", "done": false},
+        {"item": "Update dirt color to (0.28, 0.20, 0.14)", "done": false},
+        {"item": "Update rock color to (0.25, 0.22, 0.24)", "done": false},
+        {"item": "Update snow/peak color to (0.50, 0.48, 0.45)", "done": false},
+        {"item": "Run cargo check", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": [],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "created_at": "2026-02-05T15:15:00"
+}

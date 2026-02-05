@@ -1,6 +1,6 @@
 //! Physics-Based Destruction System
 //!
-//! Handles falling prisms and debris particles when structures lose support.
+//! Handles falling prisms, debris particles, and falling meteors when structures lose support.
 
 use glam::Vec3;
 
@@ -132,26 +132,195 @@ pub fn get_material_color(material: u8) -> [f32; 4] {
 /// Spawn debris particles from a destroyed/falling prism
 pub fn spawn_debris(position: Vec3, material: u8, count: usize) -> Vec<DebrisParticle> {
     let mut particles = Vec::with_capacity(count);
-    
+
     for i in 0..count {
         let angle = (i as f32 / count as f32) * std::f32::consts::TAU;
         let height_offset = ((i as f32 * 0.618).fract() - 0.5) * 0.3;
         let speed = 2.0 + (i as f32 * 1.618).fract() * 4.0;
-        
+
         let velocity = Vec3::new(
             angle.cos() * speed,
             speed * 0.5 + (i as f32 * 0.414).fract() * 3.0,
             angle.sin() * speed,
         );
-        
+
         let spawn_pos = position + Vec3::new(
             (angle + 0.5).cos() * 0.1,
             height_offset,
             (angle + 0.5).sin() * 0.1,
         );
-        
+
         particles.push(DebrisParticle::new(spawn_pos, velocity, material));
     }
-    
+
+    particles
+}
+
+// ============================================================================
+// METEOR / FIREBALL SYSTEM
+// ============================================================================
+
+/// A falling meteor/fireball for apocalyptic atmosphere
+#[derive(Clone)]
+pub struct Meteor {
+    pub position: Vec3,
+    pub velocity: Vec3,
+    pub size: f32,
+    /// HDR emissive color (fire orange-red)
+    pub color: [f32; 4],
+    pub lifetime: f32,
+    pub trail_timer: f32,
+    pub active: bool,
+}
+
+impl Meteor {
+    /// Create a new meteor falling from the sky
+    pub fn new(target_x: f32, target_z: f32, seed: f32) -> Self {
+        // Start high in the sky, offset from target
+        let start_height = 80.0 + seed.fract() * 40.0;
+        let offset_x = ((seed * 12.9898).sin() * 43758.5453).fract() * 20.0 - 10.0;
+        let offset_z = ((seed * 78.233).sin() * 43758.5453).fract() * 20.0 - 10.0;
+
+        let position = Vec3::new(
+            target_x + offset_x * 2.0,
+            start_height,
+            target_z + offset_z * 2.0,
+        );
+
+        // Calculate velocity to aim roughly at target area
+        let direction = Vec3::new(
+            target_x - position.x,
+            -start_height,
+            target_z - position.z,
+        ).normalize();
+
+        let speed = 25.0 + seed.fract() * 15.0;
+        let velocity = direction * speed;
+
+        // Size varies
+        let size = 0.5 + seed.fract() * 1.0;
+
+        // HDR emissive fire color
+        let brightness = 2.0 + seed.fract() * 1.5;
+        let color = [brightness, brightness * 0.35, brightness * 0.08, 1.0];
+
+        Self {
+            position,
+            velocity,
+            size,
+            color,
+            lifetime: 10.0,
+            trail_timer: 0.0,
+            active: true,
+        }
+    }
+
+    /// Update meteor physics
+    pub fn update(&mut self, delta_time: f32) -> Option<Vec3> {
+        if !self.active {
+            return None;
+        }
+
+        self.lifetime -= delta_time;
+        self.trail_timer += delta_time;
+
+        // Slight gravity (less than real - these are magical fireballs)
+        self.velocity.y -= GRAVITY * 0.3 * delta_time;
+
+        // Move
+        self.position += self.velocity * delta_time;
+
+        // Check ground impact
+        let ground_height = terrain_height_at(self.position.x, self.position.z, 0.0);
+        if self.position.y < ground_height + self.size * 0.5 {
+            self.active = false;
+            return Some(self.position); // Return impact position for explosion
+        }
+
+        // Time out
+        if self.lifetime <= 0.0 {
+            self.active = false;
+        }
+
+        None
+    }
+
+    pub fn is_alive(&self) -> bool {
+        self.active && self.lifetime > 0.0
+    }
+}
+
+/// Meteor spawner - creates meteors at regular intervals
+pub struct MeteorSpawner {
+    pub spawn_timer: f32,
+    pub spawn_interval: f32,
+    pub arena_center: Vec3,
+    pub arena_radius: f32,
+    pub seed_counter: f32,
+    pub max_meteors: usize,
+}
+
+impl MeteorSpawner {
+    pub fn new(arena_center: Vec3, arena_radius: f32) -> Self {
+        Self {
+            spawn_timer: 0.0,
+            spawn_interval: 2.5, // New meteor every 2.5 seconds
+            arena_center,
+            arena_radius,
+            seed_counter: 0.0,
+            max_meteors: 8,
+        }
+    }
+
+    /// Update spawner and potentially spawn new meteors
+    pub fn update(&mut self, delta_time: f32, current_meteors: usize) -> Option<Meteor> {
+        self.spawn_timer += delta_time;
+
+        if self.spawn_timer >= self.spawn_interval && current_meteors < self.max_meteors {
+            self.spawn_timer = 0.0;
+            self.seed_counter += 1.0;
+
+            // Random position within arena
+            let angle = self.seed_counter * 2.399963; // Golden angle
+            let dist = (self.seed_counter * 0.618).fract() * self.arena_radius * 0.8;
+
+            let target_x = self.arena_center.x + angle.cos() * dist;
+            let target_z = self.arena_center.z + angle.sin() * dist;
+
+            Some(Meteor::new(target_x, target_z, self.seed_counter))
+        } else {
+            None
+        }
+    }
+}
+
+/// Spawn fire debris when meteor impacts
+pub fn spawn_meteor_impact(position: Vec3, count: usize) -> Vec<DebrisParticle> {
+    let mut particles = Vec::with_capacity(count);
+
+    for i in 0..count {
+        let angle = (i as f32 / count as f32) * std::f32::consts::TAU;
+        let speed = 5.0 + (i as f32 * 1.618).fract() * 10.0;
+
+        let velocity = Vec3::new(
+            angle.cos() * speed,
+            speed * 0.8 + (i as f32 * 0.414).fract() * 8.0,
+            angle.sin() * speed,
+        );
+
+        let spawn_pos = position + Vec3::new(
+            (angle + 0.5).cos() * 0.2,
+            0.1,
+            (angle + 0.5).sin() * 0.2,
+        );
+
+        // Fire debris (material 10 = fire)
+        let mut particle = DebrisParticle::new(spawn_pos, velocity, 10);
+        particle.color = [2.5, 0.8, 0.15, 1.0]; // HDR orange fire
+        particle.size = 0.08 + (i as f32 * 0.618).fract() * 0.12;
+        particle.lifetime = 1.5 + (i as f32 * 0.414).fract() * 1.0;
+        particles.push(particle);
+    }
+
     particles
 }

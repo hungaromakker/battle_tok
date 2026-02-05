@@ -1,0 +1,34 @@
+{
+    "story_id": "US-P2-007",
+    "title": "Create Team Flag Shader with Wind Animation",
+    "status": "pending",
+    "focus": "",
+    "criteria": [
+        {"text": "Flag mesh deforms with wind wave", "done": false, "notes": ""},
+        {"text": "Wave stronger at edge, weaker near pole", "done": false, "notes": ""},
+        {"text": "Team color displays correctly", "done": false, "notes": ""},
+        {"text": "Horizontal stripe band visible", "done": false, "notes": ""},
+        {"text": "Shader compiles without errors", "done": false, "notes": ""},
+        {"text": "cargo check passes", "done": false, "notes": ""}
+    ],
+    "checklist": [
+        {"item": "Read spec.md and understand vertex wind animation", "done": false},
+        {"item": "Create shaders/flag.wgsl with FlagParams struct", "done": false},
+        {"item": "Implement vertex shader with wave displacement", "done": false},
+        {"item": "Implement fragment shader with stripe pattern", "done": false},
+        {"item": "Create engine/src/render/flag_material.rs", "done": false},
+        {"item": "Add method to set team color", "done": false},
+        {"item": "Add export in mod.rs", "done": false},
+        {"item": "Run cargo check", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": [],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "created_at": "2026-02-05T15:15:00"
+}

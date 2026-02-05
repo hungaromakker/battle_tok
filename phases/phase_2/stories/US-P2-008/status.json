@@ -1,0 +1,36 @@
+{
+    "story_id": "US-P2-008",
+    "title": "Create Ember/Ash Particle System",
+    "status": "pending",
+    "focus": "",
+    "criteria": [
+        {"text": "Embers spawn near lava positions", "done": false, "notes": ""},
+        {"text": "Particles float upward with random drift", "done": false, "notes": ""},
+        {"text": "Particles fade out over 2-4 seconds", "done": false, "notes": ""},
+        {"text": "Additive blending creates glow", "done": false, "notes": ""},
+        {"text": "Performance handles 500+ particles at 60fps", "done": false, "notes": ""},
+        {"text": "cargo check passes", "done": false, "notes": ""}
+    ],
+    "checklist": [
+        {"item": "Read spec.md and understand billboard rendering", "done": false},
+        {"item": "Create shaders/ember_particle.wgsl", "done": false},
+        {"item": "Implement billboard vertex shader", "done": false},
+        {"item": "Implement soft circle fragment with fade", "done": false},
+        {"item": "Create Particle struct with Pod/Zeroable", "done": false},
+        {"item": "Create ParticleSystem struct", "done": false},
+        {"item": "Implement spawn_ember and update methods", "done": false},
+        {"item": "Set up additive blend state", "done": false},
+        {"item": "Add export in mod.rs", "done": false},
+        {"item": "Run cargo check", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": [],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "created_at": "2026-02-05T15:15:00"
+}

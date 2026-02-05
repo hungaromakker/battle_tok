@@ -1,0 +1,35 @@
+{
+    "story_id": "US-P2-003",
+    "title": "Create Castle Stone Material Shader",
+    "status": "pending",
+    "focus": "",
+    "criteria": [
+        {"text": "shaders/castle_stone.wgsl exists and compiles", "done": false, "notes": ""},
+        {"text": "Stone shows visible brick/block pattern", "done": false, "notes": ""},
+        {"text": "Bottom of walls darker (grime effect)", "done": false, "notes": ""},
+        {"text": "Warm orange glow visible (torch bounce)", "done": false, "notes": ""},
+        {"text": "Rust module creates pipeline without panics", "done": false, "notes": ""},
+        {"text": "cargo check passes", "done": false, "notes": ""}
+    ],
+    "checklist": [
+        {"item": "Read spec.md and understand procedural brick pattern", "done": false},
+        {"item": "Create shaders/castle_stone.wgsl with uniforms", "done": false},
+        {"item": "Add hash/noise functions to shader", "done": false},
+        {"item": "Implement brick pattern in fragment shader", "done": false},
+        {"item": "Add grime darkening based on world_pos.y", "done": false},
+        {"item": "Add torch bounce lighting with flicker", "done": false},
+        {"item": "Create engine/src/render/castle_material.rs", "done": false},
+        {"item": "Add export in engine/src/render/mod.rs", "done": false},
+        {"item": "Run cargo check", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": [],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "created_at": "2026-02-05T15:15:00"
+}

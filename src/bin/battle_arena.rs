@@ -95,12 +95,14 @@ use battle_tok_engine::game::{
     check_block_support, calculate_bridge_segments, PlacementResult,
     // Terrain
     TerrainParams, get_terrain_params, set_terrain_params,
-    terrain_height_at, generate_elevated_hex_terrain, generate_water_plane,
+    terrain_height_at, generate_elevated_hex_terrain, generate_lava_plane,
     generate_bridge, BridgeConfig,
     // Trees
     PlacedTree, generate_trees_on_terrain, generate_all_trees_mesh,
     // Destruction
     FallingPrism, DebrisParticle, spawn_debris, get_material_color,
+    // Meteors
+    Meteor, MeteorSpawner, spawn_meteor_impact,
     // Mesh generators
     generate_rotated_box, generate_sphere,
     // UI
@@ -232,6 +234,10 @@ struct BattleArenaApp {
     falling_prisms: Vec<FallingPrism>,
     debris_particles: Vec<DebrisParticle>,
 
+    // Meteor system (atmospheric fireballs)
+    meteors: Vec<Meteor>,
+    meteor_spawner: MeteorSpawner,
+
     // Terrain editor UI (on-screen sliders)
     terrain_ui: TerrainEditorUI,
     terrain_needs_rebuild: bool,
@@ -310,6 +316,9 @@ impl BattleArenaApp {
             ballistics_config: BallisticsConfig::default(),
             falling_prisms: Vec::new(),
             debris_particles: Vec::new(),
+            // Meteor spawner: centered between the two islands, covers full arena
+            meteors: Vec::new(),
+            meteor_spawner: MeteorSpawner::new(Vec3::new(0.0, 0.0, 0.0), 60.0),
             terrain_ui: TerrainEditorUI::default(),
             terrain_needs_rebuild: false,
             game_state: GameState::new(),
@@ -734,7 +743,7 @@ impl BattleArenaApp {
         static_mesh.merge(&attacker_platform);
         
         // Water plane for attacker platform
-        let attacker_water = generate_water_plane(
+        let attacker_water = generate_lava_plane(
             ATTACKER_CENTER,
             ISLAND_RADIUS,
         );
@@ -750,7 +759,7 @@ impl BattleArenaApp {
         static_mesh.merge(&defender_platform);
         
         // Water plane for defender platform
-        let defender_water = generate_water_plane(
+        let defender_water = generate_lava_plane(
             DEFENDER_CENTER,
             ISLAND_RADIUS,
         );
@@ -918,8 +927,9 @@ impl BattleArenaApp {
             queue.write_buffer(&hex_wall_index_buffer, 0, bytemuck::cast_slice(&hex_indices));
         }
 
-        // Initialize dark and stormy skybox (before device is moved)
-        let stormy_sky = StormySky::with_config(&device, surface_format, StormySkyConfig::default());
+        // Initialize apocalyptic battle arena skybox (before device is moved)
+        // Using battle_arena preset: purple sky, orange horizon, lightning, dramatic atmosphere
+        let stormy_sky = StormySky::with_config(&device, surface_format, StormySkyConfig::battle_arena());
 
         self.window = Some(window);
         self.device = Some(device);
@@ -980,12 +990,11 @@ impl BattleArenaApp {
         self.update_block_preview();
         
         // Physics support check every N seconds (blocks without support fall)
-        if self.build_toolbar.visible {
-            self.build_toolbar.physics_check_timer += delta_time;
-            if self.build_toolbar.physics_check_timer >= PHYSICS_CHECK_INTERVAL {
-                self.build_toolbar.physics_check_timer = 0.0;
-                self.check_physics_support();
-            }
+        // Note: Runs regardless of build toolbar visibility so blocks still fall after exiting build mode
+        self.build_toolbar.physics_check_timer += delta_time;
+        if self.build_toolbar.physics_check_timer >= PHYSICS_CHECK_INTERVAL {
+            self.build_toolbar.physics_check_timer = 0.0;
+            self.check_physics_support();
         }
         
         // Update movement based on mode
@@ -1083,9 +1092,12 @@ impl BattleArenaApp {
 
         // Physics simulation for falling prisms
         self.update_falling_prisms(delta_time);
-        
+
         // Physics simulation for debris particles
         self.update_debris_particles(delta_time);
+
+        // Update meteor system (apocalyptic fireballs)
+        self.update_meteors(delta_time);
 
         // US-016: Regenerate hex-prism mesh if any prisms were destroyed or modified
         if self.hex_wall_grid.needs_mesh_update() {
@@ -1265,6 +1277,32 @@ impl BattleArenaApp {
         
         // Remove dead particles
         self.debris_particles.retain(|p| p.is_alive());
+    }
+
+    /// Update meteor system - spawn new meteors and handle impacts
+    fn update_meteors(&mut self, delta_time: f32) {
+        // Try to spawn new meteor
+        if let Some(new_meteor) = self.meteor_spawner.update(delta_time, self.meteors.len()) {
+            self.meteors.push(new_meteor);
+        }
+
+        // Update existing meteors and collect impacts
+        let mut impacts: Vec<Vec3> = Vec::new();
+
+        for meteor in &mut self.meteors {
+            if let Some(impact_pos) = meteor.update(delta_time) {
+                impacts.push(impact_pos);
+            }
+        }
+
+        // Remove dead meteors
+        self.meteors.retain(|m| m.is_alive());
+
+        // Spawn debris at impact points
+        for impact in impacts {
+            let fire_debris = spawn_meteor_impact(impact, 15);
+            self.debris_particles.extend(fire_debris);
+        }
     }
 
     /// US-016: Regenerate hex-prism wall mesh and update GPU buffers after destruction
@@ -1655,6 +1693,9 @@ impl BattleArenaApp {
     
     /// Update building physics - blocks fall with gravity and disintegrate if unsupported
     fn check_physics_support(&mut self) {
+        let block_count = self.block_manager.blocks().len();
+        println!("[Physics] Running support check on {} blocks...", block_count);
+        
         // Update physics simulation
         self.block_physics.update(0.016, &mut self.block_manager); // ~60fps timestep
 
@@ -2014,7 +2055,7 @@ impl BattleArenaApp {
         // Water for attacker
         let params = get_terrain_params();
         if params.water > 0.01 {
-            let attacker_water = generate_water_plane(ATTACKER_CENTER, ISLAND_RADIUS);
+            let attacker_water = generate_lava_plane(ATTACKER_CENTER, ISLAND_RADIUS);
             static_mesh.merge(&attacker_water);
         }
         
@@ -2029,7 +2070,7 @@ impl BattleArenaApp {
         
         // Water for defender
         if params.water > 0.01 {
-            let defender_water = generate_water_plane(DEFENDER_CENTER, ISLAND_RADIUS);
+            let defender_water = generate_lava_plane(DEFENDER_CENTER, ISLAND_RADIUS);
             static_mesh.merge(&defender_water);
         }
         
@@ -2401,7 +2442,34 @@ impl BattleArenaApp {
                 dynamic_mesh.merge(&cube);
             }
         }
-        
+
+        // Falling meteors (HDR emissive fireballs)
+        for meteor in &self.meteors {
+            if meteor.is_alive() {
+                // Meteor core (bright HDR emissive)
+                let fireball = generate_sphere(meteor.position, meteor.size, meteor.color, 4);
+                dynamic_mesh.merge(&fireball);
+
+                // Optional: trail effect (smaller spheres behind)
+                if meteor.velocity.length() > 1.0 {
+                    let trail_dir = -meteor.velocity.normalize();
+                    for i in 1..4 {
+                        let trail_pos = meteor.position + trail_dir * (i as f32) * meteor.size * 0.8;
+                        let trail_size = meteor.size * (0.8 - i as f32 * 0.15);
+                        let trail_alpha = 1.0 - (i as f32 * 0.25);
+                        let trail_color = [
+                            meteor.color[0] * trail_alpha,
+                            meteor.color[1] * trail_alpha,
+                            meteor.color[2] * trail_alpha * 0.5,
+                            trail_alpha,
+                        ];
+                        let trail = generate_sphere(trail_pos, trail_size, trail_color, 3);
+                        dynamic_mesh.merge(&trail);
+                    }
+                }
+            }
+        }
+
         // Builder mode: Ghost preview at cursor position
         if let Some(ghost_mesh) = self.generate_ghost_preview_mesh(time) {
             dynamic_mesh.merge(&ghost_mesh);
@@ -2451,15 +2519,16 @@ impl BattleArenaApp {
             let inv_view_proj = view_proj.inverse();
 
             // SDF cannon uniforms (camera, time, lighting)
+            // Low sun angle for dramatic rim lighting (apocalyptic battle atmosphere)
             let sdf_uniforms = SdfCannonUniforms {
                 view_proj: view_proj.to_cols_array_2d(),
                 inv_view_proj: inv_view_proj.to_cols_array_2d(),
                 camera_pos: self.camera.position.to_array(),
                 time,
-                sun_dir: [0.577, 0.577, 0.577], // Normalized (1,1,1)
-                fog_density: 0.0002,
-                fog_color: [0.7, 0.8, 0.95],
-                ambient: 0.3,
+                sun_dir: [0.0, 0.08, -0.996], // Low horizon sun (dramatic rim lighting)
+                fog_density: 0.008,           // Heavier fog for atmosphere
+                fog_color: [0.55, 0.35, 0.45], // Warm purple-orange fog
+                ambient: 0.15,                // Lower ambient for dramatic contrast
             };
             queue.write_buffer(sdf_uniform_buffer, 0, bytemuck::cast_slice(&[sdf_uniforms]));
 

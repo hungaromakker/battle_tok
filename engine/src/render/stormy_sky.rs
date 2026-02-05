@@ -142,6 +142,36 @@ impl StormySkyConfig {
             ..Default::default()
         }
     }
+
+    /// Create a preset for an apocalyptic battle arena with lava and meteors
+    /// Matching the dramatic concept art: purple sky, orange horizon, fiery atmosphere
+    pub fn battle_arena() -> Self {
+        Self {
+            cloud_speed: 0.12,                          // Faster, more dramatic
+            flow_speed: 0.04,
+            flow_amount: 0.5,
+            wave_amount: 0.3,
+            wave_distort: 0.08,
+            cloud_density: 2.0,                         // Thicker, heavier clouds
+            cloud_scale: 1.5,
+            cloud_bias: -0.15,
+            bump_offset: 0.15,
+            parallax_steps: 8.0,
+            cloud_height: 80.0,
+            world_scale: 1.0,
+            // Low sun for dramatic rim lighting from horizon (lava glow)
+            sun_dir: Vec3::new(0.0, 0.08, -1.0).normalize(),
+            lightning_intensity: 0.8,                   // Active lightning
+            // Cloud colors: dark purple with fiery orange underlit
+            cloud_color1: Vec3::new(0.85, 0.45, 0.25),  // Orange-lit cloud edges
+            cloud_color2: Vec3::new(0.12, 0.08, 0.18),  // Deep purple shadows
+            // Sky gradient
+            upper_color: Vec3::new(0.15, 0.08, 0.25),   // Dark purple zenith
+            // Horizon fog: fiery orange-red glow from lava
+            fog_color: Vec3::new(0.55, 0.25, 0.15),     // Warm orange-red
+            fog_density: 0.75,
+        }
+    }
 }
 
 /// GPU uniform buffer layout (must match WGSL struct)

@@ -1,0 +1,31 @@
+{
+    "story_id": "US-P2-001",
+    "title": "Integrate Apocalyptic Sky Preset",
+    "status": "pending",
+    "focus": "",
+    "criteria": [
+        {"text": "Sky shows dark purple at zenith", "done": false, "notes": ""},
+        {"text": "Orange-red fog visible at horizon", "done": false, "notes": ""},
+        {"text": "Lightning flashes every 3-8 seconds", "done": false, "notes": ""},
+        {"text": "cargo check passes", "done": false, "notes": ""},
+        {"text": "cargo run --bin battle_arena works", "done": false, "notes": ""}
+    ],
+    "checklist": [
+        {"item": "Read spec.md and understand the task", "done": false},
+        {"item": "Find StormySky initialization in battle_arena.rs", "done": false},
+        {"item": "Change to StormySky::with_config with battle_arena preset", "done": false},
+        {"item": "Add lightning_timer field and update logic", "done": false},
+        {"item": "Run cargo check to verify compilation", "done": false},
+        {"item": "Test with cargo run --bin battle_arena", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": [],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "created_at": "2026-02-05T15:15:00"
+}
