@@ -5,22 +5,27 @@
 //! - Grime darkening near ground level
 //! - Warm torch bounce lighting with flicker
 //! - Lambert diffuse lighting from sun
+//! - Dynamic point light support (torches from PointLightManager)
 //!
 //! # Usage
 //!
 //! ```rust,ignore
-//! // Initialize
-//! let material = CastleMaterial::new(&device, surface_format);
+//! // Initialize (requires PointLightManager for pipeline layout)
+//! let point_lights = PointLightManager::new(&device);
+//! let material = CastleMaterial::new(&device, surface_format, &point_lights);
 //!
-//! // Each frame
-//! material.update(&queue, &camera, time, &config);
+//! // Each frame - update both systems
+//! point_lights.update(&queue, time);
+//! material.update(&queue, view_proj, camera_pos, time);
 //!
-//! // Render (bind during mesh rendering)
-//! material.bind(&mut render_pass);
+//! // Render (bind both material and point lights)
+//! material.bind(&mut render_pass, &point_lights);
 //! ```
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
+
+use super::point_lights::PointLightManager;
 
 /// Castle stone material configuration
 #[derive(Clone, Copy, Debug)]
@@ -161,6 +166,8 @@ struct CastleUniforms {
 const _: () = assert!(std::mem::size_of::<CastleUniforms>() == 176);
 
 /// Castle stone material renderer
+///
+/// Requires a PointLightManager to be bound at render time (bind group 1).
 pub struct CastleMaterial {
     pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
@@ -171,8 +178,12 @@ pub struct CastleMaterial {
 
 impl CastleMaterial {
     /// Create a new castle material with default configuration
-    pub fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
-        Self::with_config(device, surface_format, CastleMaterialConfig::default())
+    pub fn new(
+        device: &wgpu::Device,
+        surface_format: wgpu::TextureFormat,
+        point_light_manager: &PointLightManager,
+    ) -> Self {
+        Self::with_config(device, surface_format, CastleMaterialConfig::default(), point_light_manager)
     }
 
     /// Create a new castle material with custom configuration
@@ -180,6 +191,7 @@ impl CastleMaterial {
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
         config: CastleMaterialConfig,
+        point_light_manager: &PointLightManager,
     ) -> Self {
         // Load shader
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -222,10 +234,15 @@ impl CastleMaterial {
             }],
         });
 
-        // Create pipeline layout
+        // Get point light bind group layout for group 1
+        let point_light_bind_group_layout = point_light_manager.bind_group_layout();
+
+        // Create pipeline layout with both bind groups:
+        // Group 0: Castle uniforms (view_proj, camera, sun, etc.)
+        // Group 1: Point lights (storage buffer + light count)
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Castle Stone Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
+            bind_group_layouts: &[&bind_group_layout, point_light_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -370,10 +387,20 @@ impl CastleMaterial {
     }
 
     /// Bind the material for rendering
-    /// Call this before drawing meshes that use this material
-    pub fn bind<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
+    ///
+    /// This sets both bind groups:
+    /// - Group 0: Castle stone uniforms (view_proj, sun, fog, etc.)
+    /// - Group 1: Point lights (from PointLightManager)
+    ///
+    /// Call this before drawing meshes that use this material.
+    pub fn bind<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        point_light_manager: &'a PointLightManager,
+    ) {
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, &self.bind_group, &[]);
+        render_pass.set_bind_group(1, point_light_manager.bind_group(), &[]);
     }
 
     /// Get the bind group for external use

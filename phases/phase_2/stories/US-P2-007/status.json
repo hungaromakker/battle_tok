@@ -28,7 +28,7 @@
     "iteration": 1,
     "failed_reasons": [],
     "dependencies": [],
-    "commit_hash": "08e231cc3de578ece8e2265bdd7f70a8fa9d0500",
+    "commit_hash": "dc46f3c5978084cb53595c2150e9be8721a138a7",
     "files_modified": [
         "shaders/flag.wgsl",
         "engine/src/render/flag_material.rs",

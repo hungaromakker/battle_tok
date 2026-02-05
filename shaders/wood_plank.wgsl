@@ -8,6 +8,7 @@
 // - Fog integration
 
 // Uniforms - scalar fields to match Rust alignment
+// Total size: 144 bytes (aligned to 16)
 struct WoodPlankUniforms {
     view_proj: mat4x4<f32>,           // 64 bytes (offset 0)
     camera_pos_x: f32,                // 4 bytes (offset 64)
@@ -28,9 +29,8 @@ struct WoodPlankUniforms {
     wood_color_b: f32,                // 4 bytes (offset 124)
     grain_scale: f32,                 // 4 bytes (offset 128)
     grain_strength: f32,              // 4 bytes (offset 132)
-    _pad1: f32,                       // 4 bytes (offset 136) - padding
-    _pad2: f32,                       // 4 bytes (offset 140) - padding
-    _pad3: f32,                       // 4 bytes (offset 144) - align to 16
+    _pad1: f32,                       // 4 bytes (offset 136) - padding to 144
+    _pad2: f32,                       // 4 bytes (offset 140) - padding to 144
 }
 
 @group(0) @binding(0)

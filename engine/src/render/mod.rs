@@ -33,8 +33,10 @@ pub mod sky;
 pub mod sky_cubemap;
 pub mod stormy_sky;
 pub mod castle_material;
+pub mod bridge_materials;
 pub mod flag_material;
 pub mod point_lights;
+pub mod particles;
 pub mod uniforms;
 
 // Re-export commonly used types for convenience
@@ -69,10 +71,22 @@ pub use castle_material::{CastleMaterial, CastleMaterialConfig};
 // Re-export flag material types (Phase 2: Team Flag Shader)
 pub use flag_material::{FlagMaterial, FlagMaterialConfig, FlagTeam, FlagVertex};
 
+// Re-export bridge material types (Phase 2: Chain Bridge Material Shaders)
+pub use bridge_materials::{
+    WoodPlankMaterial, WoodPlankConfig,
+    ChainMetalMaterial, ChainMetalConfig,
+};
+
 // Re-export point light types (Phase 2: Torch Lighting System)
 pub use point_lights::{
     PointLight, PointLightManager,
     MAX_POINT_LIGHTS, POINT_LIGHT_BUFFER_SIZE, LIGHT_COUNT_BUFFER_SIZE,
+};
+
+// Re-export particle system types (Phase 2: Ember/Ash Particle System)
+pub use particles::{
+    Particle, GpuParticle, ParticleSystem, ParticleUniforms,
+    MAX_PARTICLES, GPU_PARTICLE_SIZE, PARTICLE_BUFFER_SIZE, PARTICLE_UNIFORMS_SIZE,
 };
 
 // Re-export SDF baker types

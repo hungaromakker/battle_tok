@@ -470,13 +470,77 @@ impl BuildingPhysics {
                 Some(s) => s,
                 None => continue,
             };
+            
+            // Get material-specific friction
+            let (friction_static, friction_dynamic) = get_friction_coefficients(state.material_index);
 
-            // Skip if grounded and stable
+            // === FORCE INTEGRATION ===
+            // Apply accumulated forces: F = ma → a = F/m → v += a*dt
+            if state.mass > 0.0 && state.accumulated_force.length_squared() > 0.001 {
+                let acceleration = state.accumulated_force / state.mass;
+                state.velocity += acceleration * dt;
+            }
+            
+            // === FRICTION CALCULATION ===
+            // When grounded, apply friction opposing horizontal motion
+            if state.grounded {
+                let horizontal_velocity = Vec3::new(state.velocity.x, 0.0, state.velocity.z);
+                let speed = horizontal_velocity.length();
+                
+                if speed > 0.001 {
+                    // Normal force = mass * gravity (on flat ground)
+                    let normal_force = state.mass * self.config.gravity;
+                    
+                    // Use static friction if nearly stationary, dynamic otherwise
+                    let friction_coeff = if speed < 0.1 {
+                        friction_static
+                    } else {
+                        friction_dynamic
+                    };
+                    
+                    // Friction force magnitude = μ * N
+                    let friction_magnitude = friction_coeff * normal_force;
+                    
+                    // Friction acceleration = F / m = μ * g
+                    let friction_accel = friction_magnitude / state.mass;
+                    
+                    // Friction opposes motion direction
+                    let friction_dir = -horizontal_velocity.normalize();
+                    
+                    // Calculate velocity reduction (capped to not reverse direction)
+                    let velocity_reduction = friction_accel * dt;
+                    
+                    if velocity_reduction >= speed {
+                        // Friction stops the block completely
+                        state.velocity.x = 0.0;
+                        state.velocity.z = 0.0;
+                    } else {
+                        // Apply friction deceleration
+                        state.velocity += friction_dir * velocity_reduction;
+                    }
+                }
+            }
+            
+            // === AIR DRAG ===
+            // Apply air resistance (quadratic drag: F = -kv²)
+            if !state.grounded {
+                let speed_sq = state.velocity.length_squared();
+                if speed_sq > 0.01 {
+                    let drag_force = self.config.air_drag * speed_sq;
+                    let drag_accel = drag_force / state.mass.max(1.0);
+                    let drag_dir = -state.velocity.normalize();
+                    state.velocity += drag_dir * drag_accel * dt;
+                }
+            }
+
+            // Skip further processing if grounded and stable (after friction applied)
             if state.grounded && state.velocity.length() < self.config.velocity_threshold {
+                state.velocity = Vec3::ZERO;
+                state.reset_frame();
                 continue;
             }
 
-            // Check support
+            // Check support - block starts falling if not supported
             if !state.grounded && !state.structurally_supported {
                 // Apply gravity
                 state.velocity.y -= self.config.gravity * dt;
@@ -499,6 +563,9 @@ impl BuildingPhysics {
                     self.blocks_to_remove.push(block_id);
                 }
             }
+            
+            // Reset frame-specific values at end
+            state.reset_frame();
 
             // Apply velocity
             let new_position = position + state.velocity * dt;
@@ -511,12 +578,28 @@ impl BuildingPhysics {
             };
 
             if block_bottom <= self.config.ground_level {
+                // Calculate impact force: F = m * Δv / Δt
+                // For collision, Δt is very small (~1 frame), so we estimate
+                let impact_velocity = state.velocity.y.abs();
+                let impact_force = state.mass * impact_velocity / dt.max(0.001);
+                state.record_impact(impact_force);
+                
+                // Mark as loose if it was falling (detached from structure)
+                if !state.structurally_supported && state.fall_time > 0.1 {
+                    state.is_loose = true;
+                }
+                
                 // Hit ground
                 state.grounded = true;
                 state.structurally_supported = true;
+                
+                // Use material-specific restitution for bounce
+                let (_, friction_dynamic) = get_friction_coefficients(state.material_index);
                 state.velocity.y = -state.velocity.y * self.config.bounce_damping;
-                state.velocity.x *= 0.8; // Friction
-                state.velocity.z *= 0.8;
+                
+                // Apply friction to horizontal velocity (use material friction)
+                state.velocity.x *= 1.0 - friction_dynamic;
+                state.velocity.z *= 1.0 - friction_dynamic;
                 state.angular_velocity *= 0.5;
 
                 // Snap to ground if velocity is low
@@ -540,6 +623,9 @@ impl BuildingPhysics {
 
             // Collision with other blocks
             self.check_block_collisions(block_id, manager);
+            
+            // Update shape-specific rolling/sliding behavior
+            self.update_rolling_behavior(block_id, &block.shape, dt);
         }
 
         // Invalidate graph since positions may have changed
@@ -605,6 +691,171 @@ impl BuildingPhysics {
                     self.graph_dirty = true;
                     break;
                 }
+            }
+        }
+    }
+    
+    /// Check if a block should disintegrate based on impact force vs material strength
+    /// Returns: (should_disintegrate, particle_count) or None if no action needed
+    fn check_impact_threshold(&mut self, block_id: u32) -> Option<(bool, usize)> {
+        let state = self.states.get_mut(&block_id)?;
+        
+        if state.peak_impact <= 0.0 {
+            return None;
+        }
+        
+        let break_threshold = get_break_threshold(state.material_index);
+        
+        if state.peak_impact > break_threshold {
+            // Force exceeds threshold - disintegrate!
+            state.should_disintegrate = true;
+            
+            // Calculate particle count based on how much force exceeded threshold
+            let force_ratio = state.peak_impact / break_threshold;
+            let particle_count = ((force_ratio * 8.0) as usize).clamp(4, 32);
+            
+            self.blocks_to_remove.push(block_id);
+            
+            Some((true, particle_count))
+        } else if state.peak_impact > break_threshold * 0.3 {
+            // Partial impact - knock loose but don't destroy
+            if !state.is_loose {
+                state.is_loose = true;
+                state.structurally_supported = false;
+                // Give it a small upward bounce from the impact
+                state.velocity.y += (state.peak_impact / state.mass.max(1.0)) * 0.01;
+            }
+            
+            Some((false, 0))
+        } else {
+            None
+        }
+    }
+    
+    /// Check all blocks for impact threshold and return blocks that disintegrated
+    /// Returns: Vec of (block_id, particle_count, impact_velocity)
+    pub fn check_all_impact_thresholds(&mut self) -> Vec<(u32, usize, Vec3)> {
+        let block_ids: Vec<u32> = self.states.keys().copied().collect();
+        let mut disintegrated = Vec::new();
+        
+        for block_id in block_ids {
+            // Get velocity before potential removal
+            let velocity = self.states.get(&block_id)
+                .map(|s| s.velocity)
+                .unwrap_or(Vec3::ZERO);
+            
+            if let Some((should_disintegrate, particle_count)) = self.check_impact_threshold(block_id) {
+                if should_disintegrate {
+                    disintegrated.push((block_id, particle_count, velocity));
+                }
+            }
+        }
+        
+        disintegrated
+    }
+
+    /// Update shape-specific rolling/sliding behavior
+    /// Spheres roll, cylinders can roll or slide, cubes slide and tumble
+    fn update_rolling_behavior(&mut self, block_id: u32, shape: &BuildingBlockShape, dt: f32) {
+        let state = match self.states.get_mut(&block_id) {
+            Some(s) => s,
+            None => return,
+        };
+        
+        // Only apply rolling physics when grounded and moving
+        if !state.grounded {
+            return;
+        }
+        
+        let horizontal_speed = Vec3::new(state.velocity.x, 0.0, state.velocity.z).length();
+        if horizontal_speed < 0.01 {
+            state.rolling_axis = None;
+            state.tumble_progress = 0.0;
+            return;
+        }
+        
+        match shape {
+            BuildingBlockShape::Sphere { radius } => {
+                // True rolling: ω = v / r (no-slip condition)
+                // Rolling axis is perpendicular to velocity direction
+                let velocity_dir = Vec3::new(state.velocity.x, 0.0, state.velocity.z).normalize();
+                let roll_axis = Vec3::new(-velocity_dir.z, 0.0, velocity_dir.x); // Cross with Y-up
+                
+                state.rolling_axis = Some(roll_axis);
+                
+                // Angular velocity for rolling without slip
+                let angular_speed = horizontal_speed / radius;
+                state.angular_velocity = roll_axis * angular_speed;
+                state.fall_rotation += state.angular_velocity * dt;
+            }
+            
+            BuildingBlockShape::Cylinder { radius, half_height: _ } => {
+                // Cylinders roll when moving perpendicular to their axis
+                // Assume cylinder axis is vertical (Y-up) for simplicity
+                let velocity_dir = Vec3::new(state.velocity.x, 0.0, state.velocity.z).normalize();
+                let roll_axis = Vec3::new(-velocity_dir.z, 0.0, velocity_dir.x);
+                
+                state.rolling_axis = Some(roll_axis);
+                
+                let angular_speed = horizontal_speed / radius;
+                state.angular_velocity = roll_axis * angular_speed;
+                state.fall_rotation += state.angular_velocity * dt;
+            }
+            
+            BuildingBlockShape::Cube { half_extents } => {
+                // Cubes slide, but can tumble at edges when enough momentum
+                // Tumble threshold: kinetic energy > potential energy to tip
+                // Simplified: if speed > sqrt(2 * g * h) where h is half-height
+                
+                let tumble_threshold = (2.0 * 9.81 * half_extents.y).sqrt();
+                
+                if horizontal_speed > tumble_threshold * 0.8 {
+                    // Start or continue tumble
+                    state.tumble_progress += dt * (horizontal_speed / tumble_threshold);
+                    
+                    if state.tumble_progress >= 1.0 {
+                        // Complete tumble - snap to 90 degree rotation
+                        let velocity_dir = Vec3::new(state.velocity.x, 0.0, state.velocity.z).normalize();
+                        let tumble_axis = Vec3::new(-velocity_dir.z, 0.0, velocity_dir.x);
+                        
+                        // Add 90 degrees (π/2) rotation around tumble axis
+                        state.fall_rotation += tumble_axis * std::f32::consts::FRAC_PI_2;
+                        state.tumble_progress = 0.0;
+                        
+                        // Reduce velocity from tumble energy loss
+                        state.velocity.x *= 0.7;
+                        state.velocity.z *= 0.7;
+                    }
+                    
+                    state.rolling_axis = None; // Cubes don't roll, they slide/tumble
+                } else {
+                    // Just sliding
+                    state.rolling_axis = None;
+                    state.tumble_progress = 0.0;
+                    
+                    // Apply angular damping when sliding
+                    state.angular_velocity *= 0.9;
+                }
+            }
+            
+            BuildingBlockShape::Wedge { base, height: _, depth: _ } => {
+                // Wedges slide, rarely tumble
+                let tumble_threshold = (2.0 * 9.81 * base * 0.3).sqrt();
+                
+                if horizontal_speed > tumble_threshold {
+                    state.tumble_progress += dt * 0.5;
+                    if state.tumble_progress >= 1.0 {
+                        state.tumble_progress = 0.0;
+                        state.velocity *= 0.6;
+                    }
+                }
+                state.rolling_axis = None;
+            }
+            
+            _ => {
+                // Other shapes: just slide
+                state.rolling_axis = None;
+                state.angular_velocity *= 0.95; // Gradual damping
             }
         }
     }

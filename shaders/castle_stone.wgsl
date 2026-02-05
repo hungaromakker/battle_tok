@@ -44,6 +44,26 @@ struct CastleUniforms {
 var<uniform> uniforms: CastleUniforms;
 
 // ============================================================================
+// POINT LIGHT SYSTEM
+// ============================================================================
+
+/// Point light structure matching PointLightManager's GPU layout (32 bytes)
+struct PointLight {
+    position: vec3<f32>,  // 12 bytes
+    radius: f32,          // 4 bytes
+    color: vec3<f32>,     // 12 bytes
+    intensity: f32,       // 4 bytes
+}
+
+/// Point lights storage buffer (from PointLightManager)
+@group(1) @binding(0)
+var<storage, read> point_lights: array<PointLight>;
+
+/// Number of active point lights (padded to 16 bytes, only first u32 used)
+@group(1) @binding(1)
+var<uniform> light_count: vec4<u32>;
+
+// ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
 
@@ -231,34 +251,67 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ambient = vec3<f32>(0.15, 0.18, 0.22) * uniforms.ambient_strength;
 
     // ========================================================================
-    // TORCH BOUNCE LIGHTING
+    // POINT LIGHT CONTRIBUTION (from PointLightManager)
+    // ========================================================================
+
+    // Accumulate point light contribution from all active torches
+    var point_light_contribution = vec3<f32>(0.0, 0.0, 0.0);
+    let num_lights = light_count.x;
+
+    for (var i = 0u; i < num_lights; i++) {
+        let light = point_lights[i];
+
+        // Vector from surface to light
+        let light_vec = light.position - world_pos;
+        let dist_sq = dot(light_vec, light_vec);
+        let radius_sq = light.radius * light.radius;
+
+        // Smooth inverse-square attenuation with radius-based falloff
+        // This formula gives 0.5 at light.radius and approaches 0 beyond
+        let attenuation = radius_sq / (dist_sq + radius_sq);
+
+        // Lambert N·L factor - surfaces facing the light receive more light
+        let light_dir = normalize(light_vec);
+        let ndl = max(dot(normal, light_dir), 0.0);
+
+        // Accumulate this light's contribution
+        // Intensity already includes flicker from PointLightManager::update()
+        point_light_contribution += light.color * light.intensity * attenuation * ndl;
+    }
+
+    // ========================================================================
+    // TORCH BOUNCE LIGHTING (ambient upward glow, complements point lights)
     // ========================================================================
 
     // Simulated warm torch light bouncing from below
-    // Torches illuminate lower portions of walls with warm orange glow
+    // This provides additional ambient fill from torch reflections
     let torch_color = get_torch_color();
     let torch_strength = uniforms.torch_strength;
 
-    // Torch light comes from below (upward facing surfaces catch more)
+    // Torch bounce comes from below (upward facing surfaces catch more)
     let torch_dir = vec3<f32>(0.0, 1.0, 0.0);
     let torch_dot = max(dot(normal, torch_dir), 0.0);
 
-    // Torch light is stronger near the ground and fades with height
+    // Torch bounce is stronger near the ground and fades with height
     let torch_height_falloff = clamp(1.0 - world_pos.y * 0.08, 0.0, 1.0);
 
-    // Add flicker to torch light
+    // Subtle ambient flicker for torch bounce
     let time = uniforms.time;
-    let flicker = 0.85 + 0.15 * sin(time * 12.0 + world_pos.x * 0.3)
-                      + 0.08 * sin(time * 23.0 + world_pos.z * 0.5);
+    let flicker = 0.9 + 0.1 * sin(time * 8.0 + world_pos.x * 0.2);
 
-    let torch_light = torch_color * torch_dot * torch_height_falloff * torch_strength * flicker;
+    // Scale down torch bounce since point lights now provide direct illumination
+    let torch_light = torch_color * torch_dot * torch_height_falloff * torch_strength * flicker * 0.3;
 
     // ========================================================================
     // FINAL COLOR COMPOSITION
     // ========================================================================
 
-    // Combine all lighting
-    let total_light = sun_light + ambient + torch_light;
+    // Combine all lighting sources:
+    // - Sun: main directional light
+    // - Ambient: sky fill light
+    // - Point lights: direct torch illumination (dynamic, flickering)
+    // - Torch bounce: ambient warm glow from below
+    let total_light = sun_light + ambient + point_light_contribution + torch_light;
     var final_color = base_color * total_light;
 
     // ========================================================================

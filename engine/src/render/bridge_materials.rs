@@ -99,6 +99,7 @@ impl WoodPlankConfig {
 
 /// GPU uniform buffer layout for wood plank shader
 /// Total size: 144 bytes (aligned to 16)
+/// 64 (mat4x4) + 17 scalars * 4 = 64 + 68 = 132 + 12 pad = 144
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct WoodPlankUniforms {
@@ -121,13 +122,12 @@ struct WoodPlankUniforms {
     wood_color_b: f32,                // 4 bytes (offset 124)
     grain_scale: f32,                 // 4 bytes (offset 128)
     grain_strength: f32,              // 4 bytes (offset 132)
-    _pad1: f32,                       // 4 bytes (offset 136)
-    _pad2: f32,                       // 4 bytes (offset 140)
-    _pad3: f32,                       // 4 bytes (offset 144) - align to 16
+    _pad1: f32,                       // 4 bytes (offset 136) - padding to 144
+    _pad2: f32,                       // 4 bytes (offset 140) - padding to 144
 }
 
 // Verify struct size at compile time (must be multiple of 16)
-const _: () = assert!(std::mem::size_of::<WoodPlankUniforms>() == 152);
+const _: () = assert!(std::mem::size_of::<WoodPlankUniforms>() == 144);
 
 /// Wood plank material renderer for bridge walkway
 pub struct WoodPlankMaterial {
@@ -325,7 +325,6 @@ impl WoodPlankMaterial {
             grain_strength: self.config.grain_strength,
             _pad1: 0.0,
             _pad2: 0.0,
-            _pad3: 0.0,
         };
 
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
