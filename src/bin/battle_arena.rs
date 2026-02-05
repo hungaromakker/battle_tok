@@ -1764,26 +1764,13 @@ impl BattleArenaApp {
     }
 
     fn render(&mut self) {
-        let Some(ref gpu) = self.gpu else { return };
-        let device = &gpu.device;
-        let queue = &gpu.queue;
-        let surface = &gpu.surface;
-        let config = &gpu.surface_config;
-        let pipeline = &gpu.pipeline;
-        let uniform_buffer = &gpu.uniform_buffer;
-        let bind_group = &gpu.uniform_bind_group;
-        let static_vb = &gpu.static_vertex_buffer;
-        let static_ib = &gpu.static_index_buffer;
-        let dynamic_vb = &gpu.dynamic_vertex_buffer;
-        let dynamic_ib = &gpu.dynamic_index_buffer;
-        let hex_wall_vb = &gpu.hex_wall_vertex_buffer;
-        let hex_wall_ib = &gpu.hex_wall_index_buffer;
-        let depth_view = &gpu.depth_texture;
-        let scene = self.scene.as_ref().unwrap();
-
-        let output = match surface.get_current_texture() {
-            Ok(t) => t,
-            Err(_) => return,
+        // Acquire surface texture (scoped to release borrow of self.gpu)
+        let output = {
+            let Some(ref gpu) = self.gpu else { return };
+            match gpu.surface.get_current_texture() {
+                Ok(t) => t,
+                Err(_) => return,
+            }
         };
         let view = output
             .texture
@@ -1792,31 +1779,67 @@ impl BattleArenaApp {
         let now = std::time::Instant::now();
         let delta_time = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
 
-        // Build dynamic mesh from scene data
-        let mut dynamic_mesh = scene.generate_dynamic_mesh();
+        let dynamic_index_count = self.prepare_frame_data(time, delta_time);
+
+        let mut encoder = self.gpu.as_ref().unwrap().device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            },
+        );
+
+        self.render_sky(&mut encoder, &view);
+        self.render_meshes(&mut encoder, &view, dynamic_index_count);
+        self.render_sdf_cannon(&mut encoder, &view);
+        self.render_particles(&mut encoder, &view);
+        self.render_ui(&mut encoder, &view);
+
+        self.gpu
+            .as_ref()
+            .unwrap()
+            .queue
+            .submit(std::iter::once(encoder.finish()));
+        output.present();
+    }
+
+    /// Prepare all GPU buffer data for the current frame: dynamic meshes, uniforms,
+    /// SDF cannon data, and visual system updates. Returns the dynamic index count.
+    fn prepare_frame_data(&mut self, time: f32, delta_time: f32) -> u32 {
+        // Build dynamic mesh from scene data (needs &self.scene, then &self for ghost/grid)
+        let mut dynamic_mesh = self.scene.as_ref().unwrap().generate_dynamic_mesh();
         let mut dynamic_indices: Vec<u32> = (0..dynamic_mesh.len() as u32).collect();
 
-        // Builder mode ghost preview
         if let Some(ghost_mesh) = self.generate_ghost_preview_mesh(time) {
             let base = dynamic_mesh.len() as u32;
             dynamic_mesh.extend(ghost_mesh.vertices);
             dynamic_indices.extend(ghost_mesh.indices.iter().map(|i| i + base));
         }
 
-        // Builder mode grid overlay
         if let Some(grid_mesh) = self.generate_grid_overlay_mesh() {
             let base = dynamic_mesh.len() as u32;
             dynamic_mesh.extend(grid_mesh.vertices);
             dynamic_indices.extend(grid_mesh.indices.iter().map(|i| i + base));
         }
 
+        let dynamic_index_count = dynamic_indices.len() as u32;
+
+        let gpu = self.gpu.as_ref().unwrap();
+        let queue = &gpu.queue;
+        let config = &gpu.surface_config;
+        let scene = self.scene.as_ref().unwrap();
+
         // Update dynamic buffers
         if !dynamic_mesh.is_empty() {
-            queue.write_buffer(dynamic_vb, 0, bytemuck::cast_slice(&dynamic_mesh));
-            queue.write_buffer(dynamic_ib, 0, bytemuck::cast_slice(&dynamic_indices));
+            queue.write_buffer(
+                &gpu.dynamic_vertex_buffer,
+                0,
+                bytemuck::cast_slice(&dynamic_mesh),
+            );
+            queue.write_buffer(
+                &gpu.dynamic_index_buffer,
+                0,
+                bytemuck::cast_slice(&dynamic_indices),
+            );
         }
-        // Note: dynamic_index_count updated after render uses it
-        let dynamic_index_count = dynamic_indices.len() as u32;
 
         // Update uniforms
         let aspect = config.width as f32 / config.height as f32;
@@ -1839,12 +1862,10 @@ impl BattleArenaApp {
             ];
         }
 
-        queue.write_buffer(uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
         // SDF cannon uniforms
         {
-            let sdf_uniform_buffer = &gpu.sdf_cannon_uniform_buffer;
-            let sdf_data_buffer = &gpu.sdf_cannon_data_buffer;
             let inv_view_proj = view_proj.inverse();
             let sdf_uniforms = SdfCannonUniforms {
                 view_proj: view_proj.to_cols_array_2d(),
@@ -1856,7 +1877,11 @@ impl BattleArenaApp {
                 fog_color: [0.65, 0.45, 0.55],
                 ambient: 0.25,
             };
-            queue.write_buffer(sdf_uniform_buffer, 0, bytemuck::cast_slice(&[sdf_uniforms]));
+            queue.write_buffer(
+                &gpu.sdf_cannon_uniform_buffer,
+                0,
+                bytemuck::cast_slice(&[sdf_uniforms]),
+            );
 
             let cannon = scene.cannon.cannon();
             let (sin_az, cos_az) = (cannon.barrel_azimuth * 0.5).sin_cos();
@@ -1884,7 +1909,11 @@ impl BattleArenaApp {
                 color: [0.4, 0.35, 0.3],
                 _pad1: 0.0,
             };
-            queue.write_buffer(sdf_data_buffer, 0, bytemuck::cast_slice(&[sdf_cannon_data]));
+            queue.write_buffer(
+                &gpu.sdf_cannon_data_buffer,
+                0,
+                bytemuck::cast_slice(&[sdf_cannon_data]),
+            );
         }
 
         // Update visual systems
@@ -1905,163 +1934,7 @@ impl BattleArenaApp {
             fog_post.update(queue, view_proj, self.camera.position);
         }
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
-
-        // PASS 0: Skybox
-        if let Some(ref apocalyptic_sky) = self.apocalyptic_sky {
-            apocalyptic_sky.render_to_view(&mut encoder, &view);
-        }
-
-        // PASS 1: Mesh rendering
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Mesh Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            render_pass.set_pipeline(pipeline);
-            render_pass.set_bind_group(0, bind_group, &[]);
-
-            render_pass.set_vertex_buffer(0, static_vb.slice(..));
-            render_pass.set_index_buffer(static_ib.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..gpu.static_index_count, 0, 0..1);
-
-            if dynamic_index_count > 0 {
-                render_pass.set_vertex_buffer(0, dynamic_vb.slice(..));
-                render_pass.set_index_buffer(dynamic_ib.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..dynamic_index_count, 0, 0..1);
-            }
-
-            if gpu.hex_wall_index_count > 0 {
-                render_pass.set_vertex_buffer(0, hex_wall_vb.slice(..));
-                render_pass.set_index_buffer(hex_wall_ib.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..gpu.hex_wall_index_count, 0, 0..1);
-            }
-
-            if let (Some(block_vb), Some(block_ib)) =
-                (&gpu.block_vertex_buffer, &gpu.block_index_buffer)
-            {
-                if gpu.block_index_count > 0 {
-                    render_pass.set_vertex_buffer(0, block_vb.slice(..));
-                    render_pass.set_index_buffer(block_ib.slice(..), wgpu::IndexFormat::Uint32);
-                    render_pass.draw_indexed(0..gpu.block_index_count, 0, 0..1);
-                }
-            }
-
-            // Block placement preview
-            if scene.building.toolbar().visible
-                && scene.building.toolbar().show_preview
-                && !scene.building.toolbar().is_bridge_mode()
-            {
-                if let Some(preview_pos) = scene.building.toolbar().preview_position {
-                    let shape = scene.building.toolbar().get_selected_shape();
-                    let preview_block = BuildingBlock::new(shape, preview_pos, 0);
-                    let (preview_verts, preview_indices) = preview_block.generate_mesh();
-
-                    let pulse = (self.start_time.elapsed().as_secs_f32() * 3.0).sin() * 0.5 + 0.5;
-                    let highlight_color = [0.2 + pulse * 0.3, 0.9, 0.2 + pulse * 0.2, 0.85];
-
-                    let preview_vertices: Vec<Vertex> = preview_verts
-                        .iter()
-                        .map(|v| Vertex {
-                            position: v.position,
-                            normal: v.normal,
-                            color: highlight_color,
-                        })
-                        .collect();
-
-                    if !preview_vertices.is_empty() && !preview_indices.is_empty() {
-                        let preview_vb =
-                            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some("Preview VB"),
-                                contents: bytemuck::cast_slice(&preview_vertices),
-                                usage: wgpu::BufferUsages::VERTEX,
-                            });
-                        let preview_ib =
-                            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some("Preview IB"),
-                                contents: bytemuck::cast_slice(&preview_indices),
-                                usage: wgpu::BufferUsages::INDEX,
-                            });
-                        render_pass.set_vertex_buffer(0, preview_vb.slice(..));
-                        render_pass
-                            .set_index_buffer(preview_ib.slice(..), wgpu::IndexFormat::Uint32);
-                        render_pass.draw_indexed(0..preview_indices.len() as u32, 0, 0..1);
-                    }
-                }
-            }
-
-            // Merged meshes
-            for merged in &gpu.merged_mesh_buffers {
-                if merged.index_count > 0 {
-                    render_pass.set_vertex_buffer(0, merged.vertex_buffer.slice(..));
-                    render_pass
-                        .set_index_buffer(merged.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    render_pass.draw_indexed(0..merged.index_count, 0, 0..1);
-                }
-            }
-
-            // Trees
-            if gpu.tree_index_count > 0 {
-                render_pass.set_vertex_buffer(0, gpu.tree_vertex_buffer.slice(..));
-                render_pass
-                    .set_index_buffer(gpu.tree_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..gpu.tree_index_count, 0, 0..1);
-            }
-        }
-
-        // PASS 2: SDF Cannon
-        {
-            let sdf_pipeline = &gpu.sdf_cannon_pipeline;
-            let sdf_bind_group = &gpu.sdf_cannon_bind_group;
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("SDF Cannon Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            render_pass.set_pipeline(sdf_pipeline);
-            render_pass.set_bind_group(0, sdf_bind_group, &[]);
-            render_pass.draw(0..3, 0..1);
-        }
-
-        // PASS 2.5: Particles
+        // Update particle uniforms
         if let Some(ref particle_system) = self.particle_system {
             particle_system.upload_particles(queue);
             particle_system.update_uniforms(
@@ -2069,341 +1942,402 @@ impl BattleArenaApp {
                 view_mat.to_cols_array_2d(),
                 proj_mat.to_cols_array_2d(),
             );
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Particle Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
+        }
+
+        dynamic_index_count
+    }
+
+    /// Render the apocalyptic sky background (no depth test).
+    fn render_sky(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        if let Some(ref apocalyptic_sky) = self.apocalyptic_sky {
+            apocalyptic_sky.render_to_view(encoder, view);
+        }
+    }
+
+    /// Render all static and dynamic meshes with depth testing: terrain, hex walls,
+    /// building blocks, block placement preview, merged meshes, and trees.
+    fn render_meshes(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        dynamic_index_count: u32,
+    ) {
+        let gpu = self.gpu.as_ref().unwrap();
+        let scene = self.scene.as_ref().unwrap();
+
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Mesh Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &gpu.depth_texture,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
                 }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            particle_system.render(&mut render_pass);
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        render_pass.set_pipeline(&gpu.pipeline);
+        render_pass.set_bind_group(0, &gpu.uniform_bind_group, &[]);
+
+        // Static terrain
+        render_pass.set_vertex_buffer(0, gpu.static_vertex_buffer.slice(..));
+        render_pass.set_index_buffer(gpu.static_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        render_pass.draw_indexed(0..gpu.static_index_count, 0, 0..1);
+
+        // Dynamic mesh (projectiles, debris, ghost preview, grid overlay)
+        if dynamic_index_count > 0 {
+            render_pass.set_vertex_buffer(0, gpu.dynamic_vertex_buffer.slice(..));
+            render_pass.set_index_buffer(
+                gpu.dynamic_index_buffer.slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
+            render_pass.draw_indexed(0..dynamic_index_count, 0, 0..1);
         }
 
-        // PASS 3: Terrain UI
+        // Hex walls
+        if gpu.hex_wall_index_count > 0 {
+            render_pass.set_vertex_buffer(0, gpu.hex_wall_vertex_buffer.slice(..));
+            render_pass.set_index_buffer(
+                gpu.hex_wall_index_buffer.slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
+            render_pass.draw_indexed(0..gpu.hex_wall_index_count, 0, 0..1);
+        }
+
+        // Building blocks
+        if let (Some(block_vb), Some(block_ib)) =
+            (&gpu.block_vertex_buffer, &gpu.block_index_buffer)
+        {
+            if gpu.block_index_count > 0 {
+                render_pass.set_vertex_buffer(0, block_vb.slice(..));
+                render_pass.set_index_buffer(block_ib.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..gpu.block_index_count, 0, 0..1);
+            }
+        }
+
+        // Block placement preview
+        if scene.building.toolbar().visible
+            && scene.building.toolbar().show_preview
+            && !scene.building.toolbar().is_bridge_mode()
+        {
+            if let Some(preview_pos) = scene.building.toolbar().preview_position {
+                let shape = scene.building.toolbar().get_selected_shape();
+                let preview_block = BuildingBlock::new(shape, preview_pos, 0);
+                let (preview_verts, preview_indices) = preview_block.generate_mesh();
+
+                let pulse = (self.start_time.elapsed().as_secs_f32() * 3.0).sin() * 0.5 + 0.5;
+                let highlight_color = [0.2 + pulse * 0.3, 0.9, 0.2 + pulse * 0.2, 0.85];
+
+                let preview_vertices: Vec<Vertex> = preview_verts
+                    .iter()
+                    .map(|v| Vertex {
+                        position: v.position,
+                        normal: v.normal,
+                        color: highlight_color,
+                    })
+                    .collect();
+
+                if !preview_vertices.is_empty() && !preview_indices.is_empty() {
+                    let preview_vb =
+                        gpu.device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("Preview VB"),
+                                contents: bytemuck::cast_slice(&preview_vertices),
+                                usage: wgpu::BufferUsages::VERTEX,
+                            });
+                    let preview_ib =
+                        gpu.device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("Preview IB"),
+                                contents: bytemuck::cast_slice(&preview_indices),
+                                usage: wgpu::BufferUsages::INDEX,
+                            });
+                    render_pass.set_vertex_buffer(0, preview_vb.slice(..));
+                    render_pass.set_index_buffer(preview_ib.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.draw_indexed(0..preview_indices.len() as u32, 0, 0..1);
+                }
+            }
+        }
+
+        // Merged meshes
+        for merged in &gpu.merged_mesh_buffers {
+            if merged.index_count > 0 {
+                render_pass.set_vertex_buffer(0, merged.vertex_buffer.slice(..));
+                render_pass
+                    .set_index_buffer(merged.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..merged.index_count, 0, 0..1);
+            }
+        }
+
+        // Trees
+        if gpu.tree_index_count > 0 {
+            render_pass.set_vertex_buffer(0, gpu.tree_vertex_buffer.slice(..));
+            render_pass
+                .set_index_buffer(gpu.tree_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..gpu.tree_index_count, 0, 0..1);
+        }
+    }
+
+    /// Render the SDF ray-marched cannon with its own pipeline and depth testing.
+    fn render_sdf_cannon(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        let gpu = self.gpu.as_ref().unwrap();
+
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("SDF Cannon Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &gpu.depth_texture,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        render_pass.set_pipeline(&gpu.sdf_cannon_pipeline);
+        render_pass.set_bind_group(0, &gpu.sdf_cannon_bind_group, &[]);
+        render_pass.draw(0..3, 0..1);
+    }
+
+    /// Render billboard particles (explosions, sparks) with depth testing.
+    fn render_particles(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        let Some(ref particle_system) = self.particle_system else {
+            return;
+        };
+        let gpu = self.gpu.as_ref().unwrap();
+
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Particle Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &gpu.depth_texture,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        particle_system.render(&mut render_pass);
+    }
+
+    /// Render all 2D UI overlays (no depth test): terrain editor, crosshair,
+    /// build toolbar, top bar HUD, and start overlay.
+    fn render_ui(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        let gpu = self.gpu.as_ref().unwrap();
+        let scene = self.scene.as_ref().unwrap();
+        let config = &gpu.surface_config;
+        let w = config.width as f32;
+        let h = config.height as f32;
+
+        // Terrain editor UI
         if self.terrain_ui.visible {
-            {
-                let ui_pipeline = &gpu.ui_pipeline;
-                let ui_bg = &gpu.ui_bind_group;
-                let ui_mesh = self
-                    .terrain_ui
-                    .generate_ui_mesh(config.width as f32, config.height as f32);
-                if !ui_mesh.vertices.is_empty() {
-                    let ui_vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("UI VB"),
-                        contents: bytemuck::cast_slice(&ui_mesh.vertices),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
-                    let ui_ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("UI IB"),
-                        contents: bytemuck::cast_slice(&ui_mesh.indices),
-                        usage: wgpu::BufferUsages::INDEX,
-                    });
-                    let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("UI Pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Load,
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
-                    rp.set_pipeline(ui_pipeline);
-                    rp.set_bind_group(0, ui_bg, &[]);
-                    rp.set_vertex_buffer(0, ui_vb.slice(..));
-                    rp.set_index_buffer(ui_ib.slice(..), wgpu::IndexFormat::Uint32);
-                    rp.draw_indexed(0..ui_mesh.indices.len() as u32, 0, 0..1);
-                }
-            }
+            let ui_mesh = self.terrain_ui.generate_ui_mesh(w, h);
+            self.draw_ui_mesh(encoder, view, "UI Pass", &ui_mesh);
         }
 
-        // PASS 4: Selection Cursor
+        // Selection crosshair
         if scene.building.toolbar().visible && !self.start_overlay.visible {
-            {
-                let ui_pipeline = &gpu.ui_pipeline;
-                let ui_bg = &gpu.ui_bind_group;
-                let w = config.width as f32;
-                let h = config.height as f32;
-                let (cx, cy) = self.current_mouse_pos.unwrap_or((w / 2.0, h / 2.0));
-                let size = 25.0;
-                let thickness = 4.0;
-                let gap = 8.0;
-                let pulse = (self.start_time.elapsed().as_secs_f32() * 3.0).sin() * 0.3 + 0.7;
-                let crosshair_color = [pulse, 1.0, 0.2, 0.95];
-                let to_ndc = |x: f32, y: f32| -> [f32; 3] {
-                    [(x / w) * 2.0 - 1.0, 1.0 - (y / h) * 2.0, 0.0]
-                };
-                let mut verts = Vec::new();
-                let mut idxs = Vec::new();
-                let add_quad = |verts: &mut Vec<Vertex>,
-                                idxs: &mut Vec<u32>,
-                                x1: f32,
-                                y1: f32,
-                                x2: f32,
-                                y2: f32,
-                                color: [f32; 4]| {
-                    let base = verts.len() as u32;
-                    let n = [0.0, 0.0, 1.0];
-                    verts.push(Vertex {
-                        position: to_ndc(x1, y1),
-                        normal: n,
-                        color,
-                    });
-                    verts.push(Vertex {
-                        position: to_ndc(x2, y1),
-                        normal: n,
-                        color,
-                    });
-                    verts.push(Vertex {
-                        position: to_ndc(x2, y2),
-                        normal: n,
-                        color,
-                    });
-                    verts.push(Vertex {
-                        position: to_ndc(x1, y2),
-                        normal: n,
-                        color,
-                    });
-                    idxs.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-                };
-                add_quad(
-                    &mut verts,
-                    &mut idxs,
-                    cx - size - gap,
-                    cy - thickness / 2.0,
-                    cx - gap,
-                    cy + thickness / 2.0,
-                    crosshair_color,
-                );
-                add_quad(
-                    &mut verts,
-                    &mut idxs,
-                    cx + gap,
-                    cy - thickness / 2.0,
-                    cx + size + gap,
-                    cy + thickness / 2.0,
-                    crosshair_color,
-                );
-                add_quad(
-                    &mut verts,
-                    &mut idxs,
-                    cx - thickness / 2.0,
-                    cy - size - gap,
-                    cx + thickness / 2.0,
-                    cy - gap,
-                    crosshair_color,
-                );
-                add_quad(
-                    &mut verts,
-                    &mut idxs,
-                    cx - thickness / 2.0,
-                    cy + gap,
-                    cx + thickness / 2.0,
-                    cy + size + gap,
-                    crosshair_color,
-                );
-                add_quad(
-                    &mut verts,
-                    &mut idxs,
-                    cx - 2.0,
-                    cy - 2.0,
-                    cx + 2.0,
-                    cy + 2.0,
-                    [1.0, 1.0, 1.0, 1.0],
-                );
-
-                if !verts.is_empty() {
-                    let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Cross VB"),
-                        contents: bytemuck::cast_slice(&verts),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
-                    let ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Cross IB"),
-                        contents: bytemuck::cast_slice(&idxs),
-                        usage: wgpu::BufferUsages::INDEX,
-                    });
-                    let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("Crosshair Pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Load,
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
-                    rp.set_pipeline(ui_pipeline);
-                    rp.set_bind_group(0, ui_bg, &[]);
-                    rp.set_vertex_buffer(0, vb.slice(..));
-                    rp.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                    rp.draw_indexed(0..idxs.len() as u32, 0, 0..1);
-                }
-            }
+            let crosshair_mesh = self.generate_crosshair_mesh(w, h);
+            self.draw_ui_mesh(encoder, view, "Crosshair Pass", &crosshair_mesh);
         }
 
-        // PASS 5: Build Toolbar
+        // Build toolbar
         if scene.building.toolbar().visible {
-            {
-                let ui_pipeline = &gpu.ui_pipeline;
-                let ui_bg = &gpu.ui_bind_group;
-                let toolbar_mesh = scene
-                    .building
-                    .toolbar()
-                    .generate_ui_mesh(config.width as f32, config.height as f32);
-                if !toolbar_mesh.vertices.is_empty() {
-                    let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Toolbar VB"),
-                        contents: bytemuck::cast_slice(&toolbar_mesh.vertices),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
-                    let ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Toolbar IB"),
-                        contents: bytemuck::cast_slice(&toolbar_mesh.indices),
-                        usage: wgpu::BufferUsages::INDEX,
-                    });
-                    let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("Toolbar Pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Load,
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
-                    rp.set_pipeline(ui_pipeline);
-                    rp.set_bind_group(0, ui_bg, &[]);
-                    rp.set_vertex_buffer(0, vb.slice(..));
-                    rp.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                    rp.draw_indexed(0..toolbar_mesh.indices.len() as u32, 0, 0..1);
-                }
-            }
+            let toolbar_mesh = scene.building.toolbar().generate_ui_mesh(w, h);
+            self.draw_ui_mesh(encoder, view, "Toolbar Pass", &toolbar_mesh);
         }
 
-        // PASS 6: Top Bar
+        // Top bar HUD
         if scene.game_state.top_bar.visible && !self.start_overlay.visible {
-            {
-                let ui_pipeline = &gpu.ui_pipeline;
-                let ui_bg = &gpu.ui_bind_group;
-                let (resources, day_cycle, population) = scene.game_state.ui_data();
-                let top_bar_mesh = scene.game_state.top_bar.generate_ui_mesh(
-                    config.width as f32,
-                    config.height as f32,
-                    resources,
-                    day_cycle,
-                    population,
-                );
-                if !top_bar_mesh.vertices.is_empty() {
-                    let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Top Bar VB"),
-                        contents: bytemuck::cast_slice(&top_bar_mesh.vertices),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
-                    let ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Top Bar IB"),
-                        contents: bytemuck::cast_slice(&top_bar_mesh.indices),
-                        usage: wgpu::BufferUsages::INDEX,
-                    });
-                    let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("Top Bar Pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Load,
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
-                    rp.set_pipeline(ui_pipeline);
-                    rp.set_bind_group(0, ui_bg, &[]);
-                    rp.set_vertex_buffer(0, vb.slice(..));
-                    rp.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                    rp.draw_indexed(0..top_bar_mesh.indices.len() as u32, 0, 0..1);
-                }
-            }
+            let (resources, day_cycle, population) = scene.game_state.ui_data();
+            let top_bar_mesh = scene
+                .game_state
+                .top_bar
+                .generate_ui_mesh(w, h, resources, day_cycle, population);
+            self.draw_ui_mesh(encoder, view, "Top Bar Pass", &top_bar_mesh);
         }
 
-        // PASS 7: Start Overlay
+        // Start overlay
         if self.start_overlay.visible {
-            {
-                let ui_pipeline = &gpu.ui_pipeline;
-                let ui_bg = &gpu.ui_bind_group;
-                let overlay_mesh = self
-                    .start_overlay
-                    .generate_ui_mesh(config.width as f32, config.height as f32);
-                if !overlay_mesh.vertices.is_empty() {
-                    let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Overlay VB"),
-                        contents: bytemuck::cast_slice(&overlay_mesh.vertices),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    });
-                    let ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("Overlay IB"),
-                        contents: bytemuck::cast_slice(&overlay_mesh.indices),
-                        usage: wgpu::BufferUsages::INDEX,
-                    });
-                    let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("Start Overlay Pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Load,
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
-                    rp.set_pipeline(ui_pipeline);
-                    rp.set_bind_group(0, ui_bg, &[]);
-                    rp.set_vertex_buffer(0, vb.slice(..));
-                    rp.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                    rp.draw_indexed(0..overlay_mesh.indices.len() as u32, 0, 0..1);
-                }
-            }
+            let overlay_mesh = self.start_overlay.generate_ui_mesh(w, h);
+            self.draw_ui_mesh(encoder, view, "Start Overlay Pass", &overlay_mesh);
         }
+    }
 
-        queue.submit(std::iter::once(encoder.finish()));
-        output.present();
+    /// Helper: draw a UI mesh (2D overlay, no depth test) in its own render pass.
+    fn draw_ui_mesh(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        label: &str,
+        mesh: &Mesh,
+    ) {
+        if mesh.vertices.is_empty() {
+            return;
+        }
+        let gpu = self.gpu.as_ref().unwrap();
+        let vb = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytemuck::cast_slice(&mesh.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let ib = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytemuck::cast_slice(&mesh.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+        let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(label),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        rp.set_pipeline(&gpu.ui_pipeline);
+        rp.set_bind_group(0, &gpu.ui_bind_group, &[]);
+        rp.set_vertex_buffer(0, vb.slice(..));
+        rp.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+        rp.draw_indexed(0..mesh.indices.len() as u32, 0, 0..1);
+    }
+
+    /// Generate crosshair mesh for builder mode targeting.
+    fn generate_crosshair_mesh(&self, w: f32, h: f32) -> Mesh {
+        let (cx, cy) = self.current_mouse_pos.unwrap_or((w / 2.0, h / 2.0));
+        let size = 25.0;
+        let thickness = 4.0;
+        let gap = 8.0;
+        let pulse = (self.start_time.elapsed().as_secs_f32() * 3.0).sin() * 0.3 + 0.7;
+        let crosshair_color = [pulse, 1.0, 0.2, 0.95];
+        let to_ndc =
+            |x: f32, y: f32| -> [f32; 3] { [(x / w) * 2.0 - 1.0, 1.0 - (y / h) * 2.0, 0.0] };
+        let mut verts = Vec::new();
+        let mut idxs = Vec::new();
+        let add_quad = |verts: &mut Vec<Vertex>,
+                        idxs: &mut Vec<u32>,
+                        x1: f32,
+                        y1: f32,
+                        x2: f32,
+                        y2: f32,
+                        color: [f32; 4]| {
+            let base = verts.len() as u32;
+            let n = [0.0, 0.0, 1.0];
+            verts.push(Vertex {
+                position: to_ndc(x1, y1),
+                normal: n,
+                color,
+            });
+            verts.push(Vertex {
+                position: to_ndc(x2, y1),
+                normal: n,
+                color,
+            });
+            verts.push(Vertex {
+                position: to_ndc(x2, y2),
+                normal: n,
+                color,
+            });
+            verts.push(Vertex {
+                position: to_ndc(x1, y2),
+                normal: n,
+                color,
+            });
+            idxs.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        };
+        add_quad(
+            &mut verts,
+            &mut idxs,
+            cx - size - gap,
+            cy - thickness / 2.0,
+            cx - gap,
+            cy + thickness / 2.0,
+            crosshair_color,
+        );
+        add_quad(
+            &mut verts,
+            &mut idxs,
+            cx + gap,
+            cy - thickness / 2.0,
+            cx + size + gap,
+            cy + thickness / 2.0,
+            crosshair_color,
+        );
+        add_quad(
+            &mut verts,
+            &mut idxs,
+            cx - thickness / 2.0,
+            cy - size - gap,
+            cx + thickness / 2.0,
+            cy - gap,
+            crosshair_color,
+        );
+        add_quad(
+            &mut verts,
+            &mut idxs,
+            cx - thickness / 2.0,
+            cy + gap,
+            cx + thickness / 2.0,
+            cy + size + gap,
+            crosshair_color,
+        );
+        add_quad(
+            &mut verts,
+            &mut idxs,
+            cx - 2.0,
+            cy - 2.0,
+            cx + 2.0,
+            cy + 2.0,
+            [1.0, 1.0, 1.0, 1.0],
+        );
+
+        Mesh {
+            vertices: verts,
+            indices: idxs,
+        }
     }
 
     fn handle_key(&mut self, key: KeyCode, pressed: bool) {
