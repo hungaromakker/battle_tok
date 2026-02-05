@@ -6,7 +6,7 @@
 
 use glam::Vec3;
 
-use crate::game::destruction::{spawn_meteor_impact, DebrisParticle, Meteor, MeteorSpawner};
+use crate::game::destruction::{DebrisParticle, Meteor, MeteorSpawner, spawn_meteor_impact};
 
 /// Data returned for each meteor that impacts the ground during an update.
 pub struct MeteorImpact {

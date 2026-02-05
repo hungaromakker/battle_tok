@@ -1,31 +1,41 @@
 {
     "story_id": "US-P3-007",
     "title": "Create CannonSystem",
-    "status": "pending",
-    "focus": "",
+    "status": "completed",
+    "focus": "All criteria met — CannonSystem created and passes cargo check",
     "criteria": [
-        {"text": "CannonSystem wraps ArenaCannon with aim/fire interface", "done": false, "notes": ""},
-        {"text": "aim() reads AimingState and updates angles", "done": false, "notes": ""},
-        {"text": "fire_params() returns barrel tip position, direction, speed", "done": false, "notes": ""},
-        {"text": "mesh_dirty() tracks when mesh needs regeneration", "done": false, "notes": ""},
-        {"text": "No wgpu imports", "done": false, "notes": ""},
-        {"text": "Typecheck passes (cargo check)", "done": false, "notes": ""}
+        {"text": "CannonSystem wraps ArenaCannon with aim/fire interface", "done": true, "notes": "CannonSystem struct wraps ArenaCannon with new(), aim(), fire_params(), cannon(), cannon_mut(), is_aiming()"},
+        {"text": "aim() reads AimingState and updates angles", "done": true, "notes": "aim() reads AimingState fields, applies CANNON_ROTATION_SPEED * delta, calls adjust_elevation/azimuth and update()"},
+        {"text": "fire_params() returns barrel tip position, direction, speed", "done": true, "notes": "Returns (muzzle_position, barrel_direction, muzzle_velocity) tuple"},
+        {"text": "mesh_dirty() tracks when mesh needs regeneration", "done": true, "notes": "Tracks direction changes via last_direction comparison with epsilon 1e-6; mark_mesh_clean() resets flag"},
+        {"text": "No wgpu imports", "done": true, "notes": "Verified: zero wgpu imports in cannon_system.rs"},
+        {"text": "Typecheck passes (cargo check)", "done": true, "notes": "cargo check passes with zero new warnings from cannon_system.rs"}
     ],
     "checklist": [
-        {"item": "Read spec.md for implementation details", "done": false},
-        {"item": "Read cannon code in arena_cannon.rs", "done": false},
-        {"item": "Create src/game/systems/cannon_system.rs", "done": false},
-        {"item": "Update src/game/systems/mod.rs", "done": false},
-        {"item": "Run cargo check", "done": false}
+        {"item": "Read spec.md for implementation details", "done": true},
+        {"item": "Read cannon code in arena_cannon.rs", "done": true},
+        {"item": "Create src/game/systems/cannon_system.rs", "done": true},
+        {"item": "Update src/game/systems/mod.rs", "done": true},
+        {"item": "Run cargo check", "done": true}
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
+    "worker_notes": "All criteria met. CannonSystem created at src/game/systems/cannon_system.rs. Wraps ArenaCannon with aim/fire interface. Uses AimingState from input module (not AimingKeys from arena_player). Mesh dirty tracking via direction vector comparison. Already committed in 4eeaca1.",
+    "notes_history": [
+        {"iteration": 1, "note": "Read spec, arena_cannon.rs, AimingState, existing systems pattern. Created cannon_system.rs and updated mod.rs. cargo check passes. All 6 criteria met. Committed in 4eeaca1.", "timestamp": "2026-02-05T22:10:00Z"}
+    ],
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": [],
-    "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
+    "commit_hash": "4eeaca11038bd658f1b8a44a6bfb235785ad0c0b",
+    "files_modified": [
+        "src/game/systems/cannon_system.rs",
+        "src/game/systems/mod.rs"
+    ],
+    "iteration_history": [
+        {"iteration": 1, "action": "Created CannonSystem with all methods, updated mod.rs, verified cargo check", "notes": "All 6 acceptance criteria met in single iteration", "completed_at": "2026-02-05T22:10:00Z"}
+    ],
+    "learnings": [
+        "AimingState (input/actions.rs) and AimingKeys (arena_player.rs) have same fields - use AimingState as the decoupled input abstraction",
+        "Existing systems (ProjectileSystem, CollisionSystem) follow pattern: no wgpu imports, wrap game structs, provide high-level interface"
+    ],
     "created_at": "2026-02-05T22:00:00Z"
 }

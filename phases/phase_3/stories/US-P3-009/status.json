@@ -1,32 +1,43 @@
 {
     "story_id": "US-P3-009",
     "title": "Create BattleScene",
-    "status": "pending",
-    "focus": "",
+    "status": "completed",
+    "focus": "All criteria met — BattleScene composes all systems into unified scene",
     "criteria": [
-        {"text": "BattleScene::new() creates complete scene from configs", "done": false, "notes": ""},
-        {"text": "BattleScene::update() processes all game logic in correct order", "done": false, "notes": ""},
-        {"text": "All systems accessible via public fields for rendering", "done": false, "notes": ""},
-        {"text": "generate_dynamic_mesh() returns combined mesh data", "done": false, "notes": ""},
-        {"text": "No wgpu imports - scene is GPU-agnostic", "done": false, "notes": ""},
-        {"text": "Typecheck passes (cargo check)", "done": false, "notes": ""}
+        {"text": "BattleScene::new() creates complete scene from configs", "done": true, "notes": "Creates player, hex grid, trees, all 6 systems, game state from ArenaConfig + VisualConfig"},
+        {"text": "BattleScene::update() processes all game logic in correct order", "done": true, "notes": "10-step update: movement → aiming → projectiles → wall collision → destruction → meteors → block collision → hex collision → building physics → economy"},
+        {"text": "All systems accessible via public fields for rendering", "done": true, "notes": "All fields pub: collision, projectiles, destruction, meteors, cannon, building, hex_grid, player, game_state"},
+        {"text": "generate_dynamic_mesh() returns combined mesh data", "done": true, "notes": "Combines projectile spheres + falling prism boxes + debris cubes + meteor spheres into Vec<Vertex>"},
+        {"text": "No wgpu imports - scene is GPU-agnostic", "done": true, "notes": "Verified: no wgpu imports in battle_scene.rs or scenes/mod.rs"},
+        {"text": "Typecheck passes (cargo check)", "done": true, "notes": "cargo check passes with zero errors (only pre-existing warnings from other files)"}
     ],
     "checklist": [
-        {"item": "Read spec.md for implementation details", "done": false},
-        {"item": "Review all system interfaces from stories 1-8", "done": false},
-        {"item": "Create src/game/scenes/mod.rs", "done": false},
-        {"item": "Create src/game/scenes/battle_scene.rs", "done": false},
-        {"item": "Update src/game/mod.rs with scenes module", "done": false},
-        {"item": "Run cargo check", "done": false}
+        {"item": "Read spec.md for implementation details", "done": true},
+        {"item": "Review all system interfaces from stories 1-8", "done": true},
+        {"item": "Create src/game/scenes/mod.rs", "done": true},
+        {"item": "Create src/game/scenes/battle_scene.rs", "done": true},
+        {"item": "Update src/game/mod.rs with scenes module", "done": true},
+        {"item": "Run cargo check", "done": true}
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
+    "worker_notes": "All criteria met. BattleScene uses render::hex_prism::HexPrismGrid (not physics::collision::HexPrismGrid) since DestructionSystem and rendering need the render grid. Projectile-wall collision uses the render grid's ray_cast directly. Player-hex collision iterates the render grid with the same capsule-hex primitive. CollisionSystem::check_player_blocks works directly since it uses BuildingBlockManager.",
+    "notes_history": [
+        {"iteration": 1, "note": "Implemented complete BattleScene. Key design decision: used render::hex_prism::HexPrismGrid as the main grid since DestructionSystem and rendering expect it. Inlined player-hex collision and projectile-wall collision logic to avoid physics grid type mismatch. All 6 criteria pass.", "timestamp": "2026-02-05T22:30:00Z"}
+    ],
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": ["US-P3-001", "US-P3-002", "US-P3-003", "US-P3-004", "US-P3-005", "US-P3-006", "US-P3-007", "US-P3-008"],
-    "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
+    "commit_hash": "3da4ffffa8e575b772eec7dedd948ef7423bf511",
+    "files_modified": [
+        "src/game/scenes/mod.rs",
+        "src/game/scenes/battle_scene.rs",
+        "src/game/mod.rs"
+    ],
+    "iteration_history": [
+        {"iteration": 1, "action": "Created BattleScene struct with new(), update(), fire_cannon(), clear_projectiles(), generate_dynamic_mesh(), check_player_hex_collision(). Added scenes module to game/mod.rs.", "notes": "Used render HexPrismGrid; inlined collision logic to bridge grid type gap.", "completed_at": "2026-02-05T22:30:00Z"}
+    ],
+    "learnings": [
+        "Two distinct HexPrismGrid types exist: render::hex_prism::HexPrismGrid and physics::collision::HexPrismGrid. The render one is the primary grid used by DestructionSystem and rendering. Both have ray_cast and iter methods with compatible semantics.",
+        "CollisionSystem is stateless (unit struct) — its methods can be inlined when type mismatches require using the render grid directly."
+    ],
     "created_at": "2026-02-05T22:00:00Z"
 }

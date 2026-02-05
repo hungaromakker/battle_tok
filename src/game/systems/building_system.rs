@@ -6,13 +6,10 @@
 
 use glam::Vec3;
 
+use crate::game::builder::{BLOCK_GRID_SIZE, BLOCK_SNAP_DISTANCE, BuildToolbar, SHAPE_NAMES};
 use crate::render::{
-    BuildingBlock, BuildingBlockManager,
-    BuildingPhysics, MergeWorkflowManager, MergedMesh,
+    BuildingBlock, BuildingBlockManager, BuildingPhysics, MergeWorkflowManager, MergedMesh,
     SculptingManager,
-};
-use crate::game::builder::{
-    BuildToolbar, BLOCK_GRID_SIZE, BLOCK_SNAP_DISTANCE, SHAPE_NAMES,
 };
 
 /// Manages the full lifecycle of building blocks.
@@ -67,11 +64,7 @@ impl BuildingSystem {
 
         println!(
             "[Build] Placed {} at ({:.1}, {:.1}, {:.1}) ID={}",
-            SHAPE_NAMES[self.toolbar.selected_shape],
-            position.x,
-            position.y,
-            position.z,
-            block_id,
+            SHAPE_NAMES[self.toolbar.selected_shape], position.x, position.y, position.z, block_id,
         );
 
         Some(block_id)
@@ -117,11 +110,8 @@ impl BuildingSystem {
                         let aabb = block.aabb();
                         let block_center = (aabb.min + aabb.max) * 0.5;
                         let hit_offset = p - block_center;
-                        let abs_offset = Vec3::new(
-                            hit_offset.x.abs(),
-                            hit_offset.y.abs(),
-                            hit_offset.z.abs(),
-                        );
+                        let abs_offset =
+                            Vec3::new(hit_offset.x.abs(), hit_offset.y.abs(), hit_offset.z.abs());
 
                         let mut placement_pos =
                             if abs_offset.y > abs_offset.x && abs_offset.y > abs_offset.z {

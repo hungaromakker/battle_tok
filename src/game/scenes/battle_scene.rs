@@ -17,10 +17,10 @@ use crate::game::systems::{
     BuildingSystem, CannonSystem, CollisionSystem, DestructionSystem, MeteorSystem,
     ProjectileSystem,
 };
-use crate::game::trees::{generate_trees_on_terrain, PlacedTree};
-use crate::game::types::{generate_box, generate_sphere, Mesh, Vertex};
+use crate::game::trees::{PlacedTree, generate_trees_on_terrain};
+use crate::game::types::{Mesh, Vertex, generate_box, generate_sphere};
 use crate::physics::ballistics::BallisticsConfig;
-use crate::render::hex_prism::{HexPrismGrid, DEFAULT_HEX_HEIGHT};
+use crate::render::hex_prism::{DEFAULT_HEX_HEIGHT, HexPrismGrid};
 
 /// Complete game scene composing all systems, terrain, and player state.
 ///

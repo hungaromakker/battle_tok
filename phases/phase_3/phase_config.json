@@ -1,12 +1,12 @@
 {
-    "id": "phase_3_battle_tök",
-    "project_id": "battle_tök",
-    "phase_number": 3,
-    "title": "Engine Refactoring - Modular Battle Arena",
-    "description": "Extract game logic, rendering, and settings from battle_arena.rs (3880 lines) into modular components. Create config system, scene abstraction, and system-based architecture. Reduce main file from 3880 to ~400 lines. 14 stories covering config, systems, scenes, and final integration.",
-    "status": "decomposed",
-    "chat_id": "battle_tök_phase_3",
-    "spec_path": "phases/phase_3/phase_spec.md",
-    "created_at": "2026-02-05T12:00:00Z",
-    "updated_at": "2026-02-05T22:10:00Z"
+  "id": "phase_3_battle_t\u00f6k",
+  "project_id": "battle_t\u00f6k",
+  "phase_number": 3,
+  "title": "Engine Refactoring - Modular Battle Arena",
+  "description": "Extract game logic, rendering, and settings from battle_arena.rs (3880 lines) into modular components. Create config system, scene abstraction, and system-based architecture. Reduce main file from 3880 to ~400 lines. 14 stories covering config, systems, scenes, and final integration.",
+  "status": "decomposed",
+  "chat_id": "battle_t\u00f6k_phase_3",
+  "spec_path": "phases/phase_3/phase_spec.md",
+  "created_at": "2026-02-05T12:00:00Z",
+  "updated_at": "2026-02-05T21:19:59.249520"
 }
