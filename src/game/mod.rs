@@ -18,6 +18,12 @@ pub mod render;
 pub mod physics;
 pub mod input;
 
+// Self-contained game systems
+pub mod systems;
+
+// Arena configuration
+pub mod config;
+
 // New Stalberg-style building and economy systems
 pub mod building;
 pub mod economy;
@@ -77,3 +83,10 @@ pub use population::{JobAssignment, JobAI, JobPriority};
 
 // Game state re-export
 pub use state::GameState;
+
+// Systems re-exports
+pub use systems::{ProjectileSystem, ProjectileUpdate};
+
+// Config re-exports
+pub use config::{ArenaConfig, IslandConfig, ArenaBridgeConfig};
+pub use config::VisualConfig;
