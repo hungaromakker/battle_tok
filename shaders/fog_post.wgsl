@@ -11,10 +11,11 @@ struct FogParams {
     density: f32,               // 0.015..0.04 (distance fog)
     height_fog_start: f32,      // Y level where height fog starts
     height_fog_density: f32,    // 0.05..0.15 (height fog strength)
+    _pad0: vec2<f32>,           // Padding to align inv_view_proj to 16 bytes
     // Camera matrices for world pos reconstruction
     inv_view_proj: mat4x4<f32>,
     camera_pos: vec3<f32>,
-    _pad0: f32,
+    _pad1: f32,
 }
 
 @group(0) @binding(0)

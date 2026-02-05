@@ -30,7 +30,7 @@
     "iteration": 1,
     "failed_reasons": [],
     "dependencies": [],
-    "commit_hash": "",
+    "commit_hash": "a83806432293c356c03637d7cca9db1c91f0cea8",
     "files_modified": [
         "shaders/ember_particle.wgsl",
         "engine/src/render/particles.rs",

@@ -458,12 +458,13 @@ impl BuildingPhysics {
         let block_ids: Vec<u32> = self.states.keys().copied().collect();
 
         for block_id in block_ids {
-            let Some(block) = manager.get_block(block_id) else {
-                continue;
+            // Get block data we need (copy to avoid borrow issues)
+            let (position, aabb, shape) = {
+                let Some(block) = manager.get_block(block_id) else {
+                    continue;
+                };
+                (block.position, block.aabb(), block.shape)
             };
-
-            let aabb = block.aabb();
-            let position = block.position;
 
             // Get current state
             let state = match self.states.get_mut(&block_id) {
@@ -571,7 +572,7 @@ impl BuildingPhysics {
             let new_position = position + state.velocity * dt;
 
             // Ground collision
-            let block_bottom = match block.shape {
+            let block_bottom = match shape {
                 BuildingBlockShape::Cube { half_extents } => new_position.y - half_extents.y,
                 BuildingBlockShape::Sphere { radius } => new_position.y - radius,
                 _ => aabb.min.y + (new_position.y - position.y),
@@ -625,7 +626,7 @@ impl BuildingPhysics {
             self.check_block_collisions(block_id, manager);
             
             // Update shape-specific rolling/sliding behavior
-            self.update_rolling_behavior(block_id, &block.shape, dt);
+            self.update_rolling_behavior(block_id, &shape, dt);
         }
 
         // Invalidate graph since positions may have changed
@@ -789,7 +790,7 @@ impl BuildingPhysics {
                 state.fall_rotation += state.angular_velocity * dt;
             }
             
-            BuildingBlockShape::Cylinder { radius, half_height: _ } => {
+            BuildingBlockShape::Cylinder { radius, .. } => {
                 // Cylinders roll when moving perpendicular to their axis
                 // Assume cylinder axis is vertical (Y-up) for simplicity
                 let velocity_dir = Vec3::new(state.velocity.x, 0.0, state.velocity.z).normalize();
@@ -838,9 +839,11 @@ impl BuildingPhysics {
                 }
             }
             
-            BuildingBlockShape::Wedge { base, height: _, depth: _ } => {
+            BuildingBlockShape::Wedge { size } => {
                 // Wedges slide, rarely tumble
-                let tumble_threshold = (2.0 * 9.81 * base * 0.3).sqrt();
+                // Use the smallest dimension for tumble threshold
+                let base = size.x.min(size.z);
+                let tumble_threshold = (2.0_f32 * 9.81 * base * 0.3).sqrt();
                 
                 if horizontal_speed > tumble_threshold {
                     state.tumble_progress += dt * 0.5;

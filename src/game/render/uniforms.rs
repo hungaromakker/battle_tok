@@ -159,14 +159,14 @@ pub struct TerrainParams {
 impl Default for TerrainParams {
     fn default() -> Self {
         Self {
-            // Natural grass/dirt/rock/snow colors
-            grass: [0.18, 0.32, 0.10],
+            // Apocalyptic scorched terrain palette (US-P2-012)
+            grass: [0.15, 0.18, 0.10],   // Scorched olive (was bright green)
             _pad0: 0.0,
-            dirt: [0.35, 0.25, 0.15],
+            dirt: [0.28, 0.20, 0.14],    // Ashen brown (volcanic ash)
             _pad1: 0.0,
-            rock: [0.40, 0.38, 0.35],
+            rock: [0.25, 0.22, 0.24],    // Dark volcanic with purple tint
             _pad2: 0.0,
-            snow: [0.95, 0.95, 0.98],
+            snow: [0.50, 0.48, 0.45],    // Ash/dust peaks (was white snow)
             _pad3: 0.0,
             // Height bands tuned for terrain scale
             dirt_start: 0.6,

@@ -1,32 +1,36 @@
 {
     "story_id": "US-P2-012",
     "title": "Update Terrain Colors to Apocalyptic Palette",
-    "status": "pending",
-    "focus": "",
+    "status": "completed",
+    "focus": "All apocalyptic terrain colors applied",
     "criteria": [
-        {"text": "Terrain appears dark and scorched", "done": false, "notes": ""},
-        {"text": "Grass areas are dark olive/brown", "done": false, "notes": ""},
-        {"text": "Peaks are ash-colored, not white snow", "done": false, "notes": ""},
-        {"text": "Rock dominates steep areas", "done": false, "notes": ""},
-        {"text": "cargo check passes", "done": false, "notes": ""}
+        {"text": "Terrain appears dark and scorched", "done": true, "notes": "Updated all terrain colors to darker apocalyptic palette in uniforms.rs"},
+        {"text": "Grass areas are dark olive/brown", "done": true, "notes": "Changed grass from [0.18, 0.32, 0.10] to [0.15, 0.18, 0.10] - scorched olive"},
+        {"text": "Peaks are ash-colored, not white snow", "done": true, "notes": "Changed snow from [0.95, 0.95, 0.98] to [0.50, 0.48, 0.45] - ash/dust"},
+        {"text": "Rock dominates steep areas", "done": true, "notes": "Changed rock to [0.25, 0.22, 0.24] - dark volcanic with purple tint; shader already applies rock to steep slopes"},
+        {"text": "cargo check passes", "done": true, "notes": "Verified - compiles with only pre-existing warnings"}
     ],
     "checklist": [
-        {"item": "Read spec.md and understand apocalyptic palette", "done": false},
-        {"item": "Find where TerrainParams is initialized in Rust", "done": false},
-        {"item": "Update grass color to (0.15, 0.18, 0.10)", "done": false},
-        {"item": "Update dirt color to (0.28, 0.20, 0.14)", "done": false},
-        {"item": "Update rock color to (0.25, 0.22, 0.24)", "done": false},
-        {"item": "Update snow/peak color to (0.50, 0.48, 0.45)", "done": false},
-        {"item": "Run cargo check", "done": false}
+        {"item": "Read spec.md and understand apocalyptic palette", "done": true},
+        {"item": "Find where TerrainParams is initialized in Rust", "done": true},
+        {"item": "Update grass color to (0.15, 0.18, 0.10)", "done": true},
+        {"item": "Update dirt color to (0.28, 0.20, 0.14)", "done": true},
+        {"item": "Update rock color to (0.25, 0.22, 0.24)", "done": true},
+        {"item": "Update snow/peak color to (0.50, 0.48, 0.45)", "done": true},
+        {"item": "Run cargo check", "done": true}
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
+    "worker_notes": "All terrain colors updated to apocalyptic palette. TerrainParams in src/game/render/uniforms.rs default impl updated with scorched olive grass, ashen brown dirt, dark volcanic rock with purple tint, and ash/dust peaks. The terrain_enhanced.wgsl shader reads these values from the uniform buffer. Shader already applies rock color to steep slopes via the slope * 0.85 multiplier.",
+    "notes_history": [
+        {"iteration": 1, "note": "Updated all four terrain colors in TerrainParams::default() to apocalyptic palette. cargo check passes.", "timestamp": "2026-02-05T15:30:00Z"}
+    ],
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": [],
     "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
+    "files_modified": ["src/game/render/uniforms.rs"],
+    "iteration_history": [
+        {"iteration": 1, "action": "Updated TerrainParams default colors to apocalyptic palette", "notes": "grass, dirt, rock, snow all changed to darker values", "completed_at": "2026-02-05T15:30:00Z"}
+    ],
+    "learnings": ["TerrainParams colors are set via uniforms.rs default impl, shader reads from uniform buffer"],
     "created_at": "2026-02-05T15:15:00"
 }
