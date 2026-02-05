@@ -29,7 +29,7 @@
     "iteration": 1,
     "failed_reasons": [],
     "dependencies": [],
-    "commit_hash": "",
+    "commit_hash": "9639ecd129e2aa0f2e1d5bf1a57603d8f0370414",
     "files_modified": [
         "shaders/fog_post.wgsl",
         "engine/src/render/fog_post.rs",
