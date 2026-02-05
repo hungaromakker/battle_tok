@@ -185,6 +185,7 @@ struct BattleArenaApp {
 
     // Dark and stormy skybox
     stormy_sky: Option<StormySky>,
+    lightning_timer: f32, // Timer for periodic lightning (3-8 sec intervals)
 
     // First-person player controller (Phase 1)
     player: Player,
@@ -285,6 +286,7 @@ impl BattleArenaApp {
             ui_uniform_buffer: None,
             ui_bind_group: None,
             stormy_sky: None,
+            lightning_timer: 3.0, // First lightning in 3 seconds
             player: Player::default(),
             first_person_mode: true, // Start in first-person mode
             camera: Camera::default(),
@@ -978,6 +980,20 @@ impl BattleArenaApp {
         if new_day {
             // Day changed - could trigger notifications here
             println!("Day {} has begun!", self.game_state.day_cycle.day());
+        }
+
+        // Update lightning timer (triggers every 3-8 seconds randomly)
+        self.lightning_timer -= delta_time;
+        if self.lightning_timer <= 0.0 {
+            // Trigger lightning flash
+            if let Some(ref mut stormy_sky) = self.stormy_sky {
+                stormy_sky.trigger_lightning();
+            }
+            // Reset timer to random value between 3.0 and 8.0 seconds
+            // Using pseudo-random based on current time for variety
+            let time = self.start_time.elapsed().as_secs_f32();
+            let rand_val = ((time * 12.9898).sin() * 43758.5453).fract(); // 0.0 to 1.0
+            self.lightning_timer = 3.0 + rand_val * 5.0; // 3.0 to 8.0 seconds
         }
 
         // Check if terrain needs rebuilding

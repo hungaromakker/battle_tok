@@ -1,31 +1,40 @@
 {
     "story_id": "US-P2-001",
     "title": "Integrate Apocalyptic Sky Preset",
-    "status": "pending",
-    "focus": "",
+    "status": "completed",
+    "focus": "All implementation complete - lightning timer added and working",
     "criteria": [
-        {"text": "Sky shows dark purple at zenith", "done": false, "notes": ""},
-        {"text": "Orange-red fog visible at horizon", "done": false, "notes": ""},
-        {"text": "Lightning flashes every 3-8 seconds", "done": false, "notes": ""},
-        {"text": "cargo check passes", "done": false, "notes": ""},
-        {"text": "cargo run --bin battle_arena works", "done": false, "notes": ""}
+        {"text": "Sky shows dark purple at zenith", "done": true, "notes": "StormySkyConfig::battle_arena() preset uses upper_color: Vec3::new(0.15, 0.08, 0.25) for dark purple zenith"},
+        {"text": "Orange-red fog visible at horizon", "done": true, "notes": "fog_color: Vec3::new(0.55, 0.25, 0.15) provides warm orange-red horizon glow"},
+        {"text": "Lightning flashes every 3-8 seconds", "done": true, "notes": "Added lightning_timer field with pseudo-random interval reset using sin-based hash"},
+        {"text": "cargo check passes", "done": true, "notes": "Verified - only pre-existing warnings, no errors"},
+        {"text": "cargo run --bin battle_arena works", "done": true, "notes": "Verified - starts without panics, StormySky initialized message shown"}
     ],
     "checklist": [
-        {"item": "Read spec.md and understand the task", "done": false},
-        {"item": "Find StormySky initialization in battle_arena.rs", "done": false},
-        {"item": "Change to StormySky::with_config with battle_arena preset", "done": false},
-        {"item": "Add lightning_timer field and update logic", "done": false},
-        {"item": "Run cargo check to verify compilation", "done": false},
-        {"item": "Test with cargo run --bin battle_arena", "done": false}
+        {"item": "Read spec.md and understand the task", "done": true},
+        {"item": "Find StormySky initialization in battle_arena.rs", "done": true},
+        {"item": "Change to StormySky::with_config with battle_arena preset", "done": true},
+        {"item": "Add lightning_timer field and update logic", "done": true},
+        {"item": "Run cargo check to verify compilation", "done": true},
+        {"item": "Test with cargo run --bin battle_arena", "done": true}
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
+    "worker_notes": "All criteria met. The battle_arena preset was already being used (line 932). Added lightning_timer field to BattleArenaApp struct and update logic to trigger lightning every 3-8 seconds using pseudo-random timing based on elapsed time.",
+    "notes_history": [
+        {"iteration": 1, "note": "Found that StormySkyConfig::battle_arena() was already in use. Added lightning_timer field and trigger logic in update() function.", "timestamp": "2026-02-05T15:30:00Z"}
+    ],
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": [],
     "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
+    "files_modified": [
+        "src/bin/battle_arena.rs"
+    ],
+    "iteration_history": [
+        {"iteration": 1, "action": "Added lightning_timer field and update logic", "notes": "Preset was already in use, added periodic lightning trigger", "completed_at": "2026-02-05T15:30:00Z"}
+    ],
+    "learnings": [
+        "The project uses sin-based pseudo-random functions instead of rand crate",
+        "MeteorSpawner pattern provides good template for timer-based spawning"
+    ],
     "created_at": "2026-02-05T15:15:00"
 }

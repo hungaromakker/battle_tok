@@ -32,6 +32,8 @@ pub mod sky_bake_dispatch;
 pub mod sky;
 pub mod sky_cubemap;
 pub mod stormy_sky;
+pub mod castle_material;
+pub mod point_lights;
 pub mod uniforms;
 
 // Re-export commonly used types for convenience
@@ -59,6 +61,9 @@ pub use entities::{
 pub use sky::{CloudTexture, CLOUD_TEXTURE_SIZE};
 pub use sky_cubemap::SkyCubemap;
 pub use stormy_sky::{StormySky, StormySkyConfig};
+
+// Re-export castle material types (Phase 2: Castle Stone Shader)
+pub use castle_material::{CastleMaterial, CastleMaterialConfig};
 
 // Re-export SDF baker types
 pub use sdf_baker::{BrickCache, SDF_RESOLUTION, MAX_BAKED_SDFS};

@@ -26,7 +26,7 @@
     "iteration": 1,
     "failed_reasons": [],
     "dependencies": [],
-    "commit_hash": "",
+    "commit_hash": "8997cd4e6808f85e2c3764ce380960b6840b4101",
     "files_modified": ["shaders/lava.wgsl"],
     "iteration_history": [
         {"iteration": 1, "action": "Implemented all HDR shader enhancements", "notes": "Core color (3.0, 0.8, 0.1), pulse via sin(time*2.0), emissive*2.5, fog*0.1", "completed_at": "2026-02-05T15:20:00Z"}
