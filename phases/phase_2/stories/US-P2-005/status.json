@@ -1,32 +1,42 @@
 {
     "story_id": "US-P2-005",
     "title": "Integrate Point Lights into Castle Stone Shader",
-    "status": "pending",
-    "focus": "",
+    "status": "completed",
+    "focus": "All criteria met - point lights integrated into castle stone shader",
     "criteria": [
-        {"text": "Castle stone lit by nearby point lights", "done": false, "notes": ""},
-        {"text": "Light attenuates with distance", "done": false, "notes": ""},
-        {"text": "Multiple torches combine correctly", "done": false, "notes": ""},
-        {"text": "Shader compiles without WGSL errors", "done": false, "notes": ""},
-        {"text": "cargo check passes", "done": false, "notes": ""}
+        {"text": "Castle stone lit by nearby point lights", "done": true, "notes": "Point light loop in fragment shader samples from PointLightManager's storage buffer and accumulates lighting contribution"},
+        {"text": "Light attenuates with distance", "done": true, "notes": "Smooth inverse-square attenuation: radius_sq / (dist_sq + radius_sq) gives 0.5 at light.radius"},
+        {"text": "Multiple torches combine correctly", "done": true, "notes": "Point light contributions are accumulated additively in the shader loop"},
+        {"text": "Shader compiles without WGSL errors", "done": true, "notes": "castle_stone.wgsl compiles successfully with PointLight struct and storage buffer bindings"},
+        {"text": "cargo check passes", "done": true, "notes": "Build completes with only warnings (unrelated to this story)"}
     ],
     "checklist": [
-        {"item": "Read spec.md and understand point light integration", "done": false},
-        {"item": "Add PointLight struct to castle_stone.wgsl", "done": false},
-        {"item": "Add storage buffer binding for point_lights array", "done": false},
-        {"item": "Add uniform binding for light_count", "done": false},
-        {"item": "Implement point light loop in fragment shader", "done": false},
-        {"item": "Update castle_material.rs bind group", "done": false},
-        {"item": "Run cargo check", "done": false}
+        {"item": "Read spec.md and understand point light integration", "done": true},
+        {"item": "Add PointLight struct to castle_stone.wgsl", "done": true},
+        {"item": "Add storage buffer binding for point_lights array", "done": true},
+        {"item": "Add uniform binding for light_count", "done": true},
+        {"item": "Implement point light loop in fragment shader", "done": true},
+        {"item": "Update castle_material.rs bind group", "done": true},
+        {"item": "Run cargo check", "done": true}
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
+    "worker_notes": "Successfully integrated point lights from PointLightManager into castle stone shader. The shader now uses group 1 bindings (storage buffer for lights array, uniform for light count) that match PointLightManager's bind group layout. The CastleMaterial constructor now requires a PointLightManager reference for pipeline layout, and the bind() method takes the manager to set both bind groups.",
+    "notes_history": [
+        {"iteration": 1, "note": "Implemented full point light integration - added PointLight struct to WGSL, storage/uniform bindings on group 1, point light accumulation loop in fragment shader, and updated castle_material.rs to use PointLightManager's bind group layout", "timestamp": "2026-02-05T15:30:00Z"}
+    ],
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": ["US-P2-003", "US-P2-004"],
     "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
+    "files_modified": [
+        "shaders/castle_stone.wgsl",
+        "engine/src/render/castle_material.rs"
+    ],
+    "iteration_history": [
+        {"iteration": 1, "action": "Full implementation of point light integration", "notes": "Added PointLight struct, storage buffer binding, light_count uniform, point light accumulation loop to shader. Updated castle_material.rs to include PointLightManager bind group layout in pipeline and bind() method.", "completed_at": "2026-02-05T15:30:00Z"}
+    ],
+    "learnings": [
+        "PointLightManager already creates its own bind group layout with binding 0 (storage) and binding 1 (uniform) - shader uses @group(1) to match",
+        "light_count is padded to vec4<u32> for 16-byte GPU alignment, only light_count.x is used"
+    ],
     "created_at": "2026-02-05T15:15:00"
 }
