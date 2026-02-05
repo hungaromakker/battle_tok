@@ -1013,6 +1013,40 @@ impl BattleArenaApp {
             self.check_physics_support();
         }
         
+        // === BLOCK PICKUP SYSTEM ===
+        // Hold left-click on a loose block to pick it up
+        const PICKUP_HOLD_TIME: f32 = 0.5; // Seconds to hold before pickup
+        
+        if self.left_mouse_pressed && self.build_toolbar.visible {
+            self.build_toolbar.mouse_hold_time += delta_time;
+            
+            // Check if we should pick up a loose block
+            if self.build_toolbar.mouse_hold_time >= PICKUP_HOLD_TIME && !self.build_toolbar.pickup_in_progress {
+                self.build_toolbar.pickup_in_progress = true;
+                
+                // Try to pick up a loose block
+                if let Some((block_id, shape, material)) = self.raycast_to_loose_block() {
+                    // Stash the block in inventory
+                    if self.build_toolbar.inventory.stash(shape, material) {
+                        // Remove from world
+                        self.block_physics.unregister_block(block_id);
+                        self.block_manager.remove_block(block_id);
+                        self.regenerate_block_mesh();
+                        
+                        println!("[Pickup] Stashed block (inventory: {}/{})", 
+                            self.build_toolbar.inventory.count(),
+                            self.build_toolbar.inventory.max_capacity);
+                    } else {
+                        println!("[Pickup] Inventory full!");
+                    }
+                }
+            }
+        } else {
+            // Reset hold timer when mouse is released
+            self.build_toolbar.mouse_hold_time = 0.0;
+            self.build_toolbar.pickup_in_progress = false;
+        }
+        
         // Update movement based on mode
         if self.first_person_mode {
             // First-person mode: Player physics with terrain collision

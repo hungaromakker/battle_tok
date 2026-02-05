@@ -38,6 +38,7 @@ pub mod bridge_materials;
 pub mod flag_material;
 pub mod point_lights;
 pub mod particles;
+pub mod material_system;
 pub mod uniforms;
 
 // Re-export commonly used types for convenience
@@ -200,4 +201,10 @@ pub use sculpting::{
     SculptingManager, SculptMode, SculptState, SelectionType,
     FaceSelection, EdgeSelection, VertexSelection, FaceDirection,
     ExtrusionOperation, ExtrusionStep,
+};
+
+// Re-export material system types (Phase 2: Material System Coordinator)
+pub use material_system::{
+    MaterialSystem, MaterialType, MaterialEntry,
+    SceneUniforms, SceneConfig,
 };

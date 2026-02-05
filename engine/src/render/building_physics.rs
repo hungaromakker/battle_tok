@@ -236,21 +236,40 @@ impl BuildingPhysics {
     }
 
     /// Register a new block in the physics system
+    /// Block starts as unsupported - support check will determine actual state
     pub fn register_block(&mut self, block_id: u32) {
-        self.states.insert(block_id, BlockPhysicsState::default());
+        let mut state = BlockPhysicsState::default();
+        // New blocks start as NOT supported - the support check will verify
+        state.grounded = false;
+        state.structurally_supported = false;
+        self.states.insert(block_id, state);
         self.graph_dirty = true;
-        // Schedule initial support check
-        self.pending_checks.insert(block_id, self.config.support_check_delay);
+        // Schedule initial support check (very short delay to verify support)
+        self.pending_checks.insert(block_id, 0.05); // Check support quickly
     }
     
     /// Register a new block with material and volume for mass calculation
+    /// Block starts as unsupported - support check will determine actual state
     pub fn register_block_with_physics(&mut self, block_id: u32, material_index: u8, volume: f32, density: f32) {
         let mut state = BlockPhysicsState::default();
         state.material_index = material_index;
         state.mass = volume * density;
+        // New blocks start as NOT supported - the support check will verify
+        state.grounded = false;
+        state.structurally_supported = false;
         self.states.insert(block_id, state);
         self.graph_dirty = true;
-        self.pending_checks.insert(block_id, self.config.support_check_delay);
+        // Schedule initial support check (very short delay to verify support)
+        self.pending_checks.insert(block_id, 0.05);
+    }
+    
+    /// Register a block that is known to be at ground level (grounded immediately)
+    pub fn register_grounded_block(&mut self, block_id: u32) {
+        let mut state = BlockPhysicsState::default();
+        state.grounded = true;
+        state.structurally_supported = true;
+        self.states.insert(block_id, state);
+        self.graph_dirty = true;
     }
     
     /// Apply an impulse to a block (e.g., from projectile hit or player push)
