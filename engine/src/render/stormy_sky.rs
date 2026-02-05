@@ -162,14 +162,14 @@ impl StormySkyConfig {
             // Low sun for dramatic rim lighting from horizon (lava glow)
             sun_dir: Vec3::new(0.0, 0.08, -1.0).normalize(),
             lightning_intensity: 0.8,                   // Active lightning
-            // Cloud colors: dark purple with fiery orange underlit
-            cloud_color1: Vec3::new(0.85, 0.45, 0.25),  // Orange-lit cloud edges
-            cloud_color2: Vec3::new(0.12, 0.08, 0.18),  // Deep purple shadows
+            // Cloud colors: vivid purple with fiery orange underlit
+            cloud_color1: Vec3::new(0.95, 0.55, 0.3),   // Brighter orange-lit cloud edges
+            cloud_color2: Vec3::new(0.18, 0.1, 0.25),   // Richer purple shadows
             // Sky gradient
-            upper_color: Vec3::new(0.15, 0.08, 0.25),   // Dark purple zenith
-            // Horizon fog: fiery orange-red glow from lava
-            fog_color: Vec3::new(0.55, 0.25, 0.15),     // Warm orange-red
-            fog_density: 0.75,
+            upper_color: Vec3::new(0.2, 0.1, 0.35),     // Deeper purple zenith
+            // Horizon fog: warm orange glow
+            fog_color: Vec3::new(0.7, 0.35, 0.2),       // More saturated orange-red
+            fog_density: 0.5,                            // Less dense fog in sky
         }
     }
 }

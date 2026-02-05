@@ -50,10 +50,10 @@ impl FogPostConfig {
     /// Matches the stormy purple-brown environment from concept art
     pub fn battle_arena() -> Self {
         Self {
-            fog_color: Vec3::new(0.4, 0.3, 0.5), // Purple-brown
-            density: 0.02,
-            height_fog_start: 5.0,
-            height_fog_density: 0.1,
+            fog_color: Vec3::new(0.6, 0.4, 0.55), // Warmer purple with more saturation
+            density: 0.008,                        // Much lighter distance fog
+            height_fog_start: 2.0,                 // Lower start
+            height_fog_density: 0.04,              // Lighter height fog
         }
     }
 

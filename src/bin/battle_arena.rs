@@ -2735,10 +2735,10 @@ impl BattleArenaApp {
                 inv_view_proj: inv_view_proj.to_cols_array_2d(),
                 camera_pos: self.camera.position.to_array(),
                 time,
-                sun_dir: [0.0, 0.08, -0.996], // Low horizon sun (dramatic rim lighting)
-                fog_density: 0.008,           // Heavier fog for atmosphere
-                fog_color: [0.55, 0.35, 0.45], // Warm purple-orange fog
-                ambient: 0.15,                // Lower ambient for dramatic contrast
+                sun_dir: [0.3, 0.25, -0.92],  // Slightly higher sun for better lighting
+                fog_density: 0.004,           // Lighter fog to preserve colors
+                fog_color: [0.65, 0.45, 0.55], // Warmer, more saturated fog
+                ambient: 0.25,                // Higher ambient for richer colors
             };
             queue.write_buffer(sdf_uniform_buffer, 0, bytemuck::cast_slice(&[sdf_uniforms]));
 
