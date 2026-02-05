@@ -1,0 +1,34 @@
+{
+    "story_id": "US-P3-013",
+    "title": "Extract Render Passes to Methods",
+    "status": "pending",
+    "focus": "",
+    "criteria": [
+        {"text": "render() is ~20 lines calling helper methods", "done": false, "notes": ""},
+        {"text": "Each helper method handles one render pass", "done": false, "notes": ""},
+        {"text": "Same visual output as before (no rendering changes)", "done": false, "notes": ""},
+        {"text": "Each method has a doc comment explaining the pass", "done": false, "notes": ""},
+        {"text": "Game compiles and renders correctly", "done": false, "notes": ""},
+        {"text": "Typecheck passes (cargo check)", "done": false, "notes": ""}
+    ],
+    "checklist": [
+        {"item": "Read spec.md for implementation details", "done": false},
+        {"item": "Identify all render passes in current render()", "done": false},
+        {"item": "Create render_sky() method", "done": false},
+        {"item": "Create render_meshes() method", "done": false},
+        {"item": "Create render_dynamic() method", "done": false},
+        {"item": "Create render_sdf_cannon() method", "done": false},
+        {"item": "Create render_fog_post() and render_ui() methods", "done": false},
+        {"item": "Run cargo build --bin battle_arena", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": ["US-P3-012"],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "created_at": "2026-02-05T22:00:00Z"
+}

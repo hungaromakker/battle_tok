@@ -1,0 +1,31 @@
+{
+    "story_id": "US-P3-006",
+    "title": "Create MeteorSystem",
+    "status": "pending",
+    "focus": "",
+    "criteria": [
+        {"text": "MeteorSystem owns both Vec<Meteor> and MeteorSpawner", "done": false, "notes": ""},
+        {"text": "update() handles spawning, physics, and impact detection", "done": false, "notes": ""},
+        {"text": "MeteorImpact returned for caller to handle debris", "done": false, "notes": ""},
+        {"text": "No wgpu imports", "done": false, "notes": ""},
+        {"text": "Re-exported from systems module", "done": false, "notes": ""},
+        {"text": "Typecheck passes (cargo check)", "done": false, "notes": ""}
+    ],
+    "checklist": [
+        {"item": "Read spec.md for implementation details", "done": false},
+        {"item": "Read meteor code in destruction.rs", "done": false},
+        {"item": "Create src/game/systems/meteor_system.rs", "done": false},
+        {"item": "Update src/game/systems/mod.rs", "done": false},
+        {"item": "Run cargo check", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": [],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "created_at": "2026-02-05T22:00:00Z"
+}

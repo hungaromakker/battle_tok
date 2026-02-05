@@ -1,0 +1,31 @@
+{
+    "story_id": "US-P3-007",
+    "title": "Create CannonSystem",
+    "status": "pending",
+    "focus": "",
+    "criteria": [
+        {"text": "CannonSystem wraps ArenaCannon with aim/fire interface", "done": false, "notes": ""},
+        {"text": "aim() reads AimingState and updates angles", "done": false, "notes": ""},
+        {"text": "fire_params() returns barrel tip position, direction, speed", "done": false, "notes": ""},
+        {"text": "mesh_dirty() tracks when mesh needs regeneration", "done": false, "notes": ""},
+        {"text": "No wgpu imports", "done": false, "notes": ""},
+        {"text": "Typecheck passes (cargo check)", "done": false, "notes": ""}
+    ],
+    "checklist": [
+        {"item": "Read spec.md for implementation details", "done": false},
+        {"item": "Read cannon code in arena_cannon.rs", "done": false},
+        {"item": "Create src/game/systems/cannon_system.rs", "done": false},
+        {"item": "Update src/game/systems/mod.rs", "done": false},
+        {"item": "Run cargo check", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": [],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "created_at": "2026-02-05T22:00:00Z"
+}

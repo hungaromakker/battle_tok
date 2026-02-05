@@ -1,0 +1,32 @@
+{
+    "story_id": "US-P3-001",
+    "title": "Create Config Module with ArenaConfig",
+    "status": "pending",
+    "focus": "",
+    "criteria": [
+        {"text": "ArenaConfig::default() returns values matching current hardcoded constants", "done": false, "notes": ""},
+        {"text": "IslandConfig captures position, radius, surface_height, thickness, taper", "done": false, "notes": ""},
+        {"text": "BridgeConfig captures width and rail_height", "done": false, "notes": ""},
+        {"text": "All structs derive Clone and Debug", "done": false, "notes": ""},
+        {"text": "src/game/mod.rs exports config types", "done": false, "notes": ""},
+        {"text": "Typecheck passes (cargo check)", "done": false, "notes": ""}
+    ],
+    "checklist": [
+        {"item": "Read spec.md for implementation details", "done": false},
+        {"item": "Read battle_arena.rs to collect all hardcoded constants", "done": false},
+        {"item": "Create src/game/config/mod.rs", "done": false},
+        {"item": "Create src/game/config/arena_config.rs with ArenaConfig, IslandConfig, BridgeConfig", "done": false},
+        {"item": "Update src/game/mod.rs with config module exports", "done": false},
+        {"item": "Run cargo check", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": [],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "created_at": "2026-02-05T22:00:00Z"
+}

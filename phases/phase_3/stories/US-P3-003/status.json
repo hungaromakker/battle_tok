@@ -1,0 +1,32 @@
+{
+    "story_id": "US-P3-003",
+    "title": "Create CollisionSystem",
+    "status": "pending",
+    "focus": "",
+    "criteria": [
+        {"text": "CollisionSystem::check_player_blocks() compiles with correct types", "done": false, "notes": ""},
+        {"text": "CollisionSystem::check_player_hexes() compiles with correct types", "done": false, "notes": ""},
+        {"text": "CollisionSystem::check_projectile_walls() returns Option<(Vec3, (i32,i32,i32))>", "done": false, "notes": ""},
+        {"text": "No wgpu imports - pure game logic only", "done": false, "notes": ""},
+        {"text": "Re-exported from systems module", "done": false, "notes": ""},
+        {"text": "Typecheck passes (cargo check)", "done": false, "notes": ""}
+    ],
+    "checklist": [
+        {"item": "Read spec.md for implementation details", "done": false},
+        {"item": "Read existing collision code in physics/collision.rs", "done": false},
+        {"item": "Create src/game/systems/mod.rs", "done": false},
+        {"item": "Create src/game/systems/collision_system.rs", "done": false},
+        {"item": "Update src/game/mod.rs with systems module", "done": false},
+        {"item": "Run cargo check", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": [],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "created_at": "2026-02-05T22:00:00Z"
+}

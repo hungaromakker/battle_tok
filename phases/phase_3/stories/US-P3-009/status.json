@@ -1,0 +1,32 @@
+{
+    "story_id": "US-P3-009",
+    "title": "Create BattleScene",
+    "status": "pending",
+    "focus": "",
+    "criteria": [
+        {"text": "BattleScene::new() creates complete scene from configs", "done": false, "notes": ""},
+        {"text": "BattleScene::update() processes all game logic in correct order", "done": false, "notes": ""},
+        {"text": "All systems accessible via public fields for rendering", "done": false, "notes": ""},
+        {"text": "generate_dynamic_mesh() returns combined mesh data", "done": false, "notes": ""},
+        {"text": "No wgpu imports - scene is GPU-agnostic", "done": false, "notes": ""},
+        {"text": "Typecheck passes (cargo check)", "done": false, "notes": ""}
+    ],
+    "checklist": [
+        {"item": "Read spec.md for implementation details", "done": false},
+        {"item": "Review all system interfaces from stories 1-8", "done": false},
+        {"item": "Create src/game/scenes/mod.rs", "done": false},
+        {"item": "Create src/game/scenes/battle_scene.rs", "done": false},
+        {"item": "Update src/game/mod.rs with scenes module", "done": false},
+        {"item": "Run cargo check", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": ["US-P3-001", "US-P3-002", "US-P3-003", "US-P3-004", "US-P3-005", "US-P3-006", "US-P3-007", "US-P3-008"],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "created_at": "2026-02-05T22:00:00Z"
+}
