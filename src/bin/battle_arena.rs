@@ -64,6 +64,14 @@ use battle_tok_engine::physics::ballistics::{BallisticsConfig, Projectile, Proje
 // Import stormy skybox
 use battle_tok_engine::render::{StormySky, StormySkyConfig};
 
+// Import Phase 2 visual upgrade systems
+use battle_tok_engine::render::{
+    PointLightManager,
+    ParticleSystem,
+    MaterialSystem, SceneConfig,
+    FogPostPass, FogPostConfig,
+};
+
 // Import building block system (Phase 2-4)
 use battle_tok_engine::render::{
     BuildingBlockManager, BuildingBlockShape, BuildingBlock,
@@ -187,6 +195,12 @@ struct BattleArenaApp {
     stormy_sky: Option<StormySky>,
     lightning_timer: f32, // Timer for periodic lightning (3-8 sec intervals)
 
+    // Phase 2 Visual Systems
+    point_lights: Option<PointLightManager>,  // Torch lighting with flicker
+    particle_system: Option<ParticleSystem>,  // Ember/ash particles
+    material_system: Option<MaterialSystem>,  // Material coordination
+    fog_post: Option<FogPostPass>,            // Depth-based fog post-process
+
     // First-person player controller (Phase 1)
     player: Player,
     first_person_mode: bool, // Toggle between FPS mode and free camera
@@ -287,6 +301,11 @@ impl BattleArenaApp {
             ui_bind_group: None,
             stormy_sky: None,
             lightning_timer: 3.0, // First lightning in 3 seconds
+            // Phase 2 Visual Systems
+            point_lights: None,
+            particle_system: None,
+            material_system: None,
+            fog_post: None,
             player: Player::default(),
             first_person_mode: true, // Start in first-person mode
             camera: Camera::default(),
@@ -933,6 +952,58 @@ impl BattleArenaApp {
         // Using battle_arena preset: purple sky, orange horizon, lightning, dramatic atmosphere
         let stormy_sky = StormySky::with_config(&device, surface_format, StormySkyConfig::battle_arena());
 
+        // ============================================
+        // Phase 2 Visual Systems Initialization
+        // ============================================
+
+        // Point light manager for torch lighting with flickering
+        let mut point_lights = PointLightManager::new(&device);
+        // Add torches on both castle platforms (8 torches each, 16 total)
+        // Attacker castle torches (at Z=45, in a rough rectangle around the castle)
+        let torch_color = [1.0, 0.6, 0.2]; // Warm orange
+        let torch_radius = 10.0;
+        point_lights.add_torch([10.0, 6.0, 55.0], torch_color, torch_radius);
+        point_lights.add_torch([-10.0, 6.0, 55.0], torch_color, torch_radius);
+        point_lights.add_torch([10.0, 6.0, 35.0], torch_color, torch_radius);
+        point_lights.add_torch([-10.0, 6.0, 35.0], torch_color, torch_radius);
+        // Defender castle torches (at Z=-45)
+        point_lights.add_torch([10.0, 6.0, -55.0], torch_color, torch_radius);
+        point_lights.add_torch([-10.0, 6.0, -55.0], torch_color, torch_radius);
+        point_lights.add_torch([10.0, 6.0, -35.0], torch_color, torch_radius);
+        point_lights.add_torch([-10.0, 6.0, -35.0], torch_color, torch_radius);
+        // Bridge torches (at the ends)
+        point_lights.add_torch([3.0, 4.0, 15.0], torch_color, 8.0);
+        point_lights.add_torch([-3.0, 4.0, 15.0], torch_color, 8.0);
+        point_lights.add_torch([3.0, 4.0, -15.0], torch_color, 8.0);
+        point_lights.add_torch([-3.0, 4.0, -15.0], torch_color, 8.0);
+        println!("[US-P2-014] Point lights initialized: {} torches", point_lights.light_count());
+
+        // Particle system for ember/ash effects
+        let mut particle_system = ParticleSystem::new(&device, surface_format);
+        // Add spawn positions above lava areas (between the islands)
+        // Lava is in the gap around Z=0 (between Z=-15 and Z=15)
+        particle_system.add_spawn_position([0.0, 0.5, 0.0]);
+        particle_system.add_spawn_position([5.0, 0.5, 5.0]);
+        particle_system.add_spawn_position([-5.0, 0.5, 5.0]);
+        particle_system.add_spawn_position([5.0, 0.5, -5.0]);
+        particle_system.add_spawn_position([-5.0, 0.5, -5.0]);
+        particle_system.add_spawn_position([10.0, 0.5, 0.0]);
+        particle_system.add_spawn_position([-10.0, 0.5, 0.0]);
+        // Also spawn near the island edges where lava pools are
+        particle_system.add_spawn_position([0.0, 0.5, 20.0]);
+        particle_system.add_spawn_position([0.0, 0.5, -20.0]);
+        particle_system.set_spawn_rate(80.0); // 80 embers per second for dramatic effect
+        println!("[US-P2-014] Particle system initialized with {} spawn positions", 9);
+
+        // Material system for unified material management
+        let mut material_system = MaterialSystem::new(&device);
+        material_system.set_scene_config(SceneConfig::battle_arena());
+        println!("[US-P2-014] Material system initialized with battle_arena scene config");
+
+        // Fog post-processing pass
+        let fog_post = FogPostPass::with_config(&device, surface_format, FogPostConfig::battle_arena());
+        println!("[US-P2-014] Fog post-pass initialized with battle_arena preset");
+
         self.window = Some(window);
         self.device = Some(device);
         self.queue = Some(queue);
@@ -961,7 +1032,13 @@ impl BattleArenaApp {
         self.ui_uniform_buffer = Some(ui_uniform_buffer);
         self.ui_bind_group = Some(ui_bind_group);
         self.stormy_sky = Some(stormy_sky);
-        
+
+        // Store Phase 2 visual systems
+        self.point_lights = Some(point_lights);
+        self.particle_system = Some(particle_system);
+        self.material_system = Some(material_system);
+        self.fog_post = Some(fog_post);
+
         // Store tree buffers
         self.tree_vertex_buffer = Some(tree_vertex_buffer);
         self.tree_index_buffer = Some(tree_index_buffer);
@@ -996,6 +1073,19 @@ impl BattleArenaApp {
             self.lightning_timer = 3.0 + rand_val * 5.0; // 3.0 to 8.0 seconds
         }
 
+        // Update Phase 2 visual systems
+        let time = self.start_time.elapsed().as_secs_f32();
+
+        // Update point lights (flickering effect)
+        if let (Some(point_lights), Some(queue)) = (&mut self.point_lights, &self.queue) {
+            point_lights.update(queue, time);
+        }
+
+        // Update particle system (embers rising from lava)
+        if let Some(ref mut particle_system) = self.particle_system {
+            particle_system.update(delta_time);
+        }
+
         // Check if terrain needs rebuilding
         if self.terrain_needs_rebuild {
             self.rebuild_terrain();
@@ -1005,13 +1095,14 @@ impl BattleArenaApp {
         // Update block placement preview
         self.update_block_preview();
         
-        // Physics support check every N seconds (blocks without support fall)
-        // Note: Runs regardless of build toolbar visibility so blocks still fall after exiting build mode
+        // Building block physics: runs every frame for smooth falling
+        // Support graph check runs every N seconds, but physics simulation runs continuously
         self.build_toolbar.physics_check_timer += delta_time;
-        if self.build_toolbar.physics_check_timer >= PHYSICS_CHECK_INTERVAL {
+        let do_support_check = self.build_toolbar.physics_check_timer >= PHYSICS_CHECK_INTERVAL;
+        if do_support_check {
             self.build_toolbar.physics_check_timer = 0.0;
-            self.check_physics_support();
         }
+        self.update_building_physics(delta_time, do_support_check);
         
         // === BLOCK PICKUP SYSTEM ===
         // Hold left-click on a loose block to pick it up
@@ -1741,13 +1832,21 @@ impl BattleArenaApp {
         self.regenerate_block_mesh();
     }
     
-    /// Update building physics - blocks fall with gravity and disintegrate if unsupported
-    fn check_physics_support(&mut self) {
-        let block_count = self.block_manager.blocks().len();
-        println!("[Physics] Running support check on {} blocks...", block_count);
+    /// Update building physics - runs every frame for smooth falling
+    /// do_support_check: when true, also runs the expensive support graph check
+    fn update_building_physics(&mut self, dt: f32, do_support_check: bool) {
+        if self.block_manager.blocks().is_empty() {
+            return;
+        }
         
-        // Update physics simulation
-        self.block_physics.update(0.016, &mut self.block_manager); // ~60fps timestep
+        // Log support check
+        if do_support_check {
+            let block_count = self.block_manager.blocks().len();
+            println!("[Physics] Running support check on {} blocks...", block_count);
+        }
+        
+        // Update physics simulation (this handles both physics AND support checks via pending_checks)
+        self.block_physics.update(dt, &mut self.block_manager);
 
         // Get blocks that need to be removed (disintegrated)
         let blocks_to_remove = self.block_physics.take_blocks_to_remove();
@@ -1830,6 +1929,56 @@ impl BattleArenaApp {
         None
     }
     
+    /// Raycast from camera to find a loose (physics-detached) block
+    /// Returns (block_id, shape, material) if found
+    fn raycast_to_loose_block(&self) -> Option<(u32, BuildingBlockShape, u8)> {
+        let mouse_pos = self.current_mouse_pos?;
+        let config = self.surface_config.as_ref()?;
+        
+        // Convert screen position to ray
+        let aspect = config.width as f32 / config.height as f32;
+        let half_fov = (self.camera.fov / 2.0).tan();
+        
+        // NDC coordinates (-1 to 1)
+        let ndc_x = (mouse_pos.0 / config.width as f32) * 2.0 - 1.0;
+        let ndc_y = 1.0 - (mouse_pos.1 / config.height as f32) * 2.0;
+        
+        // Calculate ray direction
+        let forward = self.camera.get_forward();
+        let right = self.camera.get_right();
+        let up = right.cross(forward).normalize();
+        
+        let ray_dir = (forward + right * ndc_x * half_fov * aspect + up * ndc_y * half_fov)
+            .normalize();
+        
+        let ray_origin = self.camera.position;
+        
+        // Find closest loose block by marching along ray
+        let max_dist = 20.0; // Shorter range for pickup
+        let step_size = 0.25;
+        let mut t = 0.5;
+        
+        while t < max_dist {
+            let p = ray_origin + ray_dir * t;
+            
+            // Check if we're inside any block
+            if let Some((block_id, dist)) = self.block_manager.find_closest(p, 0.5) {
+                if dist < 0.5 {
+                    // Check if this block is loose (detached from structure)
+                    if self.block_physics.is_loose(block_id) {
+                        if let Some(block) = self.block_manager.get_block(block_id) {
+                            return Some((block_id, block.shape, block.material));
+                        }
+                    }
+                }
+            }
+            
+            t += step_size;
+        }
+        
+        None
+    }
+    
     /// Handle block click for double-click merging
     fn handle_block_click(&mut self) -> bool {
         if let Some(block_id) = self.raycast_to_block() {
@@ -1897,9 +2046,20 @@ impl BattleArenaApp {
                         let penetration = player_radius - horizontal_dist;
                         self.player.position += push_dir * (penetration + 0.01);
                         
-                        // Also stop velocity in that direction
+                        // Calculate impact force from player velocity
                         let vel_dot = self.player.velocity.dot(push_dir);
                         if vel_dot < 0.0 {
+                            // Apply impulse to loose blocks (player bumps them)
+                            if self.block_physics.is_loose(block.id) {
+                                let player_mass = 70.0; // kg
+                                let impulse = -push_dir * vel_dot.abs() * player_mass * 0.3;
+                                self.block_physics.apply_impulse(block.id, impulse);
+                            }
+                            
+                            // Trigger support check on collision
+                            self.block_physics.trigger_support_check(block.id);
+                            
+                            // Stop velocity in that direction
                             self.player.velocity -= push_dir * vel_dot;
                         }
                     } else {
@@ -2623,6 +2783,25 @@ impl BattleArenaApp {
             );
         }
 
+        // ============================================
+        // Update material system scene uniforms
+        // ============================================
+        if let Some(ref material_system) = self.material_system {
+            material_system.update_scene_uniforms(
+                queue,
+                view_proj,
+                self.camera.position,
+                time,
+            );
+        }
+
+        // ============================================
+        // Update fog post-pass uniforms
+        // ============================================
+        if let Some(ref fog_post) = self.fog_post {
+            fog_post.update(queue, view_proj, self.camera.position);
+        }
+
         // Create command encoder
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
@@ -2831,7 +3010,46 @@ impl BattleArenaApp {
             // Fullscreen triangle - 3 vertices, no vertex buffer needed
             render_pass.draw(0..3, 0..1);
         }
-        
+
+        // ============================================
+        // PASS 2.5: Ember Particles (additive blend)
+        // ============================================
+        // Particles render after opaque geometry but before UI
+        // Uses additive blending for glowing effect
+        if let Some(ref particle_system) = self.particle_system {
+            // Upload particle data to GPU
+            particle_system.upload_particles(queue);
+
+            // Update particle uniforms with current camera matrices
+            particle_system.update_uniforms(queue, view_mat.to_cols_array_2d(), proj_mat.to_cols_array_2d());
+
+            // Render particles
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Particle Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load, // Preserve previous passes
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load, // Use existing depth (particles read but don't write)
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            particle_system.render(&mut render_pass);
+        }
+
         // ============================================
         // PASS 3: UI Overlay (terrain editor sliders)
         // ============================================

@@ -320,6 +320,21 @@ impl BuildingPhysics {
     pub fn invalidate_support_graph(&mut self) {
         self.graph_dirty = true;
     }
+    
+    /// Schedule immediate support check for a block (e.g., after collision/impact)
+    pub fn trigger_support_check(&mut self, block_id: u32) {
+        // Schedule immediate check and invalidate graph
+        self.pending_checks.insert(block_id, 0.0);
+        self.graph_dirty = true;
+    }
+    
+    /// Schedule support checks for multiple blocks (e.g., area of impact)
+    pub fn trigger_area_support_check(&mut self, block_ids: &[u32]) {
+        self.graph_dirty = true;
+        for &id in block_ids {
+            self.pending_checks.insert(id, 0.0);
+        }
+    }
 
     /// Update the support graph based on current block positions
     fn update_support_graph(&mut self, manager: &BuildingBlockManager) {

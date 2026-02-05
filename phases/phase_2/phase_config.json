@@ -1,11 +1,12 @@
 {
-    "id": "phase_2_battle_tök",
-    "project_id": "battle_tök",
-    "phase_number": 2,
-    "title": "Visual Upgrade - Apocalyptic Battle Arena",
-    "description": "Implement Unreal-quality visuals matching the apocalyptic battle reference images with dramatic stormy sky, glowing lava, castle stone materials, torch lighting, falling meteors, ember particles, and ACES tonemapping.",
-    "status": "finalized",
-    "chat_id": "battle_tök_phase_2",
-    "spec_path": "phases/phase_2/phase_spec.md",
-    "created_at": "2026-02-05T15:10:00.000000"
+  "id": "phase_2_battle_t\u00f6k",
+  "project_id": "battle_t\u00f6k",
+  "phase_number": 2,
+  "title": "Visual Upgrade - Apocalyptic Battle Arena",
+  "description": "Implement Unreal-quality visuals matching the apocalyptic battle reference images with dramatic stormy sky, glowing lava, castle stone materials, torch lighting, falling meteors, ember particles, and ACES tonemapping.",
+  "status": "decomposed",
+  "chat_id": "battle_t\u00f6k_phase_2",
+  "spec_path": "phases/phase_2/phase_spec.md",
+  "created_at": "2026-02-05T15:10:00.000000",
+  "updated_at": "2026-02-05T15:38:31.871309"
 }
