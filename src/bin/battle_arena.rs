@@ -747,85 +747,88 @@ impl BattleArenaApp {
 
         println!("[US-013] SDF cannon pipeline initialized");
 
-        // Create static mesh (terrain platforms with procedural elevation)
+        // Create static mesh (floating islands with layered crust + lava ocean)
         let mut static_mesh = Mesh::new();
 
         // Island positions - separated to create a gap for the bridge
         // With radius 30 and centers 90 units apart, the gap is ~30 meters
-        const ATTACKER_CENTER: Vec3 = Vec3::new(0.0, 0.0, 45.0);
-        const DEFENDER_CENTER: Vec3 = Vec3::new(0.0, 0.0, -45.0);
+        const ATTACKER_CENTER: Vec3 = Vec3::new(0.0, 10.0, 45.0);  // Elevated to float above lava
+        const DEFENDER_CENTER: Vec3 = Vec3::new(0.0, 10.0, -45.0); // Elevated to float above lava
         const ISLAND_RADIUS: f32 = 30.0;
-        
-        // Attacker hex platform (where cannon is) - detailed mountainous terrain
-        let attacker_platform = generate_elevated_hex_terrain(
-            ATTACKER_CENTER,
-            ISLAND_RADIUS,
-            [0.4, 0.5, 0.3, 1.0], // Color determined dynamically by height
-            64, // High subdivision for detailed mountains
-        );
-        static_mesh.merge(&attacker_platform);
-        
-        // Water plane for attacker platform
-        let attacker_water = generate_lava_plane(
-            ATTACKER_CENTER,
-            ISLAND_RADIUS,
-        );
-        static_mesh.merge(&attacker_water);
+        const LAVA_OCEAN_LEVEL: f32 = -15.0;  // Lava sits well below the islands
 
-        // Defender hex platform (target) - detailed mountainous terrain
-        let defender_platform = generate_elevated_hex_terrain(
-            DEFENDER_CENTER,
-            ISLAND_RADIUS,
-            [0.5, 0.4, 0.35, 1.0], // Color determined dynamically by height
-            64, // High subdivision for detailed mountains
-        );
+        // Floating island configuration - matches existing hexagonal outline exactly
+        let island_config = FloatingIslandConfig {
+            radius: ISLAND_RADIUS,
+            surface_height: 5.0,      // Top terrain varies up to 5m above center
+            island_thickness: 25.0,   // 25m of layered earth visible on sides
+            taper_amount: 0.6,        // Bottom tapers to 40% of top radius
+            num_layers: 5,            // Surface, Earth, Rock, Ore, Molten core
+            edge_noise: 3.0,          // Organic variation on edges
+        };
+
+        // Attacker floating island (where cannon is) - with visible layered crust
+        let attacker_platform = generate_floating_island(ATTACKER_CENTER, island_config);
+        static_mesh.merge(&attacker_platform);
+
+        // Defender floating island (target) - same configuration
+        let defender_platform = generate_floating_island(DEFENDER_CENTER, island_config);
         static_mesh.merge(&defender_platform);
+
+        // Generate large lava ocean surrounding both islands
+        // Size should extend well beyond the arena to create infinite lava look
+        let lava_ocean = generate_lava_ocean(200.0, LAVA_OCEAN_LEVEL);
+        static_mesh.merge(&lava_ocean);
+
+        println!("[Floating Islands] Generated 2 islands with layered crust floating above lava ocean");
         
-        // Water plane for defender platform
-        let defender_water = generate_lava_plane(
-            DEFENDER_CENTER,
-            ISLAND_RADIUS,
-        );
-        static_mesh.merge(&defender_water);
-        
-        // Generate bridge connecting the two islands
-        // Find actual terrain edge vertices by scanning the generated meshes
-        
-        // Find the attacker terrain vertex closest to the defender (smallest Z, near X=0)
-        let mut bridge_start = Vec3::new(0.0, 0.0, ATTACKER_CENTER.z);
+        // Generate bridge connecting the two floating islands
+        // Find surface vertices near the edges (exclude crust/wall vertices which have lower Y)
+        let surface_min_y = ATTACKER_CENTER.y;  // Surface is at or above island center Y
+
+        // Find the attacker surface vertex closest to the defender (smallest Z, near X=0)
+        let mut bridge_start = Vec3::new(0.0, surface_min_y, ATTACKER_CENTER.z - ISLAND_RADIUS);
         let mut best_dist_start = f32::MAX;
         for v in &attacker_platform.vertices {
             let vx = v.position[0];
+            let vy = v.position[1];
             let vz = v.position[2];
-            // Looking for vertex near X=0 with smallest Z (toward defender)
-            let dist = vx.abs() + (vz - (ATTACKER_CENTER.z - ISLAND_RADIUS)).abs() * 0.5;
-            if dist < best_dist_start && vz < ATTACKER_CENTER.z {
-                best_dist_start = dist;
-                bridge_start = Vec3::new(v.position[0], v.position[1], v.position[2]);
+            // Only consider surface vertices (Y at or above island center)
+            if vy >= surface_min_y {
+                // Looking for vertex near X=0 with smallest Z (toward defender)
+                let dist = vx.abs() + (vz - (ATTACKER_CENTER.z - ISLAND_RADIUS)).abs() * 0.5;
+                if dist < best_dist_start && vz < ATTACKER_CENTER.z {
+                    best_dist_start = dist;
+                    bridge_start = Vec3::new(vx, vy, vz);
+                }
             }
         }
-        
-        // Find the defender terrain vertex closest to the attacker (largest Z, near X=0)
-        let mut bridge_end = Vec3::new(0.0, 0.0, DEFENDER_CENTER.z);
+
+        // Find the defender surface vertex closest to the attacker (largest Z, near X=0)
+        let mut bridge_end = Vec3::new(0.0, surface_min_y, DEFENDER_CENTER.z + ISLAND_RADIUS);
         let mut best_dist_end = f32::MAX;
         for v in &defender_platform.vertices {
             let vx = v.position[0];
+            let vy = v.position[1];
             let vz = v.position[2];
-            // Looking for vertex near X=0 with largest Z (toward attacker)
-            let dist = vx.abs() + ((DEFENDER_CENTER.z + ISLAND_RADIUS) - vz).abs() * 0.5;
-            if dist < best_dist_end && vz > DEFENDER_CENTER.z {
-                best_dist_end = dist;
-                bridge_end = Vec3::new(v.position[0], v.position[1], v.position[2]);
+            // Only consider surface vertices (Y at or above island center)
+            if vy >= surface_min_y {
+                // Looking for vertex near X=0 with largest Z (toward attacker)
+                let dist = vx.abs() + ((DEFENDER_CENTER.z + ISLAND_RADIUS) - vz).abs() * 0.5;
+                if dist < best_dist_end && vz > DEFENDER_CENTER.z {
+                    best_dist_end = dist;
+                    bridge_end = Vec3::new(vx, vy, vz);
+                }
             }
         }
-        
-        println!("[Bridge] Connecting from {:?} to {:?}", bridge_start, bridge_end);
-        
+
+        println!("[Bridge] Connecting floating islands from {:?} to {:?}", bridge_start, bridge_end);
+
         let bridge_config = BridgeConfig::default();
         let bridge_mesh = generate_bridge(bridge_start, bridge_end, &bridge_config);
         static_mesh.merge(&bridge_mesh);
-        
-        println!("[Builder Mode] Generated detailed terrain with mountains, rocks, and water");
+
+        println!("[Floating Islands] Bridge chain connects the two floating battle platforms");
         
         // ============================================
         // PROCEDURAL TREES (harvestable)
@@ -960,42 +963,46 @@ impl BattleArenaApp {
 
         // Point light manager for torch lighting with flickering
         let mut point_lights = PointLightManager::new(&device);
-        // Add torches on both castle platforms (8 torches each, 16 total)
-        // Attacker castle torches (at Z=45, in a rough rectangle around the castle)
+        // Add torches on both floating castle platforms (8 torches each, 16 total)
+        // Island surface is at Y ~= 10 + terrain height, torches at Y = 18 (above terrain)
         let torch_color = [1.0, 0.6, 0.2]; // Warm orange
         let torch_radius = 10.0;
-        point_lights.add_torch([10.0, 6.0, 55.0], torch_color, torch_radius);
-        point_lights.add_torch([-10.0, 6.0, 55.0], torch_color, torch_radius);
-        point_lights.add_torch([10.0, 6.0, 35.0], torch_color, torch_radius);
-        point_lights.add_torch([-10.0, 6.0, 35.0], torch_color, torch_radius);
+        let torch_y = 18.0;  // Above floating island surface
+        // Attacker castle torches (at Z=45)
+        point_lights.add_torch([10.0, torch_y, 55.0], torch_color, torch_radius);
+        point_lights.add_torch([-10.0, torch_y, 55.0], torch_color, torch_radius);
+        point_lights.add_torch([10.0, torch_y, 35.0], torch_color, torch_radius);
+        point_lights.add_torch([-10.0, torch_y, 35.0], torch_color, torch_radius);
         // Defender castle torches (at Z=-45)
-        point_lights.add_torch([10.0, 6.0, -55.0], torch_color, torch_radius);
-        point_lights.add_torch([-10.0, 6.0, -55.0], torch_color, torch_radius);
-        point_lights.add_torch([10.0, 6.0, -35.0], torch_color, torch_radius);
-        point_lights.add_torch([-10.0, 6.0, -35.0], torch_color, torch_radius);
-        // Bridge torches (at the ends)
-        point_lights.add_torch([3.0, 4.0, 15.0], torch_color, 8.0);
-        point_lights.add_torch([-3.0, 4.0, 15.0], torch_color, 8.0);
-        point_lights.add_torch([3.0, 4.0, -15.0], torch_color, 8.0);
-        point_lights.add_torch([-3.0, 4.0, -15.0], torch_color, 8.0);
-        println!("[US-P2-014] Point lights initialized: {} torches", point_lights.light_count());
+        point_lights.add_torch([10.0, torch_y, -55.0], torch_color, torch_radius);
+        point_lights.add_torch([-10.0, torch_y, -55.0], torch_color, torch_radius);
+        point_lights.add_torch([10.0, torch_y, -35.0], torch_color, torch_radius);
+        point_lights.add_torch([-10.0, torch_y, -35.0], torch_color, torch_radius);
+        // Bridge torches (at the ends - bridge spans at similar height)
+        let bridge_torch_y = 16.0;
+        point_lights.add_torch([3.0, bridge_torch_y, 15.0], torch_color, 8.0);
+        point_lights.add_torch([-3.0, bridge_torch_y, 15.0], torch_color, 8.0);
+        point_lights.add_torch([3.0, bridge_torch_y, -15.0], torch_color, 8.0);
+        point_lights.add_torch([-3.0, bridge_torch_y, -15.0], torch_color, 8.0);
+        println!("[US-P2-014] Point lights initialized: {} torches on floating islands", point_lights.light_count());
 
         // Particle system for ember/ash effects
         let mut particle_system = ParticleSystem::new(&device, surface_format);
-        // Add spawn positions above lava areas (between the islands)
-        // Lava is in the gap around Z=0 (between Z=-15 and Z=15)
-        particle_system.add_spawn_position([0.0, 0.5, 0.0]);
-        particle_system.add_spawn_position([5.0, 0.5, 5.0]);
-        particle_system.add_spawn_position([-5.0, 0.5, 5.0]);
-        particle_system.add_spawn_position([5.0, 0.5, -5.0]);
-        particle_system.add_spawn_position([-5.0, 0.5, -5.0]);
-        particle_system.add_spawn_position([10.0, 0.5, 0.0]);
-        particle_system.add_spawn_position([-10.0, 0.5, 0.0]);
-        // Also spawn near the island edges where lava pools are
-        particle_system.add_spawn_position([0.0, 0.5, 20.0]);
-        particle_system.add_spawn_position([0.0, 0.5, -20.0]);
-        particle_system.set_spawn_rate(80.0); // 80 embers per second for dramatic effect
-        println!("[US-P2-014] Particle system initialized with {} spawn positions", 9);
+        // Add spawn positions above the lava ocean (at LAVA_OCEAN_LEVEL = -15)
+        // Embers rise from the lava toward the floating islands
+        let ember_y = LAVA_OCEAN_LEVEL + 1.0;  // Just above lava surface
+        particle_system.add_spawn_position([0.0, ember_y, 0.0]);
+        particle_system.add_spawn_position([15.0, ember_y, 15.0]);
+        particle_system.add_spawn_position([-15.0, ember_y, 15.0]);
+        particle_system.add_spawn_position([15.0, ember_y, -15.0]);
+        particle_system.add_spawn_position([-15.0, ember_y, -15.0]);
+        particle_system.add_spawn_position([25.0, ember_y, 0.0]);
+        particle_system.add_spawn_position([-25.0, ember_y, 0.0]);
+        // Also spawn below the island edges (lava visible around floating islands)
+        particle_system.add_spawn_position([0.0, ember_y, 30.0]);
+        particle_system.add_spawn_position([0.0, ember_y, -30.0]);
+        particle_system.set_spawn_rate(100.0); // 100 embers per second for dramatic lava effect
+        println!("[US-P2-014] Particle system initialized with {} ember spawn positions above lava ocean", 9);
 
         // Material system for unified material management
         let mut material_system = MaterialSystem::new(&device);
@@ -1066,7 +1073,7 @@ impl BattleArenaApp {
         if self.lightning_timer <= 0.0 {
             // Trigger lightning flash
             if let Some(ref mut apocalyptic_sky) = self.apocalyptic_sky {
-                stormy_sky.trigger_lightning();
+                apocalyptic_sky.trigger_lightning();
             }
             // Reset timer to random value between 3.0 and 8.0 seconds
             // Using pseudo-random based on current time for variety
@@ -2246,94 +2253,94 @@ impl BattleArenaApp {
     fn rebuild_terrain(&mut self) {
         let device = self.device.as_ref().expect("Device not initialized");
         let _queue = self.queue.as_ref().expect("Queue not initialized");
-        
-        // Island positions - must match initial generation
-        const ATTACKER_CENTER: Vec3 = Vec3::new(0.0, 0.0, 45.0);
-        const DEFENDER_CENTER: Vec3 = Vec3::new(0.0, 0.0, -45.0);
+
+        // Island positions - must match initial generation (floating islands)
+        const ATTACKER_CENTER: Vec3 = Vec3::new(0.0, 10.0, 45.0);
+        const DEFENDER_CENTER: Vec3 = Vec3::new(0.0, 10.0, -45.0);
         const ISLAND_RADIUS: f32 = 30.0;
-        
-        // Regenerate terrain mesh
+        const LAVA_OCEAN_LEVEL: f32 = -15.0;
+
+        // Floating island configuration - matches initial setup
+        let island_config = FloatingIslandConfig {
+            radius: ISLAND_RADIUS,
+            surface_height: 5.0,
+            island_thickness: 25.0,
+            taper_amount: 0.6,
+            num_layers: 5,
+            edge_noise: 3.0,
+        };
+
+        // Regenerate terrain mesh with floating islands
         let mut static_mesh = Mesh::new();
-        
-        // Attacker platform
-        let attacker_platform = generate_elevated_hex_terrain(
-            ATTACKER_CENTER,
-            ISLAND_RADIUS,
-            [0.4, 0.5, 0.3, 1.0],
-            64,
-        );
+
+        // Attacker floating island
+        let attacker_platform = generate_floating_island(ATTACKER_CENTER, island_config);
         static_mesh.merge(&attacker_platform);
-        
-        // Water for attacker
-        let params = get_terrain_params();
-        if params.water > 0.01 {
-            let attacker_water = generate_lava_plane(ATTACKER_CENTER, ISLAND_RADIUS);
-            static_mesh.merge(&attacker_water);
-        }
-        
-        // Defender platform
-        let defender_platform = generate_elevated_hex_terrain(
-            DEFENDER_CENTER,
-            ISLAND_RADIUS,
-            [0.5, 0.4, 0.35, 1.0],
-            64,
-        );
+
+        // Defender floating island
+        let defender_platform = generate_floating_island(DEFENDER_CENTER, island_config);
         static_mesh.merge(&defender_platform);
-        
-        // Water for defender
-        if params.water > 0.01 {
-            let defender_water = generate_lava_plane(DEFENDER_CENTER, ISLAND_RADIUS);
-            static_mesh.merge(&defender_water);
-        }
-        
-        // Generate bridge - find actual terrain edge vertices
-        let mut bridge_start = Vec3::new(0.0, 0.0, ATTACKER_CENTER.z);
+
+        // Lava ocean
+        let lava_ocean = generate_lava_ocean(200.0, LAVA_OCEAN_LEVEL);
+        static_mesh.merge(&lava_ocean);
+
+        // Generate bridge - find surface vertices only
+        let surface_min_y = ATTACKER_CENTER.y;
+
+        let mut bridge_start = Vec3::new(0.0, surface_min_y, ATTACKER_CENTER.z - ISLAND_RADIUS);
         let mut best_dist_start = f32::MAX;
         for v in &attacker_platform.vertices {
             let vx = v.position[0];
+            let vy = v.position[1];
             let vz = v.position[2];
-            let dist = vx.abs() + (vz - (ATTACKER_CENTER.z - ISLAND_RADIUS)).abs() * 0.5;
-            if dist < best_dist_start && vz < ATTACKER_CENTER.z {
-                best_dist_start = dist;
-                bridge_start = Vec3::new(v.position[0], v.position[1], v.position[2]);
+            if vy >= surface_min_y {
+                let dist = vx.abs() + (vz - (ATTACKER_CENTER.z - ISLAND_RADIUS)).abs() * 0.5;
+                if dist < best_dist_start && vz < ATTACKER_CENTER.z {
+                    best_dist_start = dist;
+                    bridge_start = Vec3::new(vx, vy, vz);
+                }
             }
         }
-        
-        let mut bridge_end = Vec3::new(0.0, 0.0, DEFENDER_CENTER.z);
+
+        let mut bridge_end = Vec3::new(0.0, surface_min_y, DEFENDER_CENTER.z + ISLAND_RADIUS);
         let mut best_dist_end = f32::MAX;
         for v in &defender_platform.vertices {
             let vx = v.position[0];
+            let vy = v.position[1];
             let vz = v.position[2];
-            let dist = vx.abs() + ((DEFENDER_CENTER.z + ISLAND_RADIUS) - vz).abs() * 0.5;
-            if dist < best_dist_end && vz > DEFENDER_CENTER.z {
-                best_dist_end = dist;
-                bridge_end = Vec3::new(v.position[0], v.position[1], v.position[2]);
+            if vy >= surface_min_y {
+                let dist = vx.abs() + ((DEFENDER_CENTER.z + ISLAND_RADIUS) - vz).abs() * 0.5;
+                if dist < best_dist_end && vz > DEFENDER_CENTER.z {
+                    best_dist_end = dist;
+                    bridge_end = Vec3::new(vx, vy, vz);
+                }
             }
         }
-        
+
         let bridge_config = BridgeConfig::default();
         let bridge_mesh = generate_bridge(bridge_start, bridge_end, &bridge_config);
         static_mesh.merge(&bridge_mesh);
-        
+
         // Update buffers
         self.static_vertex_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Static Vertex Buffer"),
             contents: bytemuck::cast_slice(&static_mesh.vertices),
             usage: wgpu::BufferUsages::VERTEX,
         }));
-        
+
         self.static_index_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Static Index Buffer"),
             contents: bytemuck::cast_slice(&static_mesh.indices),
             usage: wgpu::BufferUsages::INDEX,
         }));
-        
+
         self.static_index_count = static_mesh.indices.len() as u32;
-        
-        println!("Terrain rebuilt! {} vertices, {} triangles", 
-            static_mesh.vertices.len(), 
+
+        println!("[Floating Islands] Rebuilt! {} vertices, {} triangles",
+            static_mesh.vertices.len(),
             static_mesh.indices.len() / 3);
-        
+
         // Also regenerate trees (they depend on terrain height)
         self.trees_attacker = generate_trees_on_terrain(
             ATTACKER_CENTER, 28.0, 0.3, 0.0,
@@ -2341,11 +2348,11 @@ impl BattleArenaApp {
         self.trees_defender = generate_trees_on_terrain(
             DEFENDER_CENTER, 28.0, 0.35, 100.0,
         );
-        
+
         let mut all_trees = self.trees_attacker.clone();
         all_trees.extend(self.trees_defender.clone());
         let tree_mesh = generate_all_trees_mesh(&all_trees);
-        
+
         if !tree_mesh.vertices.is_empty() {
             self.tree_vertex_buffer = Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Tree Vertex Buffer"),
@@ -2359,7 +2366,7 @@ impl BattleArenaApp {
             }));
             self.tree_index_count = tree_mesh.indices.len() as u32;
         }
-        
+
         println!("[Trees] Regenerated {} trees", all_trees.len());
     }
     
@@ -2624,6 +2631,10 @@ impl BattleArenaApp {
 
         // Get time for animations
         let time = self.start_time.elapsed().as_secs_f32();
+
+        // Calculate delta_time for frame-rate independent updates
+        let now = std::time::Instant::now();
+        let delta_time = now.duration_since(self.last_frame).as_secs_f32().min(0.1); // Cap at 100ms
         
         // Build dynamic mesh (projectiles + builder mode preview)
         let mut dynamic_mesh = Mesh::new();
@@ -2773,15 +2784,16 @@ impl BattleArenaApp {
         }
 
         // ============================================
-        // Update stormy skybox uniforms
+        // Update apocalyptic skybox uniforms
         // ============================================
         if let Some(ref mut apocalyptic_sky) = self.apocalyptic_sky {
-            stormy_sky.update(
+            apocalyptic_sky.update(
                 queue,
                 view_proj,
                 self.camera.position,
                 time,
                 (config.width, config.height),
+                delta_time,  // For lightning decay and cloud animation
             );
         }
 
@@ -2812,8 +2824,8 @@ impl BattleArenaApp {
         // ============================================
         // PASS 0: Stormy skybox (background)
         // ============================================
-        if let Some(ref stormy_sky) = self.apocalyptic_sky {
-            stormy_sky.render_to_view(&mut encoder, &view);
+        if let Some(ref apocalyptic_sky) = self.apocalyptic_sky {
+            apocalyptic_sky.render_to_view(&mut encoder, &view);
         }
 
         // ============================================

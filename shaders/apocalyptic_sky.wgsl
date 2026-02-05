@@ -139,25 +139,45 @@ fn fbm3d(p: vec3<f32>, octaves: i32) -> f32 {
 // ============================================================================
 
 fn cloud_density(p: vec3<f32>, time: f32) -> f32 {
-    // Animate cloud position
-    let flow = vec3<f32>(time * 0.02, 0.0, time * 0.015);
+    // Animate cloud position with more turbulent motion
+    let flow = vec3<f32>(time * 0.03, time * 0.01, time * 0.025);
     let pos = p * uniforms.cloud_scale + flow;
 
-    // Multi-scale noise for billowing clouds
-    var density = fbm3d(pos * 0.3, 5);
+    // Multi-scale noise for billowing clouds - more octaves for detail
+    var density = fbm3d(pos * 0.25, 6);
 
-    // Add detail at smaller scale
-    density += fbm3d(pos * 0.8, 3) * 0.4;
+    // Add turbulent detail at multiple scales for that dramatic storm look
+    density += fbm3d(pos * 0.6 + flow * 0.5, 4) * 0.45;
+    density += fbm3d(pos * 1.2 - flow * 0.3, 3) * 0.25;
 
-    // Shape clouds - threshold based on coverage
+    // Add swirling motion for storm effect
+    let swirl = sin(pos.x * 0.5 + time * 0.1) * cos(pos.z * 0.5 + time * 0.08) * 0.15;
+    density += swirl;
+
+    // Shape clouds - sharper threshold for more defined edges
     let threshold = 1.0 - uniforms.cloud_coverage;
-    density = smoothstep(threshold, threshold + 0.3, density);
+    density = smoothstep(threshold - 0.1, threshold + 0.2, density);
 
-    // Height falloff (clouds thicker in middle of layer)
-    let height_factor = 1.0 - abs(p.y - 0.5) * 2.0;
+    // Height falloff - allow clouds to be thicker overall
+    let height_factor = 1.0 - pow(abs(p.y - 0.5) * 1.5, 1.5);
     density *= max(height_factor, 0.0);
 
     return density * uniforms.cloud_density;
+}
+
+// Dramatic cloud layer for the storm
+fn storm_cloud_layer(p: vec3<f32>, time: f32) -> f32 {
+    let flow = vec3<f32>(time * 0.04, 0.0, time * 0.03);
+    let pos = p + flow;
+
+    // Large-scale storm structure
+    var density = fbm3d(pos * 0.15, 4) * 1.5;
+
+    // Add dramatic billowing
+    let billow = pow(fbm3d(pos * 0.4, 3), 2.0) * 0.8;
+    density += billow;
+
+    return max(density - 0.3, 0.0);
 }
 
 // ============================================================================
@@ -325,12 +345,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // ========================================================================
-    // VOLUMETRIC CLOUDS (ray march)
+    // VOLUMETRIC CLOUDS (ray march) - Enhanced dramatic storm
     // ========================================================================
 
-    if (up > 0.0) {
-        let cloud_base = 50.0;
-        let cloud_top = 200.0;
+    if (up > -0.1) {  // Extend slightly below horizon for dramatic effect
+        let cloud_base = 40.0;
+        let cloud_top = 250.0;
 
         // Calculate ray intersection with cloud layer
         let t_base = (cloud_base - camera_pos.y) / max(ray_dir.y, 0.001);
@@ -340,8 +360,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let t_end = max(t_top, t_start);
 
         if (t_end > t_start) {
-            // Ray march with 8 steps (performance optimized)
-            let steps = 8;
+            // Ray march with 12 steps for better quality
+            let steps = 12;
             let step_size = (t_end - t_start) / f32(steps);
 
             var cloud_accum = vec3<f32>(0.0);
@@ -353,39 +373,46 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
                 let pos = camera_pos + ray_dir * t;
                 let cloud_pos = vec3<f32>(
-                    pos.x * 0.01,
+                    pos.x * 0.008,
                     (pos.y - cloud_base) / (cloud_top - cloud_base),
-                    pos.z * 0.01
+                    pos.z * 0.008
                 );
 
                 let density = cloud_density(cloud_pos, time);
+                let storm_density = storm_cloud_layer(cloud_pos, time);
+                let total_density = density + storm_density * 0.5;
 
-                if (density > 0.01) {
-                    // Cloud lighting
+                if (total_density > 0.01) {
+                    // Cloud lighting - enhanced dramatic colors
                     let sun_dir = normalize(vec3<f32>(uniforms.sun_dir_x, uniforms.sun_dir_y, uniforms.sun_dir_z));
                     let sun_dot = dot(ray_dir, sun_dir) * 0.5 + 0.5;
 
-                    // Dark cloud core
-                    let dark_cloud = vec3<f32>(0.08, 0.05, 0.12);
-                    // Lit cloud edges (orange from lava below, purple from zenith)
-                    let lit_cloud = vec3<f32>(0.6, 0.35, 0.25);
-                    // Rim lighting
-                    let rim_color = vec3<f32>(0.9, 0.4, 0.15);
+                    // Very dark cloud core (deep purple-black)
+                    let dark_cloud = vec3<f32>(0.04, 0.02, 0.08);
+                    // Bright orange-lit cloud edges (dramatically lit by lava)
+                    let lit_cloud = vec3<f32>(0.85, 0.45, 0.20);
+                    // Hot magenta/pink rim lighting
+                    let rim_color = vec3<f32>(1.2, 0.35, 0.45);
 
-                    // Mix based on density and light
-                    let light_penetration = pow(1.0 - density, 2.0) * sun_dot;
+                    // Mix based on density and light - more dramatic contrast
+                    let light_penetration = pow(1.0 - total_density, 1.5) * sun_dot;
                     var sample_color = mix(dark_cloud, lit_cloud, light_penetration);
 
-                    // Add rim lighting
-                    let edge_factor = pow(1.0 - density, 3.0);
-                    sample_color = sample_color + rim_color * edge_factor * sun_dot * 1.5;
+                    // Add intense rim lighting at cloud edges
+                    let edge_factor = pow(1.0 - total_density, 2.5);
+                    sample_color = sample_color + rim_color * edge_factor * sun_dot * 2.0;
 
-                    // Lava glow from below
-                    let bottom_glow = (1.0 - cloud_pos.y) * uniforms.lava_glow_strength * 0.3;
-                    sample_color = sample_color + vec3<f32>(0.8, 0.3, 0.1) * bottom_glow * (1.0 - density);
+                    // Strong lava glow from below - this is key for the reference look
+                    let bottom_glow = pow(1.0 - cloud_pos.y, 1.5) * uniforms.lava_glow_strength * 0.6;
+                    let lava_light = vec3<f32>(1.2, 0.4, 0.1) * bottom_glow * (1.0 - total_density * 0.7);
+                    sample_color = sample_color + lava_light;
 
-                    // Accumulate
-                    let sample_alpha = density * 0.25;
+                    // Add purple top lighting from zenith
+                    let top_glow = pow(cloud_pos.y, 2.0) * 0.3;
+                    sample_color = sample_color + vec3<f32>(0.3, 0.1, 0.4) * top_glow;
+
+                    // Accumulate with enhanced alpha
+                    let sample_alpha = total_density * 0.3;
                     cloud_accum = cloud_accum + sample_color * sample_alpha * (1.0 - cloud_alpha);
                     cloud_alpha = cloud_alpha + sample_alpha * (1.0 - cloud_alpha);
                 }
@@ -393,21 +420,26 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 t = t + step_size;
             }
 
-            sky_color = mix(sky_color, cloud_accum / max(cloud_alpha, 0.001), cloud_alpha);
+            // Blend clouds more strongly
+            sky_color = mix(sky_color, cloud_accum / max(cloud_alpha, 0.001), cloud_alpha * 1.2);
         }
     }
 
     // ========================================================================
-    // LIGHTNING
+    // LIGHTNING - Enhanced dramatic bolts
     // ========================================================================
 
     if (uniforms.lightning_intensity > 0.0) {
         let lightning = lightning_bolt(in.uv, time);
-        let lightning_color = vec3<f32>(0.9, 0.95, 1.0);
-        sky_color = sky_color + lightning_color * lightning * 3.0;
+        // Blue-white lightning with pink tinge
+        let lightning_color = vec3<f32>(0.85, 0.9, 1.0) + vec3<f32>(0.3, 0.1, 0.2) * uniforms.lightning_intensity;
+        sky_color = sky_color + lightning_color * lightning * 4.0;
 
-        // Flash illuminates clouds
-        sky_color = sky_color * (1.0 + uniforms.lightning_intensity * 0.5);
+        // Flash illuminates clouds dramatically
+        sky_color = sky_color * (1.0 + uniforms.lightning_intensity * 0.8);
+
+        // Add purple flash to entire sky during lightning
+        sky_color = sky_color + vec3<f32>(0.15, 0.05, 0.2) * uniforms.lightning_intensity;
     }
 
     // ========================================================================

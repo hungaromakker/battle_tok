@@ -70,22 +70,26 @@ impl Default for ApocalypticSkyConfig {
 }
 
 impl ApocalypticSkyConfig {
-    /// Create preset matching the first reference image (battle arena)
+    /// Create preset matching the reference image - dramatic storm over lava
     pub fn battle_arena() -> Self {
         Self {
-            cloud_speed: 0.12,
-            cloud_density: 2.0,
-            cloud_scale: 1.2,
-            cloud_coverage: 0.7,
+            cloud_speed: 0.15,
+            cloud_density: 2.5,      // Denser, more dramatic clouds
+            cloud_scale: 1.0,
+            cloud_coverage: 0.75,    // More cloud coverage
 
-            zenith_color: Vec3::new(0.06, 0.02, 0.18),
-            horizon_color: Vec3::new(0.7, 0.3, 0.15),
+            // Deep purple zenith matching reference - more saturated
+            zenith_color: Vec3::new(0.08, 0.02, 0.22),
+            // Orange-red horizon with more intensity
+            horizon_color: Vec3::new(0.85, 0.35, 0.12),
 
-            lava_glow_color: Vec3::new(1.5, 0.5, 0.12),
-            lava_glow_strength: 2.5,
+            // Intense lava glow from below
+            lava_glow_color: Vec3::new(1.8, 0.55, 0.15),
+            lava_glow_strength: 3.5,
 
-            sun_dir: Vec3::new(0.0, 0.08, -1.0).normalize(),
-            sun_intensity: 0.8,
+            // Low sun for dramatic rim lighting on clouds
+            sun_dir: Vec3::new(0.1, 0.05, -1.0).normalize(),
+            sun_intensity: 1.0,
 
             lightning_intensity: 0.0,
             lightning_pos: (0.5, 0.5),

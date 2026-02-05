@@ -28,6 +28,7 @@
 
 pub mod bindings;
 pub mod cursor_manager;
+pub mod handler;
 pub mod keyboard;
 pub mod mouse;
 pub mod mouse_state;
@@ -35,6 +36,7 @@ pub mod mouse_state;
 // Re-export commonly used types at module level
 pub use bindings::{InputAction, KeyBindings};
 pub use cursor_manager::{CursorAction, CursorManager};
+pub use handler::{GameAction, InputState as GameInputState, KeyState as GameKeyState};
 pub use keyboard::{KeyCode, KeyboardState, ModifierState, MovementKeys};
 pub use mouse::{ButtonState, MouseButton, MouseState, Position, ScrollDelta};
 pub use mouse_state::FpsMouseState;

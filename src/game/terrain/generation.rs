@@ -46,31 +46,35 @@ pub fn terrain_height_at(x: f32, z: f32, base_y: f32) -> f32 {
     base_y + height
 }
 
-/// UE5-style terrain color with procedural variation
+/// Apocalyptic terrain color with scorched/burnt palette
 pub fn terrain_color_at(height: f32, normal: Vec3, base_y: f32) -> [f32; 4] {
     let params = get_terrain_params();
     let relative_height = height - base_y;
     let slope = 1.0 - normal.y.abs();
-    
+
     let water_level = params.water * 2.0;
-    
-    let grass_dark = [0.12, 0.22, 0.06, 1.0];
-    let grass_mid = [0.18, 0.32, 0.10, 1.0];
-    let grass_light = [0.28, 0.42, 0.15, 1.0];
-    let grass_dry = [0.35, 0.33, 0.18, 1.0];
-    
-    let rock_dark = [0.15, 0.13, 0.11, 1.0];
-    let rock_mid = [0.32, 0.29, 0.26, 1.0];
-    let rock_light = [0.48, 0.45, 0.42, 1.0];
-    let rock_moss = [0.20, 0.26, 0.14, 1.0];
-    
-    let sand_wet = [0.30, 0.25, 0.18, 1.0];
-    let sand_dry = [0.55, 0.48, 0.38, 1.0];
-    let dirt_base = [0.24, 0.18, 0.12, 1.0];
-    let mud_wet = [0.16, 0.13, 0.10, 1.0];
-    
-    let water_shallow = [0.12, 0.30, 0.35, 0.90];
-    let water_deep = [0.08, 0.18, 0.25, 0.95];
+
+    // Scorched/burnt grass palette (apocalyptic)
+    let grass_dark = [0.08, 0.10, 0.06, 1.0];     // Very dark scorched
+    let grass_mid = [0.12, 0.14, 0.08, 1.0];      // Dark scorched
+    let grass_light = [0.18, 0.18, 0.12, 1.0];    // Lighter scorched
+    let grass_dry = [0.22, 0.18, 0.12, 1.0];      // Dry dead
+
+    // Dark volcanic rock palette
+    let rock_dark = [0.10, 0.08, 0.08, 1.0];      // Dark volcanic
+    let rock_mid = [0.22, 0.20, 0.18, 1.0];       // Mid volcanic
+    let rock_light = [0.35, 0.32, 0.30, 1.0];     // Lighter rock
+    let rock_moss = [0.15, 0.18, 0.12, 1.0];      // Charred moss remnants
+
+    // Ash and dirt palette
+    let sand_wet = [0.20, 0.18, 0.15, 1.0];       // Ash-covered
+    let sand_dry = [0.35, 0.32, 0.28, 1.0];       // Dry ash
+    let dirt_base = [0.18, 0.14, 0.10, 1.0];      // Dark scorched dirt
+    let mud_wet = [0.12, 0.10, 0.08, 1.0];        // Dark mud
+
+    // Lava pools instead of water (this is apocalyptic after all)
+    let water_shallow = [1.8, 0.5, 0.1, 0.90];    // Bright lava surface (HDR)
+    let water_deep = [0.8, 0.2, 0.05, 0.95];      // Cooler lava crust
     
     let px = (height * 7.3 + relative_height * 13.7).sin() * 0.5 + 0.5;
     let py = (relative_height * 11.1 + slope * 17.3).cos() * 0.5 + 0.5;

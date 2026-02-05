@@ -2,6 +2,22 @@
 //!
 //! This module contains the core rendering infrastructure for the Magic Engine.
 //! It provides wgpu-based rendering with VSync-off support for maximum performance.
+//!
+//! ## Architecture
+//!
+//! The render system is organized into several layers:
+//!
+//! - **GPU Context** (`gpu_context`): Manages wgpu device, queue, surface, and common buffers
+//! - **Render Pass** (`render_pass`): Trait-based abstraction for individual render passes
+//! - **Scene Coordinator** (`scene_coordinator`): High-level scene management and frame submission
+//! - **Specialized Passes**: UI, Mesh, Sky, etc. - each implementing the RenderPass trait
+
+// Core rendering infrastructure (new modular system)
+pub mod gpu_context;
+pub mod render_pass;
+pub mod scene_coordinator;
+pub mod ui_pass;
+pub mod mesh_pass;
 
 pub mod adaptive_step;
 pub mod binding_validator;
@@ -210,3 +226,10 @@ pub use material_system::{
     MaterialSystem, MaterialType, MaterialEntry,
     SceneUniforms, SceneConfig,
 };
+
+// Re-export core rendering infrastructure types
+pub use gpu_context::{GpuContext, GpuContextConfig};
+pub use render_pass::{RenderPass, RenderPassPriority, RenderContext, FrameContext, RenderPassManager};
+pub use scene_coordinator::{SceneCoordinator, CameraState};
+pub use ui_pass::{UiRenderPass, UiVertex, UiMesh, UiComponent};
+pub use mesh_pass::{MeshRenderPass, MeshVertex, MeshUniforms, MeshBuffer, draw_mesh_buffer};
