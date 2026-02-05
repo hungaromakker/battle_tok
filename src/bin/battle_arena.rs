@@ -67,6 +67,93 @@ struct MergedMeshBuffers {
 }
 
 // ============================================================================
+// GPU RESOURCES
+// ============================================================================
+
+/// All GPU-related state grouped together.
+/// Constructed during `initialize()` and wrapped in `Option<GpuResources>` on the app.
+#[allow(dead_code)]
+struct GpuResources {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    surface: wgpu::Surface<'static>,
+    surface_config: wgpu::SurfaceConfiguration,
+
+    // Pipelines
+    pipeline: wgpu::RenderPipeline,
+    sdf_cannon_pipeline: wgpu::RenderPipeline,
+    ui_pipeline: wgpu::RenderPipeline,
+
+    // Main uniform
+    uniform_buffer: wgpu::Buffer,
+    uniform_bind_group: wgpu::BindGroup,
+
+    // Static mesh (terrain)
+    static_vertex_buffer: wgpu::Buffer,
+    static_index_buffer: wgpu::Buffer,
+    static_index_count: u32,
+
+    // Dynamic mesh (projectiles, debris)
+    dynamic_vertex_buffer: wgpu::Buffer,
+    dynamic_index_buffer: wgpu::Buffer,
+
+    // Hex walls
+    hex_wall_vertex_buffer: wgpu::Buffer,
+    hex_wall_index_buffer: wgpu::Buffer,
+    hex_wall_index_count: u32,
+
+    // SDF cannon
+    sdf_cannon_uniform_buffer: wgpu::Buffer,
+    sdf_cannon_data_buffer: wgpu::Buffer,
+    sdf_cannon_bind_group: wgpu::BindGroup,
+
+    // Depth
+    depth_texture: wgpu::TextureView,
+    depth_texture_raw: wgpu::Texture,
+
+    // UI
+    ui_uniform_buffer: wgpu::Buffer,
+    ui_bind_group: wgpu::BindGroup,
+
+    // Building blocks
+    block_vertex_buffer: Option<wgpu::Buffer>,
+    block_index_buffer: Option<wgpu::Buffer>,
+    block_index_count: u32,
+
+    // Merged mesh GPU buffers
+    merged_mesh_buffers: Vec<MergedMeshBuffers>,
+
+    // Trees
+    tree_vertex_buffer: wgpu::Buffer,
+    tree_index_buffer: wgpu::Buffer,
+    tree_index_count: u32,
+}
+
+impl GpuResources {
+    fn resize(&mut self, new_size: PhysicalSize<u32>) {
+        self.surface_config.width = new_size.width.max(1);
+        self.surface_config.height = new_size.height.max(1);
+        self.surface.configure(&self.device, &self.surface_config);
+        let depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Depth Texture"),
+            size: wgpu::Extent3d {
+                width: self.surface_config.width,
+                height: self.surface_config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        self.depth_texture = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.depth_texture_raw = depth_texture;
+    }
+}
+
+// ============================================================================
 // APPLICATION
 // ============================================================================
 
@@ -76,42 +163,8 @@ struct BattleArenaApp {
     // Scene (holds ALL game state)
     scene: Option<BattleScene>,
 
-    // GPU resources
-    device: Option<wgpu::Device>,
-    queue: Option<wgpu::Queue>,
-    surface: Option<wgpu::Surface<'static>>,
-    surface_config: Option<wgpu::SurfaceConfiguration>,
-    pipeline: Option<wgpu::RenderPipeline>,
-    uniform_buffer: Option<wgpu::Buffer>,
-    uniform_bind_group: Option<wgpu::BindGroup>,
-
-    // Static mesh buffers (terrain, cannon base)
-    static_vertex_buffer: Option<wgpu::Buffer>,
-    static_index_buffer: Option<wgpu::Buffer>,
-    static_index_count: u32,
-
-    // Dynamic mesh buffers (cannon barrel, projectiles)
-    dynamic_vertex_buffer: Option<wgpu::Buffer>,
-    dynamic_index_buffer: Option<wgpu::Buffer>,
-    dynamic_index_count: u32,
-
-    // Hex-prism walls GPU buffers
-    hex_wall_vertex_buffer: Option<wgpu::Buffer>,
-    hex_wall_index_buffer: Option<wgpu::Buffer>,
-    hex_wall_index_count: u32,
-
-    // SDF cannon rendering (US-013)
-    sdf_cannon_pipeline: Option<wgpu::RenderPipeline>,
-    sdf_cannon_uniform_buffer: Option<wgpu::Buffer>,
-    sdf_cannon_data_buffer: Option<wgpu::Buffer>,
-    sdf_cannon_bind_group: Option<wgpu::BindGroup>,
-    depth_texture: Option<wgpu::TextureView>,
-    depth_texture_raw: Option<wgpu::Texture>,
-
-    // UI pipeline (no depth testing, for 2D overlay)
-    ui_pipeline: Option<wgpu::RenderPipeline>,
-    ui_uniform_buffer: Option<wgpu::Buffer>,
-    ui_bind_group: Option<wgpu::BindGroup>,
+    // GPU resources (replaces ~25 individual fields)
+    gpu: Option<GpuResources>,
 
     // Apocalyptic skybox with volumetric clouds
     apocalyptic_sky: Option<ApocalypticSky>,
@@ -135,19 +188,8 @@ struct BattleArenaApp {
     // Builder mode (stays here — mixes with winit cursor control)
     builder_mode: BuilderMode,
 
-    // Merged mesh GPU buffers
-    merged_mesh_buffers: Vec<MergedMeshBuffers>,
-    block_vertex_buffer: Option<wgpu::Buffer>,
-    block_index_buffer: Option<wgpu::Buffer>,
-    block_index_count: u32,
-
     // Windows focus overlay
     start_overlay: StartOverlay,
-
-    // Tree GPU buffers
-    tree_vertex_buffer: Option<wgpu::Buffer>,
-    tree_index_buffer: Option<wgpu::Buffer>,
-    tree_index_count: u32,
 
     // Terrain editor UI (on-screen sliders)
     terrain_ui: TerrainEditorUI,
@@ -165,31 +207,7 @@ impl BattleArenaApp {
         Self {
             window: None,
             scene: None,
-            device: None,
-            queue: None,
-            surface: None,
-            surface_config: None,
-            pipeline: None,
-            uniform_buffer: None,
-            uniform_bind_group: None,
-            static_vertex_buffer: None,
-            static_index_buffer: None,
-            static_index_count: 0,
-            dynamic_vertex_buffer: None,
-            dynamic_index_buffer: None,
-            dynamic_index_count: 0,
-            hex_wall_vertex_buffer: None,
-            hex_wall_index_buffer: None,
-            hex_wall_index_count: 0,
-            sdf_cannon_pipeline: None,
-            sdf_cannon_uniform_buffer: None,
-            sdf_cannon_data_buffer: None,
-            sdf_cannon_bind_group: None,
-            depth_texture: None,
-            depth_texture_raw: None,
-            ui_pipeline: None,
-            ui_uniform_buffer: None,
-            ui_bind_group: None,
+            gpu: None,
             apocalyptic_sky: None,
             lightning_timer: 3.0,
             point_lights: None,
@@ -204,14 +222,7 @@ impl BattleArenaApp {
             _last_mouse_pos: None,
             current_mouse_pos: None,
             builder_mode: BuilderMode::default(),
-            merged_mesh_buffers: Vec::new(),
-            block_vertex_buffer: None,
-            block_index_buffer: None,
-            block_index_count: 0,
             start_overlay: StartOverlay::default(),
-            tree_vertex_buffer: None,
-            tree_index_buffer: None,
-            tree_index_count: 0,
             terrain_ui: TerrainEditorUI::default(),
             start_time: Instant::now(),
             last_frame: Instant::now(),
@@ -838,38 +849,44 @@ impl BattleArenaApp {
         // Store everything
         self.window = Some(window);
         self.scene = Some(scene);
-        self.device = Some(device);
-        self.queue = Some(queue);
-        self.surface = Some(surface);
-        self.surface_config = Some(surface_config);
-        self.pipeline = Some(pipeline);
-        self.uniform_buffer = Some(uniform_buffer);
-        self.uniform_bind_group = Some(uniform_bind_group);
-        self.static_vertex_buffer = Some(static_vertex_buffer);
-        self.static_index_buffer = Some(static_index_buffer);
-        self.static_index_count = static_mesh.indices.len() as u32;
-        self.dynamic_vertex_buffer = Some(dynamic_vertex_buffer);
-        self.dynamic_index_buffer = Some(dynamic_index_buffer);
-        self.hex_wall_vertex_buffer = Some(hex_wall_vertex_buffer);
-        self.hex_wall_index_buffer = Some(hex_wall_index_buffer);
-        self.hex_wall_index_count = hex_wall_index_count;
-        self.sdf_cannon_pipeline = Some(sdf_cannon_pipeline);
-        self.sdf_cannon_uniform_buffer = Some(sdf_cannon_uniform_buffer);
-        self.sdf_cannon_data_buffer = Some(sdf_cannon_data_buffer);
-        self.sdf_cannon_bind_group = Some(sdf_cannon_bind_group);
-        self.depth_texture = Some(depth_texture_view);
-        self.depth_texture_raw = Some(depth_texture);
-        self.ui_pipeline = Some(ui_pipeline);
-        self.ui_uniform_buffer = Some(ui_uniform_buffer);
-        self.ui_bind_group = Some(ui_bind_group);
+        self.gpu = Some(GpuResources {
+            device,
+            queue,
+            surface,
+            surface_config,
+            pipeline,
+            sdf_cannon_pipeline,
+            ui_pipeline,
+            uniform_buffer,
+            uniform_bind_group,
+            static_vertex_buffer,
+            static_index_buffer,
+            static_index_count: static_mesh.indices.len() as u32,
+            dynamic_vertex_buffer,
+            dynamic_index_buffer,
+            hex_wall_vertex_buffer,
+            hex_wall_index_buffer,
+            hex_wall_index_count,
+            sdf_cannon_uniform_buffer,
+            sdf_cannon_data_buffer,
+            sdf_cannon_bind_group,
+            depth_texture: depth_texture_view,
+            depth_texture_raw: depth_texture,
+            ui_uniform_buffer,
+            ui_bind_group,
+            block_vertex_buffer: None,
+            block_index_buffer: None,
+            block_index_count: 0,
+            merged_mesh_buffers: Vec::new(),
+            tree_vertex_buffer,
+            tree_index_buffer,
+            tree_index_count,
+        });
         self.apocalyptic_sky = Some(apocalyptic_sky);
         self.point_lights = Some(point_lights);
         self.particle_system = Some(particle_system);
         self.material_system = Some(material_system);
         self.fog_post = Some(fog_post);
-        self.tree_vertex_buffer = Some(tree_vertex_buffer);
-        self.tree_index_buffer = Some(tree_index_buffer);
-        self.tree_index_count = tree_index_count;
 
         println!(
             "[Battle Arena] Hex-prism walls: {} vertices, {} indices",
@@ -932,8 +949,8 @@ impl BattleArenaApp {
 
         // Update Phase 2 visual systems
         let time = self.start_time.elapsed().as_secs_f32();
-        if let (Some(point_lights), Some(queue)) = (&mut self.point_lights, &self.queue) {
-            point_lights.update(queue, time);
+        if let (Some(point_lights), Some(gpu)) = (&mut self.point_lights, &self.gpu) {
+            point_lights.update(&gpu.queue, time);
         }
         if let Some(ref mut particle_system) = self.particle_system {
             particle_system.update(delta_time);
@@ -1064,13 +1081,7 @@ impl BattleArenaApp {
 
     /// Regenerate hex-prism wall mesh and update GPU buffers
     fn regenerate_hex_wall_mesh(&mut self) {
-        let Some(ref queue) = self.queue else { return };
-        let Some(ref hex_wall_vb) = self.hex_wall_vertex_buffer else {
-            return;
-        };
-        let Some(ref hex_wall_ib) = self.hex_wall_index_buffer else {
-            return;
-        };
+        let Some(ref mut gpu) = self.gpu else { return };
         let scene = self.scene.as_mut().unwrap();
 
         let (hex_vertices, hex_indices) = scene.hex_grid.generate_combined_mesh();
@@ -1083,16 +1094,24 @@ impl BattleArenaApp {
             })
             .collect();
 
-        self.hex_wall_index_count = hex_indices.len() as u32;
+        gpu.hex_wall_index_count = hex_indices.len() as u32;
         if !hex_wall_vertices.is_empty() {
-            queue.write_buffer(hex_wall_vb, 0, bytemuck::cast_slice(&hex_wall_vertices));
-            queue.write_buffer(hex_wall_ib, 0, bytemuck::cast_slice(&hex_indices));
+            gpu.queue.write_buffer(
+                &gpu.hex_wall_vertex_buffer,
+                0,
+                bytemuck::cast_slice(&hex_wall_vertices),
+            );
+            gpu.queue.write_buffer(
+                &gpu.hex_wall_index_buffer,
+                0,
+                bytemuck::cast_slice(&hex_indices),
+            );
         }
         scene.hex_grid.clear_mesh_dirty();
     }
 
     fn rebuild_terrain(&mut self) {
-        let device = self.device.as_ref().expect("Device not initialized");
+        let gpu = self.gpu.as_mut().expect("GPU not initialized");
         let scene = self.scene.as_mut().unwrap();
         let config = &scene.config;
 
@@ -1147,21 +1166,21 @@ impl BattleArenaApp {
         let bridge_mesh = generate_bridge(bridge_start, bridge_end, &bridge_cfg);
         static_mesh.merge(&bridge_mesh);
 
-        self.static_vertex_buffer = Some(device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Static Vertex Buffer"),
-                contents: bytemuck::cast_slice(&static_mesh.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            },
-        ));
-        self.static_index_buffer = Some(device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Static Index Buffer"),
-                contents: bytemuck::cast_slice(&static_mesh.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            },
-        ));
-        self.static_index_count = static_mesh.indices.len() as u32;
+        gpu.static_vertex_buffer =
+            gpu.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Static Vertex Buffer"),
+                    contents: bytemuck::cast_slice(&static_mesh.vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+        gpu.static_index_buffer =
+            gpu.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Static Index Buffer"),
+                    contents: bytemuck::cast_slice(&static_mesh.indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
+        gpu.static_index_count = static_mesh.indices.len() as u32;
 
         // Regenerate trees
         scene.trees_attacker = generate_trees_on_terrain(attacker_center, 28.0, 0.3, 0.0);
@@ -1171,21 +1190,21 @@ impl BattleArenaApp {
         let tree_mesh = generate_all_trees_mesh(&all_trees);
 
         if !tree_mesh.vertices.is_empty() {
-            self.tree_vertex_buffer = Some(device.create_buffer_init(
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("Tree Vertex Buffer"),
-                    contents: bytemuck::cast_slice(&tree_mesh.vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                },
-            ));
-            self.tree_index_buffer = Some(device.create_buffer_init(
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some("Tree Index Buffer"),
-                    contents: bytemuck::cast_slice(&tree_mesh.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                },
-            ));
-            self.tree_index_count = tree_mesh.indices.len() as u32;
+            gpu.tree_vertex_buffer =
+                gpu.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Tree Vertex Buffer"),
+                        contents: bytemuck::cast_slice(&tree_mesh.vertices),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+            gpu.tree_index_buffer =
+                gpu.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Tree Index Buffer"),
+                        contents: bytemuck::cast_slice(&tree_mesh.indices),
+                        usage: wgpu::BufferUsages::INDEX,
+                    });
+            gpu.tree_index_count = tree_mesh.indices.len() as u32;
         }
     }
 
@@ -1194,7 +1213,7 @@ impl BattleArenaApp {
         &self,
     ) -> Option<(u32, battle_tok_engine::render::BuildingBlockShape, u8)> {
         let mouse_pos = self.current_mouse_pos?;
-        let _config = self.surface_config.as_ref()?;
+        let _gpu = self.gpu.as_ref()?;
         let scene = self.scene.as_ref()?;
 
         let (ray_origin, ray_dir) = self.screen_to_ray(mouse_pos.0, mouse_pos.1);
@@ -1218,11 +1237,11 @@ impl BattleArenaApp {
 
     /// Convert screen coordinates to a world-space ray
     fn screen_to_ray(&self, screen_x: f32, screen_y: f32) -> (Vec3, Vec3) {
-        let Some(ref config) = self.surface_config else {
+        let Some(ref gpu) = self.gpu else {
             return (self.camera.position, self.camera.get_forward());
         };
-        let width = config.width as f32;
-        let height = config.height as f32;
+        let width = gpu.surface_config.width as f32;
+        let height = gpu.surface_config.height as f32;
         let ndc_x = (2.0 * screen_x / width) - 1.0;
         let ndc_y = 1.0 - (2.0 * screen_y / height);
         let forward = self.camera.get_forward();
@@ -1313,12 +1332,13 @@ impl BattleArenaApp {
 
     /// Calculate the snapped position for block placement
     fn calculate_block_placement_position(&self) -> Option<Vec3> {
-        let config = self.surface_config.as_ref()?;
+        let gpu = self.gpu.as_ref()?;
         let scene = self.scene.as_ref()?;
 
-        let mouse_pos = self
-            .current_mouse_pos
-            .unwrap_or((config.width as f32 / 2.0, config.height as f32 / 2.0));
+        let mouse_pos = self.current_mouse_pos.unwrap_or((
+            gpu.surface_config.width as f32 / 2.0,
+            gpu.surface_config.height as f32 / 2.0,
+        ));
 
         let (ray_origin, ray_dir) = self.screen_to_ray(mouse_pos.0, mouse_pos.1);
         scene
@@ -1542,8 +1562,8 @@ impl BattleArenaApp {
 
     /// Create GPU buffers for a merged mesh
     fn create_merged_mesh_buffers(&mut self, merged: MergedMesh) {
-        let device = match &self.device {
-            Some(d) => d,
+        let gpu = match &mut self.gpu {
+            Some(g) => g,
             None => return,
         };
         if merged.vertices.is_empty() {
@@ -1560,18 +1580,22 @@ impl BattleArenaApp {
             })
             .collect();
 
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Merged Mesh Vertex Buffer"),
-            contents: bytemuck::cast_slice(&mesh_vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Merged Mesh Index Buffer"),
-            contents: bytemuck::cast_slice(&merged.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        let vertex_buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Merged Mesh Vertex Buffer"),
+                contents: bytemuck::cast_slice(&mesh_vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let index_buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Merged Mesh Index Buffer"),
+                contents: bytemuck::cast_slice(&merged.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
 
-        self.merged_mesh_buffers.push(MergedMeshBuffers {
+        gpu.merged_mesh_buffers.push(MergedMeshBuffers {
             _id: merged.id,
             vertex_buffer,
             index_buffer,
@@ -1581,15 +1605,15 @@ impl BattleArenaApp {
 
     /// Regenerate the building block mesh buffer
     fn regenerate_block_mesh(&mut self) {
-        let device = match &self.device {
-            Some(d) => d,
+        let gpu = match &mut self.gpu {
+            Some(g) => g,
             None => return,
         };
         let scene = self.scene.as_ref().unwrap();
 
         let (vertices, indices) = scene.building.block_manager.generate_combined_mesh();
         if vertices.is_empty() {
-            self.block_index_count = 0;
+            gpu.block_index_count = 0;
             return;
         }
 
@@ -1602,21 +1626,21 @@ impl BattleArenaApp {
             })
             .collect();
 
-        self.block_vertex_buffer = Some(device.create_buffer_init(
+        gpu.block_vertex_buffer = Some(gpu.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Block Vertex Buffer"),
                 contents: bytemuck::cast_slice(&mesh_vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             },
         ));
-        self.block_index_buffer = Some(device.create_buffer_init(
+        gpu.block_index_buffer = Some(gpu.device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Block Index Buffer"),
                 contents: bytemuck::cast_slice(&indices),
                 usage: wgpu::BufferUsages::INDEX,
             },
         ));
-        self.block_index_count = indices.len() as u32;
+        gpu.block_index_count = indices.len() as u32;
     }
 
     /// Generate ghost preview mesh for builder mode
@@ -1740,46 +1764,21 @@ impl BattleArenaApp {
     }
 
     fn render(&mut self) {
-        let Some(ref device) = self.device else {
-            return;
-        };
-        let Some(ref queue) = self.queue else { return };
-        let Some(ref surface) = self.surface else {
-            return;
-        };
-        let Some(ref config) = self.surface_config else {
-            return;
-        };
-        let Some(ref pipeline) = self.pipeline else {
-            return;
-        };
-        let Some(ref uniform_buffer) = self.uniform_buffer else {
-            return;
-        };
-        let Some(ref bind_group) = self.uniform_bind_group else {
-            return;
-        };
-        let Some(ref static_vb) = self.static_vertex_buffer else {
-            return;
-        };
-        let Some(ref static_ib) = self.static_index_buffer else {
-            return;
-        };
-        let Some(ref dynamic_vb) = self.dynamic_vertex_buffer else {
-            return;
-        };
-        let Some(ref dynamic_ib) = self.dynamic_index_buffer else {
-            return;
-        };
-        let Some(ref hex_wall_vb) = self.hex_wall_vertex_buffer else {
-            return;
-        };
-        let Some(ref hex_wall_ib) = self.hex_wall_index_buffer else {
-            return;
-        };
-        let Some(ref depth_view) = self.depth_texture else {
-            return;
-        };
+        let Some(ref gpu) = self.gpu else { return };
+        let device = &gpu.device;
+        let queue = &gpu.queue;
+        let surface = &gpu.surface;
+        let config = &gpu.surface_config;
+        let pipeline = &gpu.pipeline;
+        let uniform_buffer = &gpu.uniform_buffer;
+        let bind_group = &gpu.uniform_bind_group;
+        let static_vb = &gpu.static_vertex_buffer;
+        let static_ib = &gpu.static_index_buffer;
+        let dynamic_vb = &gpu.dynamic_vertex_buffer;
+        let dynamic_ib = &gpu.dynamic_index_buffer;
+        let hex_wall_vb = &gpu.hex_wall_vertex_buffer;
+        let hex_wall_ib = &gpu.hex_wall_index_buffer;
+        let depth_view = &gpu.depth_texture;
         let scene = self.scene.as_ref().unwrap();
 
         let output = match surface.get_current_texture() {
@@ -1816,7 +1815,8 @@ impl BattleArenaApp {
             queue.write_buffer(dynamic_vb, 0, bytemuck::cast_slice(&dynamic_mesh));
             queue.write_buffer(dynamic_ib, 0, bytemuck::cast_slice(&dynamic_indices));
         }
-        self.dynamic_index_count = dynamic_indices.len() as u32;
+        // Note: dynamic_index_count updated after render uses it
+        let dynamic_index_count = dynamic_indices.len() as u32;
 
         // Update uniforms
         let aspect = config.width as f32 / config.height as f32;
@@ -1842,10 +1842,9 @@ impl BattleArenaApp {
         queue.write_buffer(uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
         // SDF cannon uniforms
-        if let (Some(sdf_uniform_buffer), Some(sdf_data_buffer)) = (
-            &self.sdf_cannon_uniform_buffer,
-            &self.sdf_cannon_data_buffer,
-        ) {
+        {
+            let sdf_uniform_buffer = &gpu.sdf_cannon_uniform_buffer;
+            let sdf_data_buffer = &gpu.sdf_cannon_data_buffer;
             let inv_view_proj = view_proj.inverse();
             let sdf_uniforms = SdfCannonUniforms {
                 view_proj: view_proj.to_cols_array_2d(),
@@ -1945,27 +1944,27 @@ impl BattleArenaApp {
 
             render_pass.set_vertex_buffer(0, static_vb.slice(..));
             render_pass.set_index_buffer(static_ib.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..self.static_index_count, 0, 0..1);
+            render_pass.draw_indexed(0..gpu.static_index_count, 0, 0..1);
 
-            if self.dynamic_index_count > 0 {
+            if dynamic_index_count > 0 {
                 render_pass.set_vertex_buffer(0, dynamic_vb.slice(..));
                 render_pass.set_index_buffer(dynamic_ib.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..self.dynamic_index_count, 0, 0..1);
+                render_pass.draw_indexed(0..dynamic_index_count, 0, 0..1);
             }
 
-            if self.hex_wall_index_count > 0 {
+            if gpu.hex_wall_index_count > 0 {
                 render_pass.set_vertex_buffer(0, hex_wall_vb.slice(..));
                 render_pass.set_index_buffer(hex_wall_ib.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..self.hex_wall_index_count, 0, 0..1);
+                render_pass.draw_indexed(0..gpu.hex_wall_index_count, 0, 0..1);
             }
 
             if let (Some(block_vb), Some(block_ib)) =
-                (&self.block_vertex_buffer, &self.block_index_buffer)
+                (&gpu.block_vertex_buffer, &gpu.block_index_buffer)
             {
-                if self.block_index_count > 0 {
+                if gpu.block_index_count > 0 {
                     render_pass.set_vertex_buffer(0, block_vb.slice(..));
                     render_pass.set_index_buffer(block_ib.slice(..), wgpu::IndexFormat::Uint32);
-                    render_pass.draw_indexed(0..self.block_index_count, 0, 0..1);
+                    render_pass.draw_indexed(0..gpu.block_index_count, 0, 0..1);
                 }
             }
 
@@ -2013,7 +2012,7 @@ impl BattleArenaApp {
             }
 
             // Merged meshes
-            for merged in &self.merged_mesh_buffers {
+            for merged in &gpu.merged_mesh_buffers {
                 if merged.index_count > 0 {
                     render_pass.set_vertex_buffer(0, merged.vertex_buffer.slice(..));
                     render_pass
@@ -2023,21 +2022,18 @@ impl BattleArenaApp {
             }
 
             // Trees
-            if let (Some(tree_vb), Some(tree_ib)) =
-                (&self.tree_vertex_buffer, &self.tree_index_buffer)
-            {
-                if self.tree_index_count > 0 {
-                    render_pass.set_vertex_buffer(0, tree_vb.slice(..));
-                    render_pass.set_index_buffer(tree_ib.slice(..), wgpu::IndexFormat::Uint32);
-                    render_pass.draw_indexed(0..self.tree_index_count, 0, 0..1);
-                }
+            if gpu.tree_index_count > 0 {
+                render_pass.set_vertex_buffer(0, gpu.tree_vertex_buffer.slice(..));
+                render_pass
+                    .set_index_buffer(gpu.tree_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..gpu.tree_index_count, 0, 0..1);
             }
         }
 
         // PASS 2: SDF Cannon
-        if let (Some(sdf_pipeline), Some(sdf_bind_group)) =
-            (&self.sdf_cannon_pipeline, &self.sdf_cannon_bind_group)
         {
+            let sdf_pipeline = &gpu.sdf_cannon_pipeline;
+            let sdf_bind_group = &gpu.sdf_cannon_bind_group;
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SDF Cannon Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2100,7 +2096,9 @@ impl BattleArenaApp {
 
         // PASS 3: Terrain UI
         if self.terrain_ui.visible {
-            if let (Some(ui_pipeline), Some(ui_bg)) = (&self.ui_pipeline, &self.ui_bind_group) {
+            {
+                let ui_pipeline = &gpu.ui_pipeline;
+                let ui_bg = &gpu.ui_bind_group;
                 let ui_mesh = self
                     .terrain_ui
                     .generate_ui_mesh(config.width as f32, config.height as f32);
@@ -2141,7 +2139,9 @@ impl BattleArenaApp {
 
         // PASS 4: Selection Cursor
         if scene.building.toolbar().visible && !self.start_overlay.visible {
-            if let (Some(ui_pipeline), Some(ui_bg)) = (&self.ui_pipeline, &self.ui_bind_group) {
+            {
+                let ui_pipeline = &gpu.ui_pipeline;
+                let ui_bg = &gpu.ui_bind_group;
                 let w = config.width as f32;
                 let h = config.height as f32;
                 let (cx, cy) = self.current_mouse_pos.unwrap_or((w / 2.0, h / 2.0));
@@ -2269,7 +2269,9 @@ impl BattleArenaApp {
 
         // PASS 5: Build Toolbar
         if scene.building.toolbar().visible {
-            if let (Some(ui_pipeline), Some(ui_bg)) = (&self.ui_pipeline, &self.ui_bind_group) {
+            {
+                let ui_pipeline = &gpu.ui_pipeline;
+                let ui_bg = &gpu.ui_bind_group;
                 let toolbar_mesh = scene
                     .building
                     .toolbar()
@@ -2311,7 +2313,9 @@ impl BattleArenaApp {
 
         // PASS 6: Top Bar
         if scene.game_state.top_bar.visible && !self.start_overlay.visible {
-            if let (Some(ui_pipeline), Some(ui_bg)) = (&self.ui_pipeline, &self.ui_bind_group) {
+            {
+                let ui_pipeline = &gpu.ui_pipeline;
+                let ui_bg = &gpu.ui_bind_group;
                 let (resources, day_cycle, population) = scene.game_state.ui_data();
                 let top_bar_mesh = scene.game_state.top_bar.generate_ui_mesh(
                     config.width as f32,
@@ -2357,7 +2361,9 @@ impl BattleArenaApp {
 
         // PASS 7: Start Overlay
         if self.start_overlay.visible {
-            if let (Some(ui_pipeline), Some(ui_bg)) = (&self.ui_pipeline, &self.ui_bind_group) {
+            {
+                let ui_pipeline = &gpu.ui_pipeline;
+                let ui_bg = &gpu.ui_bind_group;
                 let overlay_mesh = self
                     .start_overlay
                     .generate_ui_mesh(config.width as f32, config.height as f32);
@@ -2710,30 +2716,8 @@ impl ApplicationHandler for BattleArenaApp {
                 }
             }
             WindowEvent::Resized(new_size) => {
-                if let (Some(surface), Some(config), Some(device)) =
-                    (&self.surface, &mut self.surface_config, &self.device)
-                {
-                    config.width = new_size.width.max(1);
-                    config.height = new_size.height.max(1);
-                    surface.configure(device, config);
-                    let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
-                        label: Some("Depth Texture"),
-                        size: wgpu::Extent3d {
-                            width: config.width,
-                            height: config.height,
-                            depth_or_array_layers: 1,
-                        },
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: wgpu::TextureFormat::Depth32Float,
-                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                            | wgpu::TextureUsages::TEXTURE_BINDING,
-                        view_formats: &[],
-                    });
-                    self.depth_texture =
-                        Some(depth_texture.create_view(&wgpu::TextureViewDescriptor::default()));
-                    self.depth_texture_raw = Some(depth_texture);
+                if let Some(ref mut gpu) = self.gpu {
+                    gpu.resize(new_size);
                 }
             }
             WindowEvent::RedrawRequested => {
