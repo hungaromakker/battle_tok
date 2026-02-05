@@ -808,10 +808,10 @@ impl BattleArenaApp {
             ApocalypticSkyConfig::battle_arena(),
         );
 
-        // Phase 2 Visual Systems
+        // Phase 2 Visual Systems (torch params from VisualConfig)
         let mut point_lights = PointLightManager::new(&device);
-        let torch_color = [1.0, 0.6, 0.2];
-        let torch_radius = 10.0;
+        let torch_color = scene.visuals.torch_color.to_array();
+        let torch_radius = scene.visuals.torch_radius;
         let torch_y = 18.0;
         point_lights.add_torch([10.0, torch_y, 55.0], torch_color, torch_radius);
         point_lights.add_torch([-10.0, torch_y, 55.0], torch_color, torch_radius);
@@ -1846,10 +1846,15 @@ impl BattleArenaApp {
         let proj_mat = self.camera.get_projection_matrix(aspect);
         let view_proj = proj_mat * view_mat;
 
+        let vis = &scene.visuals;
         let mut uniforms = Uniforms {
             view_proj: view_proj.to_cols_array_2d(),
             camera_pos: self.camera.position.to_array(),
             time,
+            sun_dir: vis.sun_direction.to_array(),
+            fog_density: vis.fog_density,
+            fog_color: vis.fog_color.to_array(),
+            ambient: vis.ambient_intensity,
             projectile_count: scene.projectiles.active_count() as u32,
             ..Default::default()
         };
@@ -1873,10 +1878,10 @@ impl BattleArenaApp {
                 inv_view_proj: inv_view_proj.to_cols_array_2d(),
                 camera_pos: self.camera.position.to_array(),
                 time,
-                sun_dir: [0.3, 0.25, -0.92],
-                fog_density: 0.004,
-                fog_color: [0.65, 0.45, 0.55],
-                ambient: 0.25,
+                sun_dir: vis.sun_direction.to_array(),
+                fog_density: vis.fog_density,
+                fog_color: vis.fog_color.to_array(),
+                ambient: vis.ambient_intensity,
             };
             queue.write_buffer(
                 &gpu.sdf_cannon_uniform_buffer,
