@@ -112,11 +112,17 @@ pub use population::{JobAI, JobAssignment, JobPriority};
 pub use population::{Morale, MoraleModifier, MoraleState};
 pub use population::{Population, Villager, VillagerRole, VillagerStats};
 
+// Scenes
+pub mod scenes;
+
 // Game state re-export
 pub use state::GameState;
 
 // Systems re-exports
 pub use systems::{BuildingSystem, CollisionSystem, ProjectileSystem, ProjectileUpdate};
+
+// Scene re-exports
+pub use scenes::BattleScene;
 
 // Config re-exports
 pub use config::VisualConfig;
