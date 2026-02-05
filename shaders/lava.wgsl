@@ -147,10 +147,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let heat = clamp(combined * 0.6 + crack * 0.8, 0.0, 1.0);
     
     // ========================================
-    // COLOR MIXING
+    // COLOR MIXING (HDR values for proper bloom)
     // ========================================
+    // Override with brighter HDR core color for intense glow
+    let hdr_core = vec3<f32>(3.0, 0.8, 0.1);  // Bright HDR orange
     // Interpolate between dark crust and bright molten core
-    var color = mix(lava.crust_color, lava.core_color, heat);
+    var color = mix(lava.crust_color, hdr_core, heat);
     
     // ========================================
     // FRESNEL EDGE GLOW
@@ -160,9 +162,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let edge_glow = fresnel * 0.5;
     
     // ========================================
-    // EMISSIVE OUTPUT (HDR)
+    // EMISSIVE OUTPUT (HDR with pulse animation)
     // ========================================
-    let emissive = lava.emissive_strength * (heat + edge_glow);
+    // Pulsing animation makes lava feel alive
+    let pulse = 0.9 + 0.1 * sin(lava.time * 2.0);
+    let emissive = lava.emissive_strength * 2.5 * (heat + edge_glow) * pulse;
     color = color * emissive;
     
     // Add extra orange rim
@@ -172,7 +176,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // REDUCED FOG (emissive cuts through)
     // ========================================
     let distance = length(uniforms.camera_pos - world_pos);
-    let fog_amount = (1.0 - exp(-distance * uniforms.fog_density)) * 0.15;
+    let fog_amount = (1.0 - exp(-distance * uniforms.fog_density)) * 0.1;
     let final_color = mix(color, uniforms.fog_color * 0.5, fog_amount);
     
     return vec4<f32>(final_color, 1.0);

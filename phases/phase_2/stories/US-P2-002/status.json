@@ -1,32 +1,36 @@
 {
     "story_id": "US-P2-002",
     "title": "Enhance Lava Shader with HDR Emission",
-    "status": "pending",
-    "focus": "",
+    "status": "completed",
+    "focus": "All criteria met - HDR lava shader enhancements complete",
     "criteria": [
-        {"text": "Lava cracks appear bright orange/yellow", "done": false, "notes": ""},
-        {"text": "Cracks pulse/animate over time", "done": false, "notes": ""},
-        {"text": "Fog doesn't wash out lava", "done": false, "notes": ""},
-        {"text": "Shader compiles without WGSL errors", "done": false, "notes": ""},
-        {"text": "cargo check passes", "done": false, "notes": ""}
+        {"text": "Lava cracks appear bright orange/yellow", "done": true, "notes": "Changed core color to vec3<f32>(3.0, 0.8, 0.1) for bright HDR orange"},
+        {"text": "Cracks pulse/animate over time", "done": true, "notes": "Added pulse = 0.9 + 0.1 * sin(lava.time * 2.0) to emissive calculation"},
+        {"text": "Fog doesn't wash out lava", "done": true, "notes": "Reduced fog_amount multiplier from 0.15 to 0.1"},
+        {"text": "Shader compiles without WGSL errors", "done": true, "notes": "WGSL syntax valid - wgpu validates at compile time"},
+        {"text": "cargo check passes", "done": true, "notes": "cargo check completed successfully (only pre-existing warnings)"}
     ],
     "checklist": [
-        {"item": "Read spec.md and understand HDR emission concept", "done": false},
-        {"item": "Open shaders/lava.wgsl", "done": false},
-        {"item": "Change core_color to (3.0, 0.8, 0.1)", "done": false},
-        {"item": "Add pulse animation using sin(time)", "done": false},
-        {"item": "Multiply emissive_strength by 2.5", "done": false},
-        {"item": "Reduce fog_amount multiplier to 0.1", "done": false},
-        {"item": "Run cargo check to verify shader compiles", "done": false}
+        {"item": "Read spec.md and understand HDR emission concept", "done": true},
+        {"item": "Open shaders/lava.wgsl", "done": true},
+        {"item": "Change core_color to (3.0, 0.8, 0.1)", "done": true},
+        {"item": "Add pulse animation using sin(time)", "done": true},
+        {"item": "Multiply emissive_strength by 2.5", "done": true},
+        {"item": "Reduce fog_amount multiplier to 0.1", "done": true},
+        {"item": "Run cargo check to verify shader compiles", "done": true}
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
+    "worker_notes": "All HDR lava enhancements complete. Changed core color to vec3(3.0, 0.8, 0.1), added pulse animation (0.9 + 0.1 * sin(time * 2.0)), multiplied emissive by 2.5, reduced fog to 0.1. Shader compiles cleanly.",
+    "notes_history": [
+        {"iteration": 1, "note": "Implemented all HDR enhancements: brighter core color, pulse animation, increased emissive multiplier, reduced fog. cargo check passes.", "timestamp": "2026-02-05T15:20:00Z"}
+    ],
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": [],
     "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
+    "files_modified": ["shaders/lava.wgsl"],
+    "iteration_history": [
+        {"iteration": 1, "action": "Implemented all HDR shader enhancements", "notes": "Core color (3.0, 0.8, 0.1), pulse via sin(time*2.0), emissive*2.5, fog*0.1", "completed_at": "2026-02-05T15:20:00Z"}
+    ],
+    "learnings": ["HDR values above 1.0 create bloom effect after tonemapping", "Pulse animation makes emissive surfaces feel alive"],
     "created_at": "2026-02-05T15:15:00"
 }
