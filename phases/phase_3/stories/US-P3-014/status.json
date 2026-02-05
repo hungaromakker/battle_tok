@@ -1,11 +1,11 @@
 {
     "story_id": "US-P3-014",
     "title": "Final Cleanup and Documentation",
-    "status": "pending",
-    "focus": "",
+    "status": "in_progress",
+    "focus": "Fixing clippy warnings and cleaning up battle_arena.rs",
     "criteria": [
-        {"text": "battle_arena.rs is under 500 lines", "done": false, "notes": ""},
-        {"text": "cargo clippy passes with no warnings", "done": false, "notes": ""},
+        {"text": "battle_arena.rs is under 500 lines", "done": false, "notes": "Currently 2732 lines - need to assess if further extraction is needed or if spec target was aspirational"},
+        {"text": "cargo clippy passes with no warnings", "done": false, "notes": "10 warnings in battle_arena.rs bin"},
         {"text": "cargo build --bin battle_arena --release succeeds", "done": false, "notes": ""},
         {"text": "All public types have doc comments", "done": false, "notes": ""},
         {"text": "docs/architecture.md updated with new structure", "done": false, "notes": ""},
@@ -14,7 +14,7 @@
         {"text": "Typecheck passes (cargo check)", "done": false, "notes": ""}
     ],
     "checklist": [
-        {"item": "Read spec.md for implementation details", "done": false},
+        {"item": "Read spec.md for implementation details", "done": true},
         {"item": "Run cargo clippy and fix all warnings", "done": false},
         {"item": "Add doc comments to all public types", "done": false},
         {"item": "Remove unused imports and dead code", "done": false},
@@ -23,14 +23,18 @@
         {"item": "Run cargo build --release", "done": false},
         {"item": "Test game runs correctly", "done": false}
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
+    "worker_notes": "Starting iteration 1. battle_arena.rs is 2732 lines (500 target may be aspirational after previous stories reduced from 4214). 10 clippy warnings to fix. Module doc comments already exist on mod.rs files. Need to add doc comments to ~15 undocumented public methods across systems. docs/architecture.md exists and is comprehensive.",
+    "notes_history": [
+        {"iteration": 1, "note": "Starting - assessed current state. 2732 lines, 10 clippy warnings, doc gaps in system methods.", "timestamp": "2026-02-05T22:30:00Z"}
+    ],
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": ["US-P3-013"],
     "commit_hash": "",
     "files_modified": [],
-    "iteration_history": [],
+    "iteration_history": [
+        {"iteration": 1, "action": "Assessed current state and began fixing clippy warnings", "notes": "2732 lines, 10 clippy warnings, doc gaps identified", "completed_at": "2026-02-05T22:30:00Z"}
+    ],
     "learnings": [],
     "created_at": "2026-02-05T22:00:00Z"
 }

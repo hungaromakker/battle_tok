@@ -41,6 +41,7 @@ impl Default for DestructionSystem {
 }
 
 impl DestructionSystem {
+    /// Create an empty destruction system with no active falling prisms or debris.
     pub fn new() -> Self {
         Self {
             falling_prisms: Vec::new(),

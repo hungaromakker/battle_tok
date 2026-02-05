@@ -20,16 +20,20 @@ engine/src/
 └── world/           # World configuration
 
 src/game/            # Game-specific systems
-├── building/        # Building system (Stalberg-style)
-├── builder/         # Build mode UI and placement
-├── economy/         # Resources, day cycle, production
-├── input/           # Game input actions
-├── physics/         # Game collision types
+├── config/          # Configuration structs (ArenaConfig, VisualConfig, InputConfig)
+├── systems/         # Game logic systems (collision, projectile, destruction, etc.)
+├── scenes/          # Scene composition (BattleScene — GPU-agnostic game state)
+├── builder/         # Build mode UI, toolbar, and placement tools
+├── building/        # Stalberg-style building blocks and mesh generation
+├── battle_sphere/   # Battle sphere mechanics
+├── economy/         # Resources, day cycle, production chains
+├── input/           # Game input actions and aiming state
+├── physics/         # Game collision types and support checks
+├── player/          # Arena player controller
 ├── population/      # Villagers, morale, job AI
-├── render/          # Game shaders and uniforms
-├── terrain/         # Terrain generation, floating islands
-├── ui/              # UI components (top bar, overlays)
-└── state.rs         # Game state coordinator
+├── render/          # Game shaders, uniforms, and previews
+├── terrain/         # Procedural terrain, floating islands, bridges
+└── ui/              # UI components (top bar, toolbar, overlays)
 ```
 
 ## Render System
@@ -190,6 +194,49 @@ fn render(&mut self) {
 }
 ```
 
+## Phase 3: Game State Architecture
+
+Phase 3 extracted game logic from the monolithic `battle_arena.rs` into modular, GPU-agnostic components:
+
+### Configuration Layer (`src/game/config/`)
+
+| Struct | Purpose |
+|--------|---------|
+| `ArenaConfig` | Island geometry, bridge layout, spawn positions |
+| `VisualConfig` | Fog, lighting, lava, torch parameters |
+| `InputConfig` | All key bindings as data (remappable) |
+
+### Systems Layer (`src/game/systems/`)
+
+Stateless or self-contained game logic with no GPU coupling:
+
+| System | Purpose |
+|--------|---------|
+| `CollisionSystem` | Player-block and player-hex collision detection |
+| `ProjectileSystem` | Ballistic simulation with drag model |
+| `DestructionSystem` | Prism destroy → cascade → fall → debris lifecycle |
+| `MeteorSystem` | Random meteor spawning and impact |
+| `CannonSystem` | Aiming interpolation, fire coordination, mesh-dirty tracking |
+| `BuildingSystem` | Block placement, structural physics, merge workflows |
+
+### Scene Layer (`src/game/scenes/`)
+
+| Struct | Purpose |
+|--------|---------|
+| `BattleScene` | GPU-agnostic game state container; owns all systems, player, terrain, hex grid |
+
+`BattleScene::update()` runs a deterministic 10-step frame update:
+1. Player movement → 2. Camera sync → 3. Projectile physics → 4. Projectile-wall collision →
+5. Building physics → 6. Destruction update → 7. Meteor update → 8. Player-block collision →
+9. Player-hex collision → 10. Economy tick
+
+### Application Layer (`src/bin/battle_arena.rs`)
+
+`BattleArenaApp` is the GPU-coupled shell:
+- Holds `scene: Option<BattleScene>` + `gpu: Option<GpuResources>`
+- Handles wgpu surface, render passes, buffer uploads
+- Translates winit events into scene method calls
+
 ## File Locations
 
 | Component | Location |
@@ -200,3 +247,14 @@ fn render(&mut self) {
 | UI Pass | `engine/src/render/ui_pass.rs` |
 | Mesh Pass | `engine/src/render/mesh_pass.rs` |
 | Input Handler | `engine/src/input/handler.rs` |
+| Arena Config | `src/game/config/arena_config.rs` |
+| Visual Config | `src/game/config/visual_config.rs` |
+| Input Config | `src/game/config/input_config.rs` |
+| Battle Scene | `src/game/scenes/battle_scene.rs` |
+| Collision System | `src/game/systems/collision_system.rs` |
+| Projectile System | `src/game/systems/projectile_system.rs` |
+| Destruction System | `src/game/systems/destruction_system.rs` |
+| Meteor System | `src/game/systems/meteor_system.rs` |
+| Cannon System | `src/game/systems/cannon_system.rs` |
+| Building System | `src/game/systems/building_system.rs` |
+| GPU Resources | `src/bin/battle_arena.rs` (GpuResources struct) |

@@ -943,7 +943,7 @@ impl BattleArenaApp {
                 apocalyptic_sky.trigger_lightning();
             }
             let time = self.start_time.elapsed().as_secs_f32();
-            let rand_val = ((time * 12.9898).sin() * 43758.5453).fract();
+            let rand_val = ((time * 12.9898).sin() * 43758.547).fract();
             self.lightning_timer = 3.0 + rand_val * 5.0;
         }
 
@@ -1223,12 +1223,12 @@ impl BattleArenaApp {
 
         while t < max_dist {
             let p = ray_origin + ray_dir * t;
-            if let Some((block_id, dist)) = scene.building.block_manager.find_closest(p, 0.5) {
-                if dist < 0.5 && scene.building.block_physics.is_loose(block_id) {
-                    if let Some(block) = scene.building.block_manager.get_block(block_id) {
-                        return Some((block_id, block.shape, block.material));
-                    }
-                }
+            if let Some((block_id, dist)) = scene.building.block_manager.find_closest(p, 0.5)
+                && dist < 0.5
+                && scene.building.block_physics.is_loose(block_id)
+                && let Some(block) = scene.building.block_manager.get_block(block_id)
+            {
+                return Some((block_id, block.shape, block.material));
             }
             t += step_size;
         }
@@ -1421,10 +1421,10 @@ impl BattleArenaApp {
         let mut t = 0.5;
         while t < max_dist {
             let p = ray_origin + ray_dir * t;
-            if let Some((block_id, dist)) = scene.building.block_manager.find_closest(p, 0.5) {
-                if dist < 0.5 {
-                    return Some(block_id);
-                }
+            if let Some((block_id, dist)) = scene.building.block_manager.find_closest(p, 0.5)
+                && dist < 0.5
+            {
+                return Some(block_id);
             }
             t += step_size;
         }
@@ -1441,38 +1441,37 @@ impl BattleArenaApp {
         let mut t = 0.5;
         while t < max_dist {
             let p = ray_origin + ray_dir * t;
-            if let Some((block_id, dist)) = scene.building.block_manager.find_closest(p, 1.0) {
-                if dist < 0.3 {
-                    if let Some(block) = scene.building.block_manager.get_block(block_id) {
-                        let aabb = block.aabb();
-                        let center = (aabb.min + aabb.max) * 0.5;
-                        let half_size = (aabb.max - aabb.min) * 0.5;
-                        let offset = p - center;
-                        let abs_offset = Vec3::new(offset.x.abs(), offset.y.abs(), offset.z.abs());
+            if let Some((block_id, dist)) = scene.building.block_manager.find_closest(p, 1.0)
+                && dist < 0.3
+                && let Some(block) = scene.building.block_manager.get_block(block_id)
+            {
+                let aabb = block.aabb();
+                let center = (aabb.min + aabb.max) * 0.5;
+                let half_size = (aabb.max - aabb.min) * 0.5;
+                let offset = p - center;
+                let abs_offset = Vec3::new(offset.x.abs(), offset.y.abs(), offset.z.abs());
 
-                        let (normal, face_pos, size) =
-                            if abs_offset.x > abs_offset.y && abs_offset.x > abs_offset.z {
-                                let n = Vec3::new(offset.x.signum(), 0.0, 0.0);
-                                let pos = center + n * half_size.x;
-                                (n, pos, (half_size.z * 2.0, half_size.y * 2.0))
-                            } else if abs_offset.y > abs_offset.z {
-                                let n = Vec3::new(0.0, offset.y.signum(), 0.0);
-                                let pos = center + n * half_size.y;
-                                (n, pos, (half_size.x * 2.0, half_size.z * 2.0))
-                            } else {
-                                let n = Vec3::new(0.0, 0.0, offset.z.signum());
-                                let pos = center + n * half_size.z;
-                                (n, pos, (half_size.x * 2.0, half_size.y * 2.0))
-                            };
+                let (normal, face_pos, size) =
+                    if abs_offset.x > abs_offset.y && abs_offset.x > abs_offset.z {
+                        let n = Vec3::new(offset.x.signum(), 0.0, 0.0);
+                        let pos = center + n * half_size.x;
+                        (n, pos, (half_size.z * 2.0, half_size.y * 2.0))
+                    } else if abs_offset.y > abs_offset.z {
+                        let n = Vec3::new(0.0, offset.y.signum(), 0.0);
+                        let pos = center + n * half_size.y;
+                        (n, pos, (half_size.x * 2.0, half_size.z * 2.0))
+                    } else {
+                        let n = Vec3::new(0.0, 0.0, offset.z.signum());
+                        let pos = center + n * half_size.z;
+                        (n, pos, (half_size.x * 2.0, half_size.y * 2.0))
+                    };
 
-                        return Some(SelectedFace {
-                            block_id,
-                            position: face_pos,
-                            _normal: normal,
-                            size,
-                        });
-                    }
-                }
+                return Some(SelectedFace {
+                    block_id,
+                    position: face_pos,
+                    _normal: normal,
+                    size,
+                });
             }
             t += step_size;
         }
@@ -1847,11 +1846,13 @@ impl BattleArenaApp {
         let proj_mat = self.camera.get_projection_matrix(aspect);
         let view_proj = proj_mat * view_mat;
 
-        let mut uniforms = Uniforms::default();
-        uniforms.view_proj = view_proj.to_cols_array_2d();
-        uniforms.camera_pos = self.camera.position.to_array();
-        uniforms.time = time;
-        uniforms.projectile_count = scene.projectiles.active_count() as u32;
+        let mut uniforms = Uniforms {
+            view_proj: view_proj.to_cols_array_2d(),
+            camera_pos: self.camera.position.to_array(),
+            time,
+            projectile_count: scene.projectiles.active_count() as u32,
+            ..Default::default()
+        };
 
         for (i, projectile) in scene.projectiles.iter().enumerate().take(32) {
             uniforms.projectile_positions[i] = [
@@ -2019,55 +2020,53 @@ impl BattleArenaApp {
         // Building blocks
         if let (Some(block_vb), Some(block_ib)) =
             (&gpu.block_vertex_buffer, &gpu.block_index_buffer)
+            && gpu.block_index_count > 0
         {
-            if gpu.block_index_count > 0 {
-                render_pass.set_vertex_buffer(0, block_vb.slice(..));
-                render_pass.set_index_buffer(block_ib.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..gpu.block_index_count, 0, 0..1);
-            }
+            render_pass.set_vertex_buffer(0, block_vb.slice(..));
+            render_pass.set_index_buffer(block_ib.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..gpu.block_index_count, 0, 0..1);
         }
 
         // Block placement preview
         if scene.building.toolbar().visible
             && scene.building.toolbar().show_preview
             && !scene.building.toolbar().is_bridge_mode()
+            && let Some(preview_pos) = scene.building.toolbar().preview_position
         {
-            if let Some(preview_pos) = scene.building.toolbar().preview_position {
-                let shape = scene.building.toolbar().get_selected_shape();
-                let preview_block = BuildingBlock::new(shape, preview_pos, 0);
-                let (preview_verts, preview_indices) = preview_block.generate_mesh();
+            let shape = scene.building.toolbar().get_selected_shape();
+            let preview_block = BuildingBlock::new(shape, preview_pos, 0);
+            let (preview_verts, preview_indices) = preview_block.generate_mesh();
 
-                let pulse = (self.start_time.elapsed().as_secs_f32() * 3.0).sin() * 0.5 + 0.5;
-                let highlight_color = [0.2 + pulse * 0.3, 0.9, 0.2 + pulse * 0.2, 0.85];
+            let pulse = (self.start_time.elapsed().as_secs_f32() * 3.0).sin() * 0.5 + 0.5;
+            let highlight_color = [0.2 + pulse * 0.3, 0.9, 0.2 + pulse * 0.2, 0.85];
 
-                let preview_vertices: Vec<Vertex> = preview_verts
-                    .iter()
-                    .map(|v| Vertex {
-                        position: v.position,
-                        normal: v.normal,
-                        color: highlight_color,
-                    })
-                    .collect();
+            let preview_vertices: Vec<Vertex> = preview_verts
+                .iter()
+                .map(|v| Vertex {
+                    position: v.position,
+                    normal: v.normal,
+                    color: highlight_color,
+                })
+                .collect();
 
-                if !preview_vertices.is_empty() && !preview_indices.is_empty() {
-                    let preview_vb =
-                        gpu.device
-                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some("Preview VB"),
-                                contents: bytemuck::cast_slice(&preview_vertices),
-                                usage: wgpu::BufferUsages::VERTEX,
-                            });
-                    let preview_ib =
-                        gpu.device
-                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                label: Some("Preview IB"),
-                                contents: bytemuck::cast_slice(&preview_indices),
-                                usage: wgpu::BufferUsages::INDEX,
-                            });
-                    render_pass.set_vertex_buffer(0, preview_vb.slice(..));
-                    render_pass.set_index_buffer(preview_ib.slice(..), wgpu::IndexFormat::Uint32);
-                    render_pass.draw_indexed(0..preview_indices.len() as u32, 0, 0..1);
-                }
+            if !preview_vertices.is_empty() && !preview_indices.is_empty() {
+                let preview_vb = gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Preview VB"),
+                        contents: bytemuck::cast_slice(&preview_vertices),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+                let preview_ib = gpu
+                    .device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Preview IB"),
+                        contents: bytemuck::cast_slice(&preview_indices),
+                        usage: wgpu::BufferUsages::INDEX,
+                    });
+                render_pass.set_vertex_buffer(0, preview_vb.slice(..));
+                render_pass.set_index_buffer(preview_ib.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..preview_indices.len() as u32, 0, 0..1);
             }
         }
 
@@ -2700,7 +2699,7 @@ impl ApplicationHandler for BattleArenaApp {
         }
         let scene = self.scene.as_ref();
         if let DeviceEvent::MouseMotion { delta } = event {
-            let toolbar_visible = scene.map_or(false, |s| s.building.toolbar().visible);
+            let toolbar_visible = scene.is_some_and(|s| s.building.toolbar().visible);
             if toolbar_visible {
                 if self.mouse_pressed {
                     self.camera

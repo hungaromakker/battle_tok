@@ -28,7 +28,7 @@
     "iteration": 1,
     "failed_reasons": [],
     "dependencies": ["US-P3-012"],
-    "commit_hash": "",
+    "commit_hash": "12893af57a732fa4eb99d5b4b3f46bf52182af42",
     "files_modified": ["src/bin/battle_arena.rs"],
     "iteration_history": [
         {"iteration": 1, "action": "Full implementation: extracted render passes to methods with borrow-checker-safe patterns", "notes": "All 6 criteria met in single iteration", "completed_at": "2026-02-05T22:30:00Z"}
