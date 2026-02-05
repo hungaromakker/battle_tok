@@ -28,7 +28,7 @@
     "iteration": 1,
     "failed_reasons": [],
     "dependencies": ["US-P2-009"],
-    "commit_hash": "",
+    "commit_hash": "5359449",
     "files_modified": [],
     "iteration_history": [
         {"iteration": 1, "action": "Verified existing ACES tonemapping integration", "notes": "ACES is already fully integrated inline. tonemap_aces.wgsl ready for future post-pass use.", "completed_at": "2026-02-05T15:30:00Z"}
