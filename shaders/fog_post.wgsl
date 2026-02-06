@@ -24,6 +24,9 @@ struct FogParams {
     wind_time: f32,
     wind_strength: f32,
     steam_edge_softness: f32,
+    max_opacity: f32,
+    horizon_boost: f32,
+    _pad2: vec2<f32>,
 }
 
 @group(0) @binding(0) var<uniform> fog: FogParams;
@@ -96,14 +99,27 @@ fn steam_density_at(p: vec3<f32>) -> f32 {
     // No steam well inside islands (with noise margin)
     if (noisy_edge < -4.0) { return 0.0; }
 
-    // Also clear the bridge corridor between islands
+    // Bridge corridor: soft transition so fog doesn't form a rectangular slab.
+    // Fade steam from 0 (center of bridge) to full (outside) with smoothstep + noise.
     let bridge_dir = normalize(fog.island2_center.xz - fog.island1_center.xz);
     let to_p = p.xz - fog.island1_center.xz;
     let bridge_len = length(fog.island2_center.xz - fog.island1_center.xz);
     let along = dot(to_p, bridge_dir);
-    if (along > 0.0 && along < bridge_len) {
+    var bridge_corridor_factor = 1.0;  // 1 = full steam, 0 = clear (in corridor)
+    if (along > 0.0 && along < bridge_len && p.y > fog.lava_y) {
         let perp = abs(dot(to_p, vec2<f32>(-bridge_dir.y, bridge_dir.x)));
-        if (perp < 5.0 && p.y > fog.lava_y) { return 0.0; }
+        // Soften edge: wobble perp with noise so boundary isn't a perfect rectangle
+        let corridor_noise_uv = vec3<f32>(p.x * 0.03 + fog.wind_time * 0.02, 0.2, p.z * 0.03);
+        let perp_wobble = (textureSample(noise_3d, noise_sampler, corridor_noise_uv).r - 0.5) * 4.0;
+        let perp_eff = perp + perp_wobble;
+        // Smooth ramp: clear from 0..4m, full steam from ~10m outward (no hard edge)
+        let corridor_inner = 4.0;
+        let corridor_outer = 12.0;
+        bridge_corridor_factor = smoothstep(corridor_inner, corridor_outer, perp_eff);
+        // Soft fade at bridge ends so no hard line at island junctions
+        let end_fade = 6.0;
+        let along_fade = min(smoothstep(0.0, end_fade, along), smoothstep(bridge_len, bridge_len - end_fade, along));
+        bridge_corridor_factor = mix(1.0, bridge_corridor_factor, along_fade);
     }
 
     // Smooth ramp from noisy edge outward
@@ -141,7 +157,7 @@ fn steam_density_at(p: vec3<f32>) -> f32 {
     let wind_edge = smoothstep(-wind_push, fog.steam_edge_softness * 0.6, edge_dist);
     let eff_edge = max(edge_factor, wind_edge * 0.5);
 
-    return eff_edge * (vert + surface) * (0.3 + wisp_mask * 0.7) * fog.steam_density;
+    return eff_edge * (vert + surface) * (0.3 + wisp_mask * 0.7) * fog.steam_density * bridge_corridor_factor;
 }
 
 // ============================================================================
@@ -183,26 +199,32 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let near_pos = reconstruct_world_position(uv, 0.1);
     let ray_dir = normalize(near_pos - fog.camera_pos);
+    let horizon = pow(1.0 - abs(ray_dir.y), 2.0);
 
     // Sky: ray march steam
     if (depth >= 0.9999) {
+        let sky_haze = clamp(horizon * fog.horizon_boost * 0.35, 0.0, fog.max_opacity * 0.85);
+        var sky_color = mix(scene_color, fog.fog_color, sky_haze);
         if (fog.steam_density > 0.0) {
             let steam = march_steam(fog.camera_pos, ray_dir, 150.0);
             if (steam > 0.01) {
                 let tint = mix(fog.steam_color, vec3<f32>(0.8, 0.78, 0.74), 0.3);
-                return vec4<f32>(mix(scene_color, tint, steam), 1.0);
+                sky_color = mix(sky_color, tint, steam);
             }
         }
-        return vec4<f32>(scene_color, 1.0);
+        return vec4<f32>(sky_color, 1.0);
     }
 
     // Geometry
     let world_pos = reconstruct_world_position(uv, depth);
     var final_color = scene_color;
 
-    // Very light distance fog (only at extreme range)
+    // Haze-first fog model: distance + height attenuation + horizon boost
     let distance = length(world_pos - fog.camera_pos);
-    let fog_amount = clamp((1.0 - exp(-distance * fog.density)) * 0.25, 0.0, 0.3);
+    let dist_term = 1.0 - exp(-distance * fog.density);
+    let height_term = clamp((fog.height_fog_start - world_pos.y) * fog.height_fog_density, 0.0, 1.0);
+    let haze_term = dist_term * (0.65 + 0.35 * height_term) + horizon * fog.horizon_boost * 0.20;
+    let fog_amount = clamp(haze_term, 0.0, fog.max_opacity);
     final_color = mix(scene_color, fog.fog_color, fog_amount);
 
     // Steam volume

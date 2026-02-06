@@ -41,6 +41,10 @@ pub struct FogPostConfig {
     pub height_fog_start: f32,
     /// Height fog density (0.05..0.15) - higher = thicker ground fog
     pub height_fog_density: f32,
+    /// Hard cap on total haze contribution.
+    pub max_opacity: f32,
+    /// Additional horizon haze factor.
+    pub horizon_boost: f32,
 }
 
 /// Configuration for lava steam boundary around islands.
@@ -83,11 +87,11 @@ impl LavaSteamConfig {
         lava_y: f32,
     ) -> Self {
         Self {
-            steam_color: Vec3::new(0.72, 0.68, 0.62), // Warm white-gray steam
-            steam_density: 4.0,                       // Thick wall — blocks view
-            steam_height: 30.0,                       // Tall enough to block sky at edge
-            wind_strength: 0.6,                       // Moderate gusts push wisps inward
-            steam_edge_softness: 10.0, // Tight edge — wall starts right at island rim
+            steam_color: Vec3::new(0.68, 0.72, 0.78), // Cooler steam, blends with sky
+            steam_density: 0.0,                       // Disabled: haze-first horizon
+            steam_height: 18.0,                       // Lower wall to keep sky visible
+            wind_strength: 0.45,                      // Slight gusts push wisps inward
+            steam_edge_softness: 18.0,                // Softer edge — avoid harsh fog banding
             island1_center,
             island2_center,
             island_radius,
@@ -103,6 +107,8 @@ impl Default for FogPostConfig {
             density: 0.025,
             height_fog_start: 2.0,
             height_fog_density: 0.08,
+            max_opacity: 0.40,
+            horizon_boost: 0.20,
         }
     }
 }
@@ -112,10 +118,12 @@ impl FogPostConfig {
     /// Matches the stormy purple-brown environment from concept art
     pub fn battle_arena() -> Self {
         Self {
-            fog_color: Vec3::new(0.45, 0.35, 0.40), // Warm haze
-            density: 0.003,                         // Very light distance fog
-            height_fog_start: -2.0,                 // Only below terrain
-            height_fog_density: 0.015,              // Minimal height fog
+            fog_color: Vec3::new(0.50, 0.56, 0.65), // Cool blue-gray haze
+            density: 0.0012,                        // Light distance fog
+            height_fog_start: -1.0,                 // Only below terrain
+            height_fog_density: 0.035,              // Subtle height fog
+            max_opacity: 0.22,
+            horizon_boost: 0.35,
         }
     }
 
@@ -126,6 +134,8 @@ impl FogPostConfig {
             density: 0.04,
             height_fog_start: 8.0,
             height_fog_density: 0.15,
+            max_opacity: 0.55,
+            horizon_boost: 0.15,
         }
     }
 
@@ -136,12 +146,14 @@ impl FogPostConfig {
             density: 0.012,
             height_fog_start: 0.0,
             height_fog_density: 0.03,
+            max_opacity: 0.30,
+            horizon_boost: 0.25,
         }
     }
 }
 
 /// GPU uniform buffer layout (must match WGSL struct FogParams)
-/// Total size: 176 bytes
+/// Total size: 192 bytes
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct FogUniforms {
@@ -163,11 +175,14 @@ struct FogUniforms {
     steam_height: f32,        // 4 bytes (offset 160)
     wind_time: f32,           // 4 bytes (offset 164)
     wind_strength: f32,       // 4 bytes (offset 168)
-    steam_edge_softness: f32, // 4 bytes (offset 172) - total 176
+    steam_edge_softness: f32, // 4 bytes (offset 172)
+    max_opacity: f32,         // 4 bytes (offset 176)
+    horizon_boost: f32,       // 4 bytes (offset 180)
+    _pad2: [f32; 2],          // 8 bytes (offset 184) - total 192
 }
 
 // Verify struct size at compile time
-const _: () = assert!(std::mem::size_of::<FogUniforms>() == 176);
+const _: () = assert!(std::mem::size_of::<FogUniforms>() == 192);
 
 /// Size of the 3D noise texture (64^3 = 262144 texels, ~256KB)
 const NOISE_3D_SIZE: u32 = 64;
@@ -495,6 +510,9 @@ impl FogPostPass {
             wind_time: time,
             wind_strength,
             steam_edge_softness,
+            max_opacity: self.config.max_opacity,
+            horizon_boost: self.config.horizon_boost,
+            _pad2: [0.0; 2],
         };
 
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));

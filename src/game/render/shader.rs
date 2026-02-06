@@ -292,27 +292,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     
     color = mix(color, final_fog_color, fog_amount);
     
-    // ============================================================
-    // POST-PROCESSING (Unreal-style cinematic look)
-    // ============================================================
-    
-    // ACES Tonemapping
-    color = aces_tonemap(color);
-    
-    // Neutral color grading (slight contrast boost, no color tint)
-    let lift = vec3<f32>(0.005, 0.005, 0.005);
-    let gain = vec3<f32>(1.05, 1.05, 1.05);
-    color = color * gain + lift;
-    
-    // Vignette
-    color = apply_vignette(color, in.screen_uv, 1.0);
-    
-    // Very subtle film grain
-    color = film_grain(color, in.screen_uv, uniforms.time, 0.015);
-
-    // NOTE: No manual gamma correction here - sRGB surface format handles it automatically.
-    // Manual gamma_correct() on top of sRGB surface = double gamma = washed out colors.
-
+    // Keep scene output in linear HDR; tonemap is handled in the final post pass.
     return vec4<f32>(color, in.color.a);
 }
 "#;

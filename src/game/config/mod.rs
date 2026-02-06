@@ -11,4 +11,7 @@ pub use input_config::{
     AimingBindings, BuildingBindings, CameraBindings, CombatBindings, EditingBindings,
     InputCategory, InputConfig, MovementBindings, UIBindings,
 };
-pub use visual_config::VisualConfig;
+pub use visual_config::{
+    BloomConfig, HazeConfig, PostFxConfig, PostFxDebugToggles, TaaConfig, TonemapConfig,
+    VisualConfig,
+};

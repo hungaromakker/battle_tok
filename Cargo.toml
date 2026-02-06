@@ -40,6 +40,14 @@ pollster = "0.4"
 # Compile-time assertions
 static_assertions = "1.1"
 
+# Browser (wasm) support — for agent testing and automated browser tests
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlCanvasElement", "CanvasRenderingContext2d"] }
+console_error_panic_hook = "0.1"
+getrandom = { version = "0.2", features = ["js"] }
+
 [dev-dependencies]
 naga = { version = "27", features = ["wgsl-in"] }
 

@@ -17,6 +17,13 @@ cargo run --bin battle_arena
 # Run the hex planet demo
 cargo run --bin hex-planet
 
+# Browser (WASM) build — for agent testing / automation
+rustup target add wasm32-unknown-unknown   # once
+cargo build --bin battle_arena --target wasm32-unknown-unknown
+wasm-bindgen --target web --out-dir www target/wasm32-unknown-unknown/debug/battle_arena.wasm
+# Then serve www/ (e.g. `cd www && python -m http.server 8080`) and open in a WebGPU browser.
+# See docs/browser_build.md for full steps.
+
 # Format code
 cargo fmt
 

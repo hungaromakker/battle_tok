@@ -228,5 +228,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let fog_amount = (1.0 - exp(-distance * uniforms.fog_density)) * 0.06;
     color = mix(color, uniforms.fog_color * 0.5, fog_amount);
 
+    // Keep extreme emissive spikes bounded in HDR to avoid unstable bloom.
+    color = min(color, vec3<f32>(20.0, 20.0, 20.0));
     return vec4<f32>(color, 1.0);
 }

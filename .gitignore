@@ -27,6 +27,11 @@ Thumbs.db
 dist/
 build/
 
+# Browser WASM build output (keep www/index.html)
+www/*.js
+www/*.wasm
+www/*.d.ts
+
 # Logs
 *.log
 logs/

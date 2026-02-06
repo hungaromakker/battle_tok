@@ -121,8 +121,7 @@ impl EditorGpu {
             self.surface_config.height = new_size.height;
             self.surface.configure(&self.device, &self.surface_config);
             // Recreate depth texture to match new surface size
-            self.depth_view =
-                create_depth_texture(&self.device, new_size.width, new_size.height);
+            self.depth_view = create_depth_texture(&self.device, new_size.width, new_size.height);
         }
     }
 }
@@ -309,9 +308,7 @@ impl BattleEditorApp {
         // ----------------------------------------------------------------
         let mesh_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Editor 3D Shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../shaders/editor_3d.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/editor_3d.wgsl").into()),
         });
 
         let mesh_bind_group_layout =
@@ -329,12 +326,11 @@ impl BattleEditorApp {
                 }],
             });
 
-        let mesh_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Editor 3D Pipeline Layout"),
-                bind_group_layouts: &[&mesh_bind_group_layout],
-                push_constant_ranges: &[],
-            });
+        let mesh_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Editor 3D Pipeline Layout"),
+            bind_group_layouts: &[&mesh_bind_group_layout],
+            push_constant_ranges: &[],
+        });
 
         // Vertex buffer layout is identical for Vertex and BlockVertex (same repr(C) layout)
         let vertex_buffer_layout = wgpu::VertexBufferLayout {
@@ -359,46 +355,45 @@ impl BattleEditorApp {
             ],
         };
 
-        let mesh_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Editor 3D Pipeline"),
-                layout: Some(&mesh_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &mesh_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[vertex_buffer_layout],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &mesh_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: surface_format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    strip_index_format: None,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: Some(wgpu::Face::Back),
-                    unclipped_depth: false,
-                    polygon_mode: wgpu::PolygonMode::Fill,
-                    conservative: false,
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Less,
-                    stencil: wgpu::StencilState::default(),
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            });
+        let mesh_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Editor 3D Pipeline"),
+            layout: Some(&mesh_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &mesh_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[vertex_buffer_layout],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &mesh_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
 
         let mesh_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Editor 3D Uniform Buffer"),
@@ -812,11 +807,8 @@ impl BattleEditorApp {
                 light_dir: [0.5, 0.8, 0.3],
                 _pad: 0.0,
             };
-            gpu.queue.write_buffer(
-                &gpu.mesh_uniform_buffer,
-                0,
-                bytemuck::bytes_of(&uniforms),
-            );
+            gpu.queue
+                .write_buffer(&gpu.mesh_uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
             let mesh_vb = gpu
                 .device
@@ -975,8 +967,7 @@ impl ApplicationHandler for BattleEditorApp {
                     if let Some(action) = self.editor.library.handle_click(mx, my, sw, sh) {
                         // Forward library selection to placement system
                         let _ = action;
-                        let asset_id = self.editor.library.selected_entry()
-                            .map(|e| e.id.clone());
+                        let asset_id = self.editor.library.selected_entry().map(|e| e.id.clone());
                         self.editor.placement.select_asset(asset_id);
                         return; // Consumed by library
                     }

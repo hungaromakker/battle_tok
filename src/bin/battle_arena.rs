@@ -15,9 +15,17 @@
 //! - B: Toggle builder mode
 //! - T: Terrain editor UI
 //! - ESC: Exit
+//!
+//! Browser (wasm): build with `cargo build --bin battle_arena --target wasm32-unknown-unknown`,
+//! then run `wasm-bindgen` and serve. Enables AI agents to test the game in the browser.
 
 use std::sync::Arc;
 use std::time::Instant;
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_futures::spawn_local;
 
 use battle_tok_engine::render::hex_prism::DEFAULT_HEX_RADIUS;
 use glam::{Mat4, Vec3};
@@ -79,6 +87,56 @@ struct LavaSceneUniforms {
     fog_density: f32,         // 4 bytes  (total 96)
     fog_color: [f32; 3],      // 12 bytes
     ambient: f32,             // 4 bytes  (total 112)
+}
+
+const HDR_SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const BLOOM_MIP_COUNT: usize = 5;
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct TaaParams {
+    inv_curr_view_proj: [[f32; 4]; 4],
+    prev_view_proj: [[f32; 4]; 4],
+    inv_resolution: [f32; 2],
+    jitter: [f32; 2],
+    history_weight: f32,
+    new_weight: f32,
+    reject_threshold: f32,
+    enabled: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct BloomExtractParams {
+    threshold: f32,
+    knee: f32,
+    _pad0: [f32; 2],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct BloomBlurParams {
+    texel_size: [f32; 2],
+    direction: [f32; 2],
+    intensity: f32,
+    mode: u32,
+    _pad0: [f32; 2],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct TonemapCompositeParams {
+    exposure: f32,
+    saturation: f32,
+    contrast: f32,
+    bloom_intensity: f32,
+}
+
+struct BloomMip {
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    width: u32,
+    height: u32,
 }
 
 // ============================================================================
@@ -143,9 +201,18 @@ struct GpuResources {
     tree_index_buffer: wgpu::Buffer,
     tree_index_count: u32,
 
-    // Offscreen scene color texture (for fog post-process)
-    scene_color_texture: wgpu::Texture,
-    scene_color_view: wgpu::TextureView,
+    // HDR scene/post textures
+    scene_hdr_texture: wgpu::Texture,
+    scene_hdr_view: wgpu::TextureView,
+    post_temp_texture: wgpu::Texture,
+    post_temp_view: wgpu::TextureView,
+    taa_history_a_texture: wgpu::Texture,
+    taa_history_a_view: wgpu::TextureView,
+    taa_history_b_texture: wgpu::Texture,
+    taa_history_b_view: wgpu::TextureView,
+    bloom_mips: Vec<BloomMip>,
+    bloom_ping_texture: wgpu::Texture,
+    bloom_ping_view: wgpu::TextureView,
 
     // Lava ocean (rendered with animated lava.wgsl shader)
     lava_pipeline: wgpu::RenderPipeline,
@@ -155,9 +222,83 @@ struct GpuResources {
     lava_vertex_buffer: wgpu::Buffer,
     lava_index_buffer: wgpu::Buffer,
     lava_index_count: u32,
+
+    // Post process
+    post_sampler: wgpu::Sampler,
+    taa_pipeline: wgpu::RenderPipeline,
+    taa_bind_group_layout: wgpu::BindGroupLayout,
+    taa_params_buffer: wgpu::Buffer,
+    bloom_extract_pipeline: wgpu::RenderPipeline,
+    bloom_extract_bind_group_layout: wgpu::BindGroupLayout,
+    bloom_extract_params_buffer: wgpu::Buffer,
+    bloom_blur_pipeline: wgpu::RenderPipeline,
+    bloom_blur_bind_group_layout: wgpu::BindGroupLayout,
+    bloom_blur_params_buffer: wgpu::Buffer,
+    tonemap_pipeline: wgpu::RenderPipeline,
+    tonemap_bind_group_layout: wgpu::BindGroupLayout,
+    tonemap_params_buffer: wgpu::Buffer,
 }
 
 impl GpuResources {
+    fn create_color_target(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+        label: &'static str,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        (texture, view)
+    }
+
+    fn create_bloom_mips(device: &wgpu::Device, width: u32, height: u32) -> Vec<BloomMip> {
+        let mut mips = Vec::with_capacity(BLOOM_MIP_COUNT);
+        let mut w = (width / 2).max(1);
+        let mut h = (height / 2).max(1);
+        for i in 0..BLOOM_MIP_COUNT {
+            let label = format!("Bloom Mip {}", i);
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(&label),
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: HDR_SCENE_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            mips.push(BloomMip {
+                _texture: texture,
+                view,
+                width: w,
+                height: h,
+            });
+            w = (w / 2).max(1);
+            h = (h / 2).max(1);
+        }
+        mips
+    }
+
     fn resize(&mut self, new_size: PhysicalSize<u32>) {
         self.surface_config.width = new_size.width.max(1);
         self.surface_config.height = new_size.height.max(1);
@@ -179,24 +320,58 @@ impl GpuResources {
         self.depth_texture = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
         self.depth_texture_raw = depth_texture;
 
-        // Recreate offscreen scene color texture for fog post-process
-        let scene_color_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Scene Color Texture"),
-            size: wgpu::Extent3d {
-                width: self.surface_config.width,
-                height: self.surface_config.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.surface_config.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        self.scene_color_view =
-            scene_color_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.scene_color_texture = scene_color_texture;
+        let (scene_hdr_texture, scene_hdr_view) = Self::create_color_target(
+            &self.device,
+            self.surface_config.width,
+            self.surface_config.height,
+            HDR_SCENE_FORMAT,
+            "Scene HDR Texture",
+        );
+        self.scene_hdr_texture = scene_hdr_texture;
+        self.scene_hdr_view = scene_hdr_view;
+
+        let (post_temp_texture, post_temp_view) = Self::create_color_target(
+            &self.device,
+            self.surface_config.width,
+            self.surface_config.height,
+            HDR_SCENE_FORMAT,
+            "Post Temp Texture",
+        );
+        self.post_temp_texture = post_temp_texture;
+        self.post_temp_view = post_temp_view;
+
+        let (taa_history_a_texture, taa_history_a_view) = Self::create_color_target(
+            &self.device,
+            self.surface_config.width,
+            self.surface_config.height,
+            HDR_SCENE_FORMAT,
+            "TAA History A",
+        );
+        self.taa_history_a_texture = taa_history_a_texture;
+        self.taa_history_a_view = taa_history_a_view;
+
+        let (taa_history_b_texture, taa_history_b_view) = Self::create_color_target(
+            &self.device,
+            self.surface_config.width,
+            self.surface_config.height,
+            HDR_SCENE_FORMAT,
+            "TAA History B",
+        );
+        self.taa_history_b_texture = taa_history_b_texture;
+        self.taa_history_b_view = taa_history_b_view;
+
+        self.bloom_mips = Self::create_bloom_mips(
+            &self.device,
+            self.surface_config.width,
+            self.surface_config.height,
+        );
+
+        let ping_w = (self.surface_config.width / 2).max(1);
+        let ping_h = (self.surface_config.height / 2).max(1);
+        let (bloom_ping_texture, bloom_ping_view) =
+            Self::create_color_target(&self.device, ping_w, ping_h, HDR_SCENE_FORMAT, "Bloom Ping");
+        self.bloom_ping_texture = bloom_ping_texture;
+        self.bloom_ping_view = bloom_ping_view;
     }
 }
 
@@ -243,8 +418,20 @@ struct BattleArenaApp {
     start_time: Instant,
     last_frame: Instant,
     frame_count: u64,
+    render_frame_index: u64,
     fps: f32,
     last_fps_update: Instant,
+    frame_time_ms: f32,
+    draw_calls_estimate: u32,
+
+    // PostFx frame state
+    prev_view_proj: Mat4,
+    current_view_proj: Mat4,
+    current_jitter: [f32; 2],
+    taa_history_use_a: bool,
+    postfx_enabled: bool,
+    taa_enabled: bool,
+    bloom_enabled: bool,
 }
 
 impl BattleArenaApp {
@@ -270,37 +457,82 @@ impl BattleArenaApp {
             start_time: Instant::now(),
             last_frame: Instant::now(),
             frame_count: 0,
+            render_frame_index: 0,
             fps: 0.0,
             last_fps_update: Instant::now(),
+            frame_time_ms: 0.0,
+            draw_calls_estimate: 0,
+            prev_view_proj: Mat4::IDENTITY,
+            current_view_proj: Mat4::IDENTITY,
+            current_jitter: [0.0, 0.0],
+            taa_history_use_a: true,
+            postfx_enabled: true,
+            taa_enabled: true,
+            bloom_enabled: true,
         }
     }
 
-    fn initialize(&mut self, window: Arc<Window>) {
-        let size = window.inner_size();
+    /// Async GPU request (adapter + device). Used on native with block_on, on wasm with spawn_local.
+    async fn request_gpu_async(
+        instance: wgpu::Instance,
+        surface: wgpu::Surface<'static>,
+    ) -> (
+        wgpu::Instance,
+        wgpu::Surface<'static>,
+        wgpu::Adapter,
+        wgpu::Device,
+        wgpu::Queue,
+    ) {
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            .expect("Failed to find adapter");
 
-        // Create wgpu instance
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("Battle Arena Device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                memory_hints: wgpu::MemoryHints::Performance,
+                ..Default::default()
+            })
+            .await
+            .expect("Failed to create device");
+
+        (instance, surface, adapter, device, queue)
+    }
+
+    fn initialize(&mut self, window: Arc<Window>) {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             ..Default::default()
         });
 
         let surface = instance.create_surface(Arc::clone(&window)).unwrap();
+        // Safe: we keep the window in self.window and never drop it before surface
+        let surface: wgpu::Surface<'static> = unsafe { std::mem::transmute(surface) };
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }))
-        .expect("Failed to find adapter");
+        let (instance, surface, adapter, device, queue) =
+            pollster::block_on(Self::request_gpu_async(instance, surface));
 
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("Battle Arena Device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            memory_hints: wgpu::MemoryHints::Performance,
-            ..Default::default()
-        }))
-        .expect("Failed to create device");
+        self.initialize_from_gpu(window, instance, adapter, device, queue, surface);
+    }
+
+    /// Finishes initialization using an already-created GPU (used by native after block_on and by wasm after async init).
+    fn initialize_from_gpu(
+        &mut self,
+        window: Arc<Window>,
+        _instance: wgpu::Instance,
+        adapter: wgpu::Adapter,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        surface: wgpu::Surface<'static>,
+    ) {
+        let size = window.inner_size();
 
         // Configure surface
         let surface_caps = surface.get_capabilities(&adapter);
@@ -414,7 +646,7 @@ impl BattleArenaApp {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
+                    format: HDR_SCENE_FORMAT,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -613,8 +845,8 @@ impl BattleArenaApp {
         let depth_texture_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // Offscreen scene color texture (for fog post-process to read from)
-        let scene_color_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Scene Color Texture"),
+        let scene_hdr_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Scene HDR Texture"),
             size: wgpu::Extent3d {
                 width: size.width.max(1),
                 height: size.height.max(1),
@@ -623,12 +855,61 @@ impl BattleArenaApp {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: surface_format,
+            format: HDR_SCENE_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let scene_color_view =
-            scene_color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let scene_hdr_view = scene_hdr_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let post_temp_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Post Temp Texture"),
+            size: wgpu::Extent3d {
+                width: size.width.max(1),
+                height: size.height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: HDR_SCENE_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let post_temp_view = post_temp_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let taa_history_a_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("TAA History A"),
+            size: wgpu::Extent3d {
+                width: size.width.max(1),
+                height: size.height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: HDR_SCENE_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let taa_history_a_view =
+            taa_history_a_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let taa_history_b_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("TAA History B"),
+            size: wgpu::Extent3d {
+                width: size.width.max(1),
+                height: size.height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: HDR_SCENE_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let taa_history_b_view =
+            taa_history_b_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let sdf_cannon_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("SDF Cannon Pipeline"),
@@ -643,7 +924,7 @@ impl BattleArenaApp {
                 module: &sdf_cannon_shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
+                    format: HDR_SCENE_FORMAT,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -777,7 +1058,7 @@ impl BattleArenaApp {
                 module: &lava_shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
+                    format: HDR_SCENE_FORMAT,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -810,6 +1091,9 @@ impl BattleArenaApp {
         // CREATE BATTLE SCENE (all game state)
         // ============================================
         let mut scene = BattleScene::new(ArenaConfig::default(), VisualConfig::default());
+        self.postfx_enabled = scene.visuals.postfx.debug_toggles.postfx_enabled;
+        self.taa_enabled = scene.visuals.postfx.debug_toggles.taa_enabled;
+        self.bloom_enabled = scene.visuals.postfx.debug_toggles.bloom_enabled;
 
         // ============================================
         // Generate static mesh from scene's terrain config
@@ -1023,7 +1307,7 @@ impl BattleArenaApp {
         let cubemap_skybox = CubemapSkybox::new(
             &device,
             &queue,
-            surface_format,
+            HDR_SCENE_FORMAT,
             "Assets/Skybox/sky_26_2k/sky_26_cubemap_2k", // day sky
             "Assets/Skybox/sky_16_2k/sky_16_cubemap_2k", // night sky
         );
@@ -1047,7 +1331,7 @@ impl BattleArenaApp {
         point_lights.add_torch([3.0, bridge_torch_y, -15.0], torch_color, 8.0);
         point_lights.add_torch([-3.0, bridge_torch_y, -15.0], torch_color, 8.0);
 
-        let mut particle_system = ParticleSystem::new(&device, surface_format);
+        let mut particle_system = ParticleSystem::new(&device, HDR_SCENE_FORMAT);
         let ember_y = lava_ocean_level + 1.0;
         particle_system.add_spawn_position([0.0, ember_y, 0.0]);
         particle_system.add_spawn_position([15.0, ember_y, 15.0]);
@@ -1066,9 +1350,22 @@ impl BattleArenaApp {
         let mut fog_post = FogPostPass::with_config(
             &device,
             &queue,
-            surface_format,
+            HDR_SCENE_FORMAT,
             FogPostConfig::battle_arena(),
         );
+        let haze_cfg = &scene.visuals.postfx.haze;
+        fog_post.set_config(FogPostConfig {
+            fog_color: scene.visuals.fog_color,
+            density: if haze_cfg.enabled {
+                haze_cfg.density
+            } else {
+                0.0
+            },
+            height_fog_start: haze_cfg.height_fog_start,
+            height_fog_density: haze_cfg.height_fog_density,
+            max_opacity: haze_cfg.max_opacity,
+            horizon_boost: haze_cfg.horizon_boost,
+        });
 
         // Configure lava steam boundary wall around islands
         fog_post.set_steam_config(LavaSteamConfig::battle_arena(
@@ -1077,6 +1374,382 @@ impl BattleArenaApp {
             island_radius,
             lava_ocean_level,
         ));
+
+        let post_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Post Linear Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let bloom_mips =
+            GpuResources::create_bloom_mips(&device, size.width.max(1), size.height.max(1));
+        let (bloom_ping_texture, bloom_ping_view) = GpuResources::create_color_target(
+            &device,
+            (size.width.max(1) / 2).max(1),
+            (size.height.max(1) / 2).max(1),
+            HDR_SCENE_FORMAT,
+            "Bloom Ping",
+        );
+
+        let taa_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("TAA Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/taa.wgsl").into()),
+        });
+        let bloom_extract_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Bloom Extract Shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../shaders/bloom_extract.wgsl").into(),
+            ),
+        });
+        let bloom_blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Bloom Blur Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/bloom_blur.wgsl").into()),
+        });
+        let tonemap_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Tonemap Composite Shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../shaders/tonemap_composite.wgsl").into(),
+            ),
+        });
+
+        let taa_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("TAA Params Buffer"),
+            size: std::mem::size_of::<TaaParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let taa_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("TAA Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+        let taa_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("TAA Pipeline Layout"),
+            bind_group_layouts: &[&taa_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        let taa_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("TAA Pipeline"),
+            layout: Some(&taa_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &taa_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &taa_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: HDR_SCENE_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        let bloom_extract_params_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Bloom Extract Params"),
+                contents: bytemuck::bytes_of(&BloomExtractParams {
+                    threshold: scene.visuals.postfx.bloom.threshold,
+                    knee: scene.visuals.postfx.bloom.knee,
+                    _pad0: [0.0; 2],
+                }),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+        let bloom_extract_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Bloom Extract BGL"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+        let bloom_extract_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Bloom Extract Pipeline Layout"),
+                bind_group_layouts: &[&bloom_extract_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+        let bloom_extract_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Bloom Extract Pipeline"),
+                layout: Some(&bloom_extract_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &bloom_extract_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &bloom_extract_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: HDR_SCENE_FORMAT,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
+        let bloom_blur_params_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Bloom Blur Params"),
+                contents: bytemuck::bytes_of(&BloomBlurParams {
+                    texel_size: [
+                        1.0 / size.width.max(1) as f32,
+                        1.0 / size.height.max(1) as f32,
+                    ],
+                    direction: [1.0, 0.0],
+                    intensity: 1.0,
+                    mode: 1,
+                    _pad0: [0.0; 2],
+                }),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+        let bloom_blur_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Bloom Blur BGL"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+        let bloom_blur_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Bloom Blur Pipeline Layout"),
+                bind_group_layouts: &[&bloom_blur_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+        let bloom_blur_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Bloom Blur Pipeline"),
+            layout: Some(&bloom_blur_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &bloom_blur_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &bloom_blur_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: HDR_SCENE_FORMAT,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent::REPLACE,
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        let tonemap_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Tonemap Params"),
+            contents: bytemuck::bytes_of(&TonemapCompositeParams {
+                exposure: scene.visuals.postfx.tonemap.exposure,
+                saturation: scene.visuals.postfx.tonemap.saturation,
+                contrast: scene.visuals.postfx.tonemap.contrast,
+                bloom_intensity: scene.visuals.postfx.bloom.intensity,
+            }),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let tonemap_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Tonemap Composite BGL"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+        let tonemap_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Tonemap Composite Pipeline Layout"),
+                bind_group_layouts: &[&tonemap_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+        let tonemap_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Tonemap Composite Pipeline"),
+            layout: Some(&tonemap_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &tonemap_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &tonemap_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
 
         // Store everything
         self.window = Some(window);
@@ -1104,8 +1777,17 @@ impl BattleArenaApp {
             sdf_cannon_bind_group,
             depth_texture: depth_texture_view,
             depth_texture_raw: depth_texture,
-            scene_color_texture,
-            scene_color_view,
+            scene_hdr_texture,
+            scene_hdr_view,
+            post_temp_texture,
+            post_temp_view,
+            taa_history_a_texture,
+            taa_history_a_view,
+            taa_history_b_texture,
+            taa_history_b_view,
+            bloom_mips,
+            bloom_ping_texture,
+            bloom_ping_view,
             ui_uniform_buffer,
             ui_bind_group,
             block_vertex_buffer: None,
@@ -1123,6 +1805,19 @@ impl BattleArenaApp {
             lava_vertex_buffer,
             lava_index_buffer,
             lava_index_count,
+            post_sampler,
+            taa_pipeline,
+            taa_bind_group_layout,
+            taa_params_buffer,
+            bloom_extract_pipeline,
+            bloom_extract_bind_group_layout,
+            bloom_extract_params_buffer,
+            bloom_blur_pipeline,
+            bloom_blur_bind_group_layout,
+            bloom_blur_params_buffer,
+            tonemap_pipeline,
+            tonemap_bind_group_layout,
+            tonemap_params_buffer,
         });
         self.cubemap_skybox = Some(cubemap_skybox);
         self.point_lights = Some(point_lights);
@@ -2032,30 +2727,88 @@ impl BattleArenaApp {
             },
         );
 
-        // Phase 1: Render scene to offscreen texture (for fog post-process)
+        let scene = self.scene.as_ref().unwrap();
         let gpu = self.gpu.as_ref().unwrap();
-        let scene_view = &gpu.scene_color_view;
+        let mut hdr_source_view = &gpu.scene_hdr_view;
+        let mut draw_calls = 5u32; // sky, meshes, lava, sdf, particles
 
-        self.render_sky(&mut encoder, scene_view);
-        self.render_meshes(&mut encoder, scene_view, dynamic_index_count);
-        self.render_lava(&mut encoder, scene_view);
-        self.render_sdf_cannon(&mut encoder, scene_view);
-        self.render_particles(&mut encoder, scene_view);
+        // 1) Base scene -> HDR target
+        self.render_sky(&mut encoder, &gpu.scene_hdr_view);
+        self.render_meshes(&mut encoder, &gpu.scene_hdr_view, dynamic_index_count);
+        self.render_lava(&mut encoder, &gpu.scene_hdr_view);
+        self.render_sdf_cannon(&mut encoder, &gpu.scene_hdr_view);
+        self.render_particles(&mut encoder, &gpu.scene_hdr_view);
 
-        // Phase 2: Fog post-process (reads scene color + depth → writes to swapchain)
-        if let Some(ref fog_post) = self.fog_post {
-            let gpu = self.gpu.as_ref().unwrap();
-            fog_post.render_to_view(
-                &gpu.device,
-                &mut encoder,
-                &gpu.scene_color_view,
-                &gpu.depth_texture,
-                &view,
-            );
+        // 2) Haze post (HDR -> HDR temp)
+        if self.postfx_enabled && scene.visuals.postfx.haze.enabled {
+            if let Some(ref fog_post) = self.fog_post {
+                fog_post.render_to_view(
+                    &gpu.device,
+                    &mut encoder,
+                    &gpu.scene_hdr_view,
+                    &gpu.depth_texture,
+                    &gpu.post_temp_view,
+                );
+                hdr_source_view = &gpu.post_temp_view;
+                draw_calls += 1;
+            }
         }
 
-        // Phase 3: UI on top (no fog applied to UI)
+        // 3) TAA (HDR source -> history ping-pong)
+        if self.postfx_enabled && self.taa_enabled && scene.visuals.postfx.taa.enabled {
+            let (history_read, history_write) = if self.taa_history_use_a {
+                (&gpu.taa_history_a_view, &gpu.taa_history_b_view)
+            } else {
+                (&gpu.taa_history_b_view, &gpu.taa_history_a_view)
+            };
+            self.render_taa(
+                &gpu.device,
+                &mut encoder,
+                hdr_source_view,
+                history_read,
+                history_write,
+            );
+            hdr_source_view = history_write;
+            self.taa_history_use_a = !self.taa_history_use_a;
+            draw_calls += 1;
+        }
+
+        // 4) Bloom chain
+        if self.postfx_enabled && self.bloom_enabled && scene.visuals.postfx.bloom.enabled {
+            self.render_bloom_chain(&gpu.device, &gpu.queue, &mut encoder, hdr_source_view);
+            draw_calls += BLOOM_MIP_COUNT as u32;
+        } else {
+            let _clear = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Bloom Clear"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &gpu.bloom_mips[0].view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+        }
+
+        // 5) Tonemap+composite to swapchain
+        let bloom_view = &gpu.bloom_mips[0].view;
+        self.render_tonemap_composite(
+            &gpu.device,
+            &mut encoder,
+            hdr_source_view,
+            bloom_view,
+            &view,
+        );
+        draw_calls += 1;
+
+        // 6) UI on top
         self.render_ui(&mut encoder, &view);
+        draw_calls += 1;
 
         self.gpu
             .as_ref()
@@ -2063,6 +2816,397 @@ impl BattleArenaApp {
             .queue
             .submit(std::iter::once(encoder.finish()));
         output.present();
+
+        self.prev_view_proj = self.current_view_proj;
+        self.render_frame_index = self.render_frame_index.wrapping_add(1);
+        self.draw_calls_estimate = draw_calls;
+    }
+
+    fn halton(mut index: u32, base: u32) -> f32 {
+        let mut result = 0.0;
+        let mut f = 1.0;
+        while index > 0 {
+            f /= base as f32;
+            result += f * (index % base) as f32;
+            index /= base;
+        }
+        result
+    }
+
+    fn compute_taa_jitter(&self, width: u32, height: u32) -> [f32; 2] {
+        let idx = (self.render_frame_index % 8) as u32 + 1;
+        let hx = Self::halton(idx, 2) - 0.5;
+        let hy = Self::halton(idx, 3) - 0.5;
+        let jx = (hx * 2.0) / width.max(1) as f32;
+        let jy = (hy * 2.0) / height.max(1) as f32;
+        [jx, jy]
+    }
+
+    fn render_taa(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        current_view: &wgpu::TextureView,
+        history_view: &wgpu::TextureView,
+        output_view: &wgpu::TextureView,
+    ) {
+        let gpu = self.gpu.as_ref().unwrap();
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("TAA Bind Group"),
+            layout: &gpu.taa_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: gpu.taa_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(current_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(history_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&gpu.depth_texture),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&gpu.post_sampler),
+                },
+            ],
+        });
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("TAA Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: output_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(&gpu.taa_pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    fn render_bloom_chain(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        source_view: &wgpu::TextureView,
+    ) {
+        let gpu = self.gpu.as_ref().unwrap();
+        if gpu.bloom_mips.is_empty() {
+            return;
+        }
+
+        // Extract bright areas -> mip0
+        let extract_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Bloom Extract BG"),
+            layout: &gpu.bloom_extract_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: gpu.bloom_extract_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(source_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&gpu.post_sampler),
+                },
+            ],
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Bloom Extract Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &gpu.bloom_mips[0].view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&gpu.bloom_extract_pipeline);
+            pass.set_bind_group(0, &extract_bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+
+        // Downsample mips
+        for i in 1..gpu.bloom_mips.len() {
+            let src = &gpu.bloom_mips[i - 1];
+            let dst = &gpu.bloom_mips[i];
+            queue.write_buffer(
+                &gpu.bloom_blur_params_buffer,
+                0,
+                bytemuck::cast_slice(&[BloomBlurParams {
+                    texel_size: [1.0 / src.width as f32, 1.0 / src.height as f32],
+                    direction: [0.0, 0.0],
+                    intensity: 1.0,
+                    mode: 0,
+                    _pad0: [0.0; 2],
+                }]),
+            );
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Bloom Downsample BG"),
+                layout: &gpu.bloom_blur_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: gpu.bloom_blur_params_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&src.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&gpu.post_sampler),
+                    },
+                ],
+            });
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Bloom Downsample Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &dst.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&gpu.bloom_blur_pipeline);
+            pass.set_bind_group(0, &bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+
+        // Upsample and accumulate back into larger mips.
+        for i in (1..gpu.bloom_mips.len()).rev() {
+            let src = &gpu.bloom_mips[i];
+            let dst = &gpu.bloom_mips[i - 1];
+            queue.write_buffer(
+                &gpu.bloom_blur_params_buffer,
+                0,
+                bytemuck::cast_slice(&[BloomBlurParams {
+                    texel_size: [1.0 / src.width as f32, 1.0 / src.height as f32],
+                    direction: [0.0, 0.0],
+                    intensity: 0.35,
+                    mode: 2,
+                    _pad0: [0.0; 2],
+                }]),
+            );
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Bloom Upsample BG"),
+                layout: &gpu.bloom_blur_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: gpu.bloom_blur_params_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&src.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&gpu.post_sampler),
+                    },
+                ],
+            });
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Bloom Upsample Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &dst.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&gpu.bloom_blur_pipeline);
+            pass.set_bind_group(0, &bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+
+        // Blur bloom mip0 (horizontal -> ping, vertical -> mip0)
+        let base = &gpu.bloom_mips[0];
+        queue.write_buffer(
+            &gpu.bloom_blur_params_buffer,
+            0,
+            bytemuck::cast_slice(&[BloomBlurParams {
+                texel_size: [1.0 / base.width as f32, 1.0 / base.height as f32],
+                direction: [1.0, 0.0],
+                intensity: 1.0,
+                mode: 1,
+                _pad0: [0.0; 2],
+            }]),
+        );
+        let blur_h_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Bloom Blur H BG"),
+            layout: &gpu.bloom_blur_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: gpu.bloom_blur_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&base.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&gpu.post_sampler),
+                },
+            ],
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Bloom Blur Horizontal"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &gpu.bloom_ping_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&gpu.bloom_blur_pipeline);
+            pass.set_bind_group(0, &blur_h_bg, &[]);
+            pass.draw(0..3, 0..1);
+        }
+
+        queue.write_buffer(
+            &gpu.bloom_blur_params_buffer,
+            0,
+            bytemuck::cast_slice(&[BloomBlurParams {
+                texel_size: [1.0 / base.width as f32, 1.0 / base.height as f32],
+                direction: [0.0, 1.0],
+                intensity: 1.0,
+                mode: 1,
+                _pad0: [0.0; 2],
+            }]),
+        );
+        let blur_v_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Bloom Blur V BG"),
+            layout: &gpu.bloom_blur_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: gpu.bloom_blur_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&gpu.bloom_ping_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&gpu.post_sampler),
+                },
+            ],
+        });
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Bloom Blur Vertical"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &gpu.bloom_mips[0].view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(&gpu.bloom_blur_pipeline);
+        pass.set_bind_group(0, &blur_v_bg, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
+    fn render_tonemap_composite(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        hdr_scene_view: &wgpu::TextureView,
+        bloom_view: &wgpu::TextureView,
+        output_view: &wgpu::TextureView,
+    ) {
+        let gpu = self.gpu.as_ref().unwrap();
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Tonemap Composite BG"),
+            layout: &gpu.tonemap_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: gpu.tonemap_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(hdr_scene_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(bloom_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&gpu.post_sampler),
+                },
+            ],
+        });
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Tonemap Composite Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: output_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(&gpu.tonemap_pipeline);
+        pass.set_bind_group(0, &bg, &[]);
+        pass.draw(0..3, 0..1);
     }
 
     /// Prepare all GPU buffer data for the current frame: dynamic meshes, uniforms,
@@ -2109,7 +3253,20 @@ impl BattleArenaApp {
         let aspect = config.width as f32 / config.height as f32;
         let view_mat = self.camera.get_view_matrix();
         let proj_mat = self.camera.get_projection_matrix(aspect);
-        let view_proj = proj_mat * view_mat;
+        let jitter = if self.postfx_enabled && self.taa_enabled {
+            self.compute_taa_jitter(config.width, config.height)
+        } else {
+            [0.0, 0.0]
+        };
+        let jitter_mat = Mat4::from_cols_array(&[
+            1.0, 0.0, 0.0, 0.0, //
+            0.0, 1.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0, //
+            jitter[0], jitter[1], 0.0, 1.0,
+        ]);
+        let view_proj = jitter_mat * proj_mat * view_mat;
+        self.current_view_proj = view_proj;
+        self.current_jitter = jitter;
 
         let vis = &scene.visuals;
         let mut uniforms = Uniforms {
@@ -2134,6 +3291,30 @@ impl BattleArenaApp {
         }
 
         queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+
+        let taa_cfg = &scene.visuals.postfx.taa;
+        let taa_params = TaaParams {
+            inv_curr_view_proj: view_proj.inverse().to_cols_array_2d(),
+            prev_view_proj: self.prev_view_proj.to_cols_array_2d(),
+            inv_resolution: [
+                1.0 / config.width.max(1) as f32,
+                1.0 / config.height.max(1) as f32,
+            ],
+            jitter,
+            history_weight: taa_cfg.history_weight,
+            new_weight: taa_cfg.new_weight,
+            reject_threshold: taa_cfg.depth_reject_threshold,
+            enabled: if self.postfx_enabled && self.taa_enabled && taa_cfg.enabled {
+                1
+            } else {
+                0
+            },
+        };
+        queue.write_buffer(
+            &gpu.taa_params_buffer,
+            0,
+            bytemuck::cast_slice(&[taa_params]),
+        );
 
         // SDF cannon uniforms
         {
@@ -2225,6 +3406,34 @@ impl BattleArenaApp {
             );
         }
 
+        let bloom_cfg = &scene.visuals.postfx.bloom;
+        queue.write_buffer(
+            &gpu.bloom_extract_params_buffer,
+            0,
+            bytemuck::cast_slice(&[BloomExtractParams {
+                threshold: bloom_cfg.threshold,
+                knee: bloom_cfg.knee,
+                _pad0: [0.0; 2],
+            }]),
+        );
+
+        let bloom_intensity = if self.postfx_enabled && self.bloom_enabled && bloom_cfg.enabled {
+            bloom_cfg.intensity
+        } else {
+            0.0
+        };
+        let tone_cfg = &scene.visuals.postfx.tonemap;
+        queue.write_buffer(
+            &gpu.tonemap_params_buffer,
+            0,
+            bytemuck::cast_slice(&[TonemapCompositeParams {
+                exposure: tone_cfg.exposure,
+                saturation: tone_cfg.saturation,
+                contrast: tone_cfg.contrast,
+                bloom_intensity,
+            }]),
+        );
+
         // Update visual systems — skybox with day/night crossfade
         if let Some(ref cubemap_skybox) = self.cubemap_skybox {
             // Compute blend factor from DayCycle time (0-1)
@@ -2232,7 +3441,11 @@ impl BattleArenaApp {
             // Day  (0.15-0.65): pure day
             // Dusk (0.65-0.8): day → night transition
             // Night(0.8-1.0): pure night
-            let day_time = scene.game_state.day_cycle.time();
+            let day_time = if scene.visuals.postfx.lock_midday {
+                0.40
+            } else {
+                scene.game_state.day_cycle.time()
+            };
             let blend = if day_time < 0.15 {
                 // Dawn: fade from night (1.0) to day (0.0)
                 1.0 - (day_time / 0.15)
@@ -2808,6 +4021,39 @@ impl BattleArenaApp {
                     });
                 }
             }
+            KeyCode::F7 if pressed => {
+                self.postfx_enabled = !self.postfx_enabled;
+                println!(
+                    "[PostFx] {}",
+                    if self.postfx_enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                );
+            }
+            KeyCode::F8 if pressed => {
+                self.taa_enabled = !self.taa_enabled;
+                println!(
+                    "[PostFx] TAA {}",
+                    if self.taa_enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                );
+            }
+            KeyCode::F9 if pressed => {
+                self.bloom_enabled = !self.bloom_enabled;
+                println!(
+                    "[PostFx] Bloom {}",
+                    if self.bloom_enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                );
+            }
 
             KeyCode::KeyT if pressed => {
                 self.terrain_ui.toggle();
@@ -3036,6 +4282,7 @@ impl ApplicationHandler for BattleArenaApp {
                 let now = Instant::now();
                 let delta_time = now.duration_since(self.last_frame).as_secs_f32();
                 self.last_frame = now;
+                self.frame_time_ms = delta_time * 1000.0;
 
                 self.frame_count += 1;
                 if now.duration_since(self.last_fps_update).as_secs_f32() >= 1.0 {
@@ -3050,10 +4297,19 @@ impl ApplicationHandler for BattleArenaApp {
                         } else {
                             "Combat".to_string()
                         };
+                        let postfx_str = format!(
+                            "P:{} TAA:{} B:{}",
+                            if self.postfx_enabled { "on" } else { "off" },
+                            if self.taa_enabled { "on" } else { "off" },
+                            if self.bloom_enabled { "on" } else { "off" }
+                        );
                         window.set_title(&format!(
-                            "Battle Sphere - {} | FPS: {:.0} | Prisms: {}",
+                            "Battle Sphere - {} | FPS: {:.0} | {:.2}ms | Draws~{} | {} | Prisms: {}",
                             mode_str,
                             self.fps,
+                            self.frame_time_ms,
+                            self.draw_calls_estimate,
+                            postfx_str,
                             scene.hex_grid.len()
                         ));
                     }
@@ -3092,6 +4348,7 @@ impl ApplicationHandler for BattleArenaApp {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     println!("===========================================");
     println!("   Battle Sphere - Combat Arena");
@@ -3101,11 +4358,47 @@ fn main() {
     println!();
     println!("Controls: WASD Move, Space Jump, V Toggle FPS/Free");
     println!("G: Grab/Release Cannon, F: Fire Cannon");
-    println!("B: Builder, T: Terrain Editor, F11: Fullscreen, ESC: Exit");
+    println!(
+        "B: Builder, T: Terrain Editor, F7/F8/F9: PostFx/TAA/Bloom, F11: Fullscreen, ESC: Exit"
+    );
     println!();
 
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = BattleArenaApp::new();
     event_loop.run_app(&mut app).unwrap();
+}
+
+/// Browser entry point. Async init (request_adapter/request_device) then runs the game loop.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(start)]
+pub fn main() {
+    console_error_panic_hook::set_once();
+
+    let event_loop = EventLoop::new().unwrap();
+    event_loop.set_control_flow(ControlFlow::Poll);
+
+    let attrs = WindowAttributes::default()
+        .with_title("Battle Sphere - Combat Arena")
+        .with_inner_size(PhysicalSize::new(1920, 1080));
+
+    let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
+
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::all(),
+        ..Default::default()
+    });
+
+    let surface = instance.create_surface(Arc::clone(&window)).unwrap();
+    let surface: wgpu::Surface<'static> = unsafe { std::mem::transmute(surface) };
+
+    spawn_local(async move {
+        let (instance, surface, adapter, device, queue) =
+            BattleArenaApp::request_gpu_async(instance, surface).await;
+
+        let mut app = BattleArenaApp::new();
+        app.initialize_from_gpu(window, instance, adapter, device, queue, surface);
+
+        event_loop.run_app(&mut app).unwrap();
+    });
 }

@@ -10,7 +10,7 @@
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
-use super::variety::{generate_variety, seed_from_position, SimpleRng, VarietyParams};
+use super::variety::{SimpleRng, VarietyParams, generate_variety, seed_from_position};
 use crate::render::instancing::CreatureInstance;
 
 // ============================================================================
@@ -220,8 +220,7 @@ impl PlacementSystem {
             None => return Vec::new(),
         };
 
-        let center_seed =
-            seed_from_position(self.ghost_position.x, 0.0, self.ghost_position.z);
+        let center_seed = seed_from_position(self.ghost_position.x, 0.0, self.ghost_position.z);
 
         let sample_points = poisson_disk_sample(
             [self.ghost_position.x, self.ghost_position.z],
@@ -272,14 +271,7 @@ impl PlacementSystem {
                 let total_rotation_y = pa.manual_rotation + variety.rotation_y;
                 let rotation = glam::Quat::from_rotation_y(total_rotation_y);
                 let rot_arr: [f32; 4] = [rotation.x, rotation.y, rotation.z, rotation.w];
-                CreatureInstance::new(
-                    pa.position.into(),
-                    rot_arr,
-                    total_scale,
-                    0,
-                    0,
-                    0xFFFFFFFF,
-                )
+                CreatureInstance::new(pa.position.into(), rot_arr, total_scale, 0, 0, 0xFFFFFFFF)
             })
             .collect()
     }
@@ -321,10 +313,7 @@ impl PlacementSystem {
     }
 
     /// Handle Ctrl+click: scatter-place assets around ghost position.
-    pub fn handle_scatter_click(
-        &mut self,
-        ground_raycast: &dyn Fn(f32, f32) -> Option<f32>,
-    ) {
+    pub fn handle_scatter_click(&mut self, ground_raycast: &dyn Fn(f32, f32) -> Option<f32>) {
         let placed = self.scatter(ground_raycast);
         if !placed.is_empty() {
             println!(
@@ -395,8 +384,7 @@ impl PlacementSystem {
     /// Load placements from a JSON file. Clears undo history.
     pub fn load(&mut self, path: &std::path::Path) -> Result<(), String> {
         let json = std::fs::read_to_string(path).map_err(|e| format!("{e}"))?;
-        let loaded: Vec<PlacedAsset> =
-            serde_json::from_str(&json).map_err(|e| format!("{e}"))?;
+        let loaded: Vec<PlacedAsset> = serde_json::from_str(&json).map_err(|e| format!("{e}"))?;
         let count = loaded.len();
         self.placed_instances = loaded;
         self.undo_counts.clear();

@@ -289,6 +289,9 @@ pub struct FogPostParams {
     pub wind_time: f32,
     pub wind_strength: f32,
     pub steam_edge_softness: f32,
+    pub max_opacity: f32,
+    pub horizon_boost: f32,
+    pub _pad2: [f32; 2],
 }
 
 impl Default for FogPostParams {
@@ -313,6 +316,9 @@ impl Default for FogPostParams {
             wind_time: 0.0,
             wind_strength: 0.0,
             steam_edge_softness: 0.0,
+            max_opacity: 0.22,
+            horizon_boost: 0.35,
+            _pad2: [0.0; 2],
         }
     }
 }

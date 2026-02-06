@@ -6,6 +6,130 @@
 
 use glam::Vec3;
 
+/// Debug toggles for runtime post-processing control.
+#[derive(Clone, Debug)]
+pub struct PostFxDebugToggles {
+    pub postfx_enabled: bool,
+    pub taa_enabled: bool,
+    pub bloom_enabled: bool,
+}
+
+impl Default for PostFxDebugToggles {
+    fn default() -> Self {
+        Self {
+            postfx_enabled: true,
+            taa_enabled: true,
+            bloom_enabled: true,
+        }
+    }
+}
+
+/// Haze settings used by the fog post pass.
+#[derive(Clone, Debug)]
+pub struct HazeConfig {
+    pub enabled: bool,
+    pub density: f32,
+    pub height_fog_start: f32,
+    pub height_fog_density: f32,
+    pub max_opacity: f32,
+    pub horizon_boost: f32,
+}
+
+impl Default for HazeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            density: 0.0012,
+            height_fog_start: -1.0,
+            height_fog_density: 0.035,
+            max_opacity: 0.22,
+            horizon_boost: 0.35,
+        }
+    }
+}
+
+/// Temporal anti-aliasing settings.
+#[derive(Clone, Debug)]
+pub struct TaaConfig {
+    pub enabled: bool,
+    pub history_weight: f32,
+    pub new_weight: f32,
+    pub depth_reject_threshold: f32,
+}
+
+impl Default for TaaConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            history_weight: 0.90,
+            new_weight: 0.10,
+            depth_reject_threshold: 0.003,
+        }
+    }
+}
+
+/// Bloom settings.
+#[derive(Clone, Debug)]
+pub struct BloomConfig {
+    pub enabled: bool,
+    pub threshold: f32,
+    pub knee: f32,
+    pub intensity: f32,
+}
+
+impl Default for BloomConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            threshold: 1.0,
+            knee: 0.4,
+            intensity: 0.18,
+        }
+    }
+}
+
+/// Tonemap settings used in the final composite pass.
+#[derive(Clone, Debug)]
+pub struct TonemapConfig {
+    pub exposure: f32,
+    pub saturation: f32,
+    pub contrast: f32,
+}
+
+impl Default for TonemapConfig {
+    fn default() -> Self {
+        Self {
+            exposure: 1.0,
+            saturation: 1.12,
+            contrast: 1.08,
+        }
+    }
+}
+
+/// Aggregate post-processing settings for battle_arena.
+#[derive(Clone, Debug)]
+pub struct PostFxConfig {
+    pub lock_midday: bool,
+    pub haze: HazeConfig,
+    pub taa: TaaConfig,
+    pub bloom: BloomConfig,
+    pub tonemap: TonemapConfig,
+    pub debug_toggles: PostFxDebugToggles,
+}
+
+impl Default for PostFxConfig {
+    fn default() -> Self {
+        Self {
+            lock_midday: true,
+            haze: HazeConfig::default(),
+            taa: TaaConfig::default(),
+            bloom: BloomConfig::default(),
+            tonemap: TonemapConfig::default(),
+            debug_toggles: PostFxDebugToggles::default(),
+        }
+    }
+}
+
 /// Visual atmosphere configuration for the battle arena.
 ///
 /// Captures fog, directional lighting, torch, and lava glow parameters
@@ -42,6 +166,9 @@ pub struct VisualConfig {
     pub lava_glow_color: Vec3,
     /// Lava glow strength multiplier
     pub lava_glow_strength: f32,
+
+    // Post-processing
+    pub postfx: PostFxConfig,
 }
 
 impl Default for VisualConfig {
@@ -73,6 +200,9 @@ impl Default for VisualConfig {
             // Lava glow
             lava_glow_color: Vec3::new(1.5, 0.4, 0.1),
             lava_glow_strength: 1.0,
+
+            // PostFx
+            postfx: PostFxConfig::default(),
         }
     }
 }
