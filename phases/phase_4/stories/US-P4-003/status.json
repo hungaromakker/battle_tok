@@ -1,16 +1,16 @@
 {
     "story_id": "US-P4-003",
     "title": "2D Canvas Drawing — Freehand + Line Tools",
-    "status": "pending",
+    "status": "completed",
     "focus": "",
     "complexity": "normal",
     "min_iterations": 1,
     "criteria": [
-        {"text": "Canvas2D struct exists with drawing state", "done": false, "notes": ""},
-        {"text": "Outline2D struct exists for storing drawn outlines", "done": false, "notes": ""},
-        {"text": "Freehand drawing with RDP simplification", "done": false, "notes": ""},
-        {"text": "Line tool for straight segments", "done": false, "notes": ""},
-        {"text": "Grid, zoom, and pan controls work", "done": false, "notes": ""}
+        {"text": "Canvas2D struct exists with drawing state", "done": true, "notes": "Canvas2D struct with outlines, active_outline, tool, zoom, pan, show_grid, grid_size, snap_to_grid fields"},
+        {"text": "Outline2D struct exists for storing drawn outlines", "done": true, "notes": "Outline2D with points Vec<[f32;2]> and closed bool"},
+        {"text": "Freehand drawing with RDP simplification", "done": true, "notes": "Mouse-down starts, mouse-move adds points, mouse-up runs rdp_simplify with epsilon=0.05"},
+        {"text": "Line tool for straight segments", "done": true, "notes": "Click-click creates segments, extends existing outlines when endpoints match"},
+        {"text": "Grid, zoom, and pan controls work", "done": true, "notes": "G toggles grid, scroll zooms (0.1-10.0), middle/right-drag pans, orthographic 20x20 view"}
     ],
     "verification_commands": [
         {"cmd": "grep -r 'Canvas2D' src/game/asset_editor/", "expect_contains": "Canvas2D", "description": "Canvas2D struct exists"},
@@ -18,25 +18,32 @@
         {"cmd": "cargo check --bin battle_editor 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_editor compiles"}
     ],
     "checklist": [
-        {"item": "Read spec.md for implementation details", "done": false},
-        {"item": "Create Canvas2D struct with drawing state management", "done": false},
-        {"item": "Create Outline2D struct for outline storage", "done": false},
-        {"item": "Implement freehand drawing with RDP simplification", "done": false},
-        {"item": "Implement line tool for straight segments", "done": false},
-        {"item": "Add grid rendering, zoom, and pan controls", "done": false},
-        {"item": "Run cargo check", "done": false},
-        {"item": "Verify with measurable checks", "done": false},
-        {"item": "Commit changes", "done": false}
+        {"item": "Read spec.md for implementation details", "done": true},
+        {"item": "Create Canvas2D struct with drawing state management", "done": true},
+        {"item": "Create Outline2D struct for outline storage", "done": true},
+        {"item": "Implement freehand drawing with RDP simplification", "done": true},
+        {"item": "Implement line tool for straight segments", "done": true},
+        {"item": "Add grid rendering, zoom, and pan controls", "done": true},
+        {"item": "Run cargo check", "done": true},
+        {"item": "Verify with measurable checks", "done": true},
+        {"item": "Commit changes", "done": true}
     ],
-    "worker_notes": "",
+    "worker_notes": "Created canvas_2d.rs with Canvas2D, Outline2D, DrawTool types. Implemented freehand tool with RDP simplification (epsilon=0.05), line tool with click-click segments, orthographic canvas with zoom/pan/grid. All 17 unit tests pass. Both battle_editor and battle_arena compile with 0 errors. battle_arena.rs NOT modified.",
     "notes_history": [],
-    "iteration": 0,
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": ["US-P4-001"],
     "commit_hash": "",
-    "files_modified": [],
+    "files_modified": [
+        "src/game/asset_editor/canvas_2d.rs",
+        "src/game/asset_editor/mod.rs",
+        "src/bin/battle_editor.rs"
+    ],
     "iteration_history": [],
-    "learnings": [],
+    "learnings": [
+        "The asset_editor/mod.rs was already updated with orbit_camera, undo, and variety modules by concurrent stories - Canvas2D integration needed to work alongside these existing systems",
+        "battle_editor.rs already had orbit camera mouse forwarding for stages 2-5 - canvas input forwarding needed to coexist with the existing stage-based dispatch"
+    ],
     "verification_rejections": 0,
     "created_at": "2026-02-06T16:00:00Z"
 }
