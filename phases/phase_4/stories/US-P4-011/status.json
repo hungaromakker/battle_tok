@@ -1,39 +1,138 @@
 {
     "story_id": "US-P4-011",
     "title": "Asset File Save/Load (.btasset)",
-    "status": "pending",
-    "focus": "",
+    "status": "completed",
+    "focus": "Fixed unused import warnings that caused build failure in verification",
     "complexity": "normal",
     "min_iterations": 1,
     "criteria": [
-        {"text": "Save produces valid .btasset binary file", "done": false, "notes": ""},
-        {"text": "Load reconstructs identical data from .btasset file", "done": false, "notes": ""},
-        {"text": "Round-trip test passes (save then load produces same data)", "done": false, "notes": ""}
+        {
+            "text": "Save produces valid .btasset binary file",
+            "done": true,
+            "notes": "save_btasset() writes 32-byte header + raw vertex/index bytes + JSON metadata + JSON variety params"
+        },
+        {
+            "text": "Load reconstructs identical data from .btasset file",
+            "done": true,
+            "notes": "load_btasset() validates magic/version, casts raw bytes back to Vertex/u32, parses JSON sections"
+        },
+        {
+            "text": "Round-trip test passes (save then load produces same data)",
+            "done": true,
+            "notes": "7 tests pass: round-trip with/without variety, header size, vertex size, invalid magic, file too short, unsupported version"
+        }
     ],
     "verification_commands": [
-        {"cmd": "grep -r 'BTASSET_MAGIC' src/game/asset_editor/", "expect_contains": "BTASSET_MAGIC", "description": "Magic bytes constant defined"},
-        {"cmd": "grep -r 'save_btasset' src/game/asset_editor/", "expect_contains": "save_btasset", "description": "Save function exists"},
-        {"cmd": "cargo check --bin battle_editor 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_editor compiles"}
+        {
+            "cmd": "grep -r 'BTASSET_MAGIC' src/game/asset_editor/",
+            "expect_contains": "BTASSET_MAGIC",
+            "description": "Magic bytes constant defined"
+        },
+        {
+            "cmd": "grep -r 'save_btasset' src/game/asset_editor/",
+            "expect_contains": "save_btasset",
+            "description": "Save function exists"
+        },
+        {
+            "cmd": "cargo check --bin battle_editor 2>&1; echo EXIT:$?",
+            "expect_contains": "EXIT:0",
+            "description": "battle_editor compiles"
+        }
     ],
     "checklist": [
-        {"item": "Read spec.md for implementation details", "done": false},
-        {"item": "Define BTASSET_MAGIC bytes and file format header", "done": false},
-        {"item": "Implement save_btasset for binary serialization", "done": false},
-        {"item": "Implement load_btasset for binary deserialization", "done": false},
-        {"item": "Add round-trip test (save then load = identical data)", "done": false},
-        {"item": "Run cargo check", "done": false},
-        {"item": "Verify with measurable checks", "done": false},
-        {"item": "Commit changes", "done": false}
+        {
+            "item": "Read spec.md for implementation details",
+            "done": true
+        },
+        {
+            "item": "Define BTASSET_MAGIC bytes and file format header",
+            "done": true
+        },
+        {
+            "item": "Implement save_btasset for binary serialization",
+            "done": true
+        },
+        {
+            "item": "Implement load_btasset for binary deserialization",
+            "done": true
+        },
+        {
+            "item": "Add round-trip test (save then load = identical data)",
+            "done": true
+        },
+        {
+            "item": "Run cargo check",
+            "done": true
+        },
+        {
+            "item": "Verify with measurable checks",
+            "done": true
+        },
+        {
+            "item": "Commit changes",
+            "done": true
+        },
+        {
+            "item": "Fix unused import warnings from verification feedback",
+            "done": true
+        }
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
+    "worker_notes": "Iteration 2: Fixed unused import warnings that caused build failure during verification. Removed unused `DualGrid` import from blocks.rs, moved `CornerType` import from module-level to test-only scope in mesh_combine.rs. Both battle_editor and battle_arena compile with EXIT:0. All 7 asset_file tests still pass.",
+    "notes_history": [
+        {
+            "iteration": 1,
+            "note": "Implemented full asset_file.rs, wired module, added serde_json dep, SaveDialog + save/load methods in mod.rs. All 7 tests pass, both binaries compile.",
+            "timestamp": "2026-02-06T17:00:00Z"
+        },
+        {
+            "iteration": 1,
+            "note": "VERIFICATION FEEDBACK: 2 issue(s) to address",
+            "timestamp": "2026-02-06T17:05:00.978013",
+            "failures": [
+                "VERIFICATION_FAILED [battle_editor compiles]: unused import warnings treated as errors",
+                "BUILD_FAILED: unused imports in blocks.rs and mesh_combine.rs"
+            ]
+        },
+        {
+            "iteration": 2,
+            "note": "Fixed unused imports: removed DualGrid from blocks.rs, moved CornerType to test-only in mesh_combine.rs. Both binaries compile, all tests pass.",
+            "timestamp": "2026-02-06T17:10:00Z"
+        }
+    ],
+    "iteration": 2,
     "failed_reasons": [],
-    "dependencies": ["US-P4-009"],
-    "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
-    "verification_rejections": 0,
-    "created_at": "2026-02-06T16:00:00Z"
+    "dependencies": [
+        "US-P4-009"
+    ],
+    "commit_hash": "3344ca4bc33ece98c6b27c714875b56c4e9c8677",
+    "files_modified": [
+        "Cargo.toml",
+        "src/game/asset_editor/asset_file.rs",
+        "src/game/asset_editor/mod.rs",
+        "src/game/building/blocks.rs",
+        "src/game/building/mesh_combine.rs"
+    ],
+    "iteration_history": [
+        {
+            "iteration": 1,
+            "action": "Created asset_file.rs with full save/load implementation, wired module in mod.rs, added SaveDialog and save_asset/load_asset methods, added serde_json dependency",
+            "notes": "All criteria met, 7 tests pass, both binaries compile",
+            "completed_at": "2026-02-06T17:00:00Z"
+        },
+        {
+            "iteration": 2,
+            "action": "Fixed unused import warnings: removed DualGrid from blocks.rs, moved CornerType to test scope in mesh_combine.rs",
+            "notes": "Build passes cleanly, all tests pass",
+            "completed_at": "2026-02-06T17:10:00Z"
+        }
+    ],
+    "learnings": [
+        "Extruder uses BlockVertex (from building_blocks), not Vertex (from types) - need to convert between them when saving/loading",
+        "Vertex and BlockVertex have identical repr(C) layout (40 bytes: position [f32;3] + normal [f32;3] + color [f32;4]) but are different Rust types",
+        "LoadedAsset needs manual Debug impl because Vertex doesn't derive Debug",
+        "Verification may fail on unused import warnings in other files - these must also be fixed for clean builds"
+    ],
+    "verification_rejections": 1,
+    "created_at": "2026-02-06T16:00:00Z",
+    "completed_at": "2026-02-06T17:10:00Z"
 }

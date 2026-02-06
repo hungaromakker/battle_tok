@@ -8,7 +8,7 @@
 use glam::{IVec3, Vec3};
 use std::collections::{HashMap, HashSet};
 
-use super::dual_grid::{BLOCK_SIZE, CornerType, DualGrid, GridCell};
+use super::dual_grid::{BLOCK_SIZE, DualGrid, GridCell};
 
 /// A vertex in the combined mesh
 #[derive(Debug, Clone, Copy)]
@@ -344,6 +344,7 @@ impl MeshCombiner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::building::dual_grid::CornerType;
 
     #[test]
     fn test_region_calculation() {
