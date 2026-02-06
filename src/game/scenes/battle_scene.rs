@@ -175,11 +175,13 @@ impl BattleScene {
             down: movement.down,
             sprint: movement.sprint,
         };
-        self.player.update(&keys, self.camera_yaw, delta, &self.arena_ground);
+        self.player
+            .update(&keys, self.camera_yaw, delta, &self.arena_ground);
 
         // 2. Cannon: aim where camera looks + follow player if grabbed
         self.cannon.aim_at_camera(camera_forward);
-        self.cannon.update_grabbed(self.player.position, self.camera_yaw);
+        self.cannon
+            .update_grabbed(self.player.position, self.camera_yaw);
 
         // 3. Update projectiles (physics integration)
         let updates = self.projectiles.update(delta);

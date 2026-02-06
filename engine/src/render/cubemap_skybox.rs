@@ -52,17 +52,19 @@ pub struct CubemapSkybox {
 ///
 /// Expects files named: px.png, nx.png, py.png, ny.png, pz.png, nz.png
 /// Returns a `SkyCubemap` with face data uploaded to the GPU.
-fn load_cubemap_from_files(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    folder: &str,
-) -> SkyCubemap {
+fn load_cubemap_from_files(device: &wgpu::Device, queue: &wgpu::Queue, folder: &str) -> SkyCubemap {
     let face_names = ["px.png", "nx.png", "py.png", "ny.png", "pz.png", "nz.png"];
 
     // Load and decode first face to get dimensions
     let first_path = Path::new(folder).join(face_names[0]);
     let first_img = image::open(&first_path)
-        .unwrap_or_else(|e| panic!("Failed to load cubemap face {}: {}", first_path.display(), e))
+        .unwrap_or_else(|e| {
+            panic!(
+                "Failed to load cubemap face {}: {}",
+                first_path.display(),
+                e
+            )
+        })
         .to_rgba8();
     let size = first_img.width();
     assert_eq!(
@@ -101,17 +103,11 @@ fn load_cubemap_from_files(
         } else {
             let path = Path::new(folder).join(name);
             image::open(&path)
-                .unwrap_or_else(|e| {
-                    panic!("Failed to load cubemap face {}: {}", path.display(), e)
-                })
+                .unwrap_or_else(|e| panic!("Failed to load cubemap face {}: {}", path.display(), e))
                 .to_rgba8()
         };
 
-        assert_eq!(
-            img.width(),
-            size,
-            "All cubemap faces must be the same size"
-        );
+        assert_eq!(img.width(), size, "All cubemap faces must be the same size");
 
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -167,7 +163,10 @@ fn load_cubemap_from_files(
         ..Default::default()
     });
 
-    println!("[CubemapSkybox] Loaded {} (6 faces, {}x{})", folder, size, size);
+    println!(
+        "[CubemapSkybox] Loaded {} (6 faces, {}x{})",
+        folder, size, size
+    );
 
     SkyCubemap {
         texture,
@@ -196,9 +195,7 @@ impl CubemapSkybox {
         // Load shader
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Skybox Shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../../../shaders/skybox.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../../../shaders/skybox.wgsl").into()),
         });
 
         // Uniform buffer
@@ -360,11 +357,7 @@ impl CubemapSkybox {
     /// Render the skybox to the given texture view.
     ///
     /// Clears the view and draws the cubemap fullscreen.
-    pub fn render_to_view(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-    ) {
+    pub fn render_to_view(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Skybox Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

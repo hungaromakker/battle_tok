@@ -35,8 +35,8 @@ use battle_tok_engine::render::CubemapSkybox;
 
 // Import Phase 2 visual upgrade systems
 use battle_tok_engine::render::{
-    FogPostConfig, FogPostPass, LavaSteamConfig, MaterialSystem, ParticleSystem,
-    PointLightManager, SceneConfig,
+    FogPostConfig, FogPostPass, LavaSteamConfig, MaterialSystem, ParticleSystem, PointLightManager,
+    SceneConfig,
 };
 
 // Import building block types for GPU operations
@@ -45,11 +45,11 @@ use battle_tok_engine::render::{BuildingBlock, MergedMesh};
 // Import game module types
 use battle_tok_engine::game::config::{ArenaConfig, VisualConfig};
 use battle_tok_engine::game::{
-    BattleScene, BridgeConfig, BuilderMode, Camera, FloatingIslandConfig, LavaParams,
-    Mesh, MovementKeys, PLAYER_EYE_HEIGHT, SHADER_SOURCE, SdfCannonData, SdfCannonUniforms,
-    SelectedFace, StartOverlay, TerrainEditorUI, TerrainParams, Uniforms, Vertex,
-    generate_all_trees_mesh, generate_bridge, generate_floating_island, generate_lava_ocean,
-    generate_trees_on_terrain, get_material_color, set_terrain_params, terrain_height_at,
+    BattleScene, BridgeConfig, BuilderMode, Camera, FloatingIslandConfig, LavaParams, Mesh,
+    MovementKeys, PLAYER_EYE_HEIGHT, SHADER_SOURCE, SdfCannonData, SdfCannonUniforms, SelectedFace,
+    StartOverlay, TerrainEditorUI, TerrainParams, Uniforms, Vertex, generate_all_trees_mesh,
+    generate_bridge, generate_floating_island, generate_lava_ocean, generate_trees_on_terrain,
+    get_material_color, set_terrain_params, terrain_height_at,
 };
 use battle_tok_engine::render::hex_prism::DEFAULT_HEX_HEIGHT;
 
@@ -675,8 +675,8 @@ impl BattleArenaApp {
         // ============================================
         // LAVA OCEAN PIPELINE (animated lava.wgsl shader)
         // ============================================
-        let lava_shader_source = std::fs::read_to_string("shaders/lava.wgsl")
-            .expect("Failed to load lava.wgsl shader");
+        let lava_shader_source =
+            std::fs::read_to_string("shaders/lava.wgsl").expect("Failed to load lava.wgsl shader");
         let lava_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Lava Ocean Shader"),
             source: wgpu::ShaderSource::Wgsl(lava_shader_source.into()),
@@ -738,12 +738,11 @@ impl BattleArenaApp {
             ],
         });
 
-        let lava_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Lava Pipeline Layout"),
-                bind_group_layouts: &[&lava_bind_group_layout],
-                push_constant_ranges: &[],
-            });
+        let lava_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Lava Pipeline Layout"),
+            bind_group_layouts: &[&lava_bind_group_layout],
+            push_constant_ranges: &[],
+        });
 
         let lava_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Lava Ocean Pipeline"),
@@ -1025,8 +1024,8 @@ impl BattleArenaApp {
             &device,
             &queue,
             surface_format,
-            "Assets/Skybox/sky_26_2k/sky_26_cubemap_2k",  // day sky
-            "Assets/Skybox/sky_16_2k/sky_16_cubemap_2k",  // night sky
+            "Assets/Skybox/sky_26_2k/sky_26_cubemap_2k", // day sky
+            "Assets/Skybox/sky_16_2k/sky_16_cubemap_2k", // night sky
         );
 
         // Phase 2 Visual Systems (torch params from VisualConfig)
@@ -1064,8 +1063,12 @@ impl BattleArenaApp {
         let mut material_system = MaterialSystem::new(&device);
         material_system.set_scene_config(SceneConfig::battle_arena());
 
-        let mut fog_post =
-            FogPostPass::with_config(&device, &queue, surface_format, FogPostConfig::battle_arena());
+        let mut fog_post = FogPostPass::with_config(
+            &device,
+            &queue,
+            surface_format,
+            FogPostConfig::battle_arena(),
+        );
 
         // Configure lava steam boundary wall around islands
         fog_post.set_steam_config(LavaSteamConfig::battle_arena(
@@ -1360,20 +1363,20 @@ impl BattleArenaApp {
         let lava_ocean = generate_lava_ocean(config.lava_size, -0.5);
 
         // Rebuild lava GPU buffers
-        gpu.lava_vertex_buffer =
-            gpu.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Lava Vertex Buffer"),
-                    contents: bytemuck::cast_slice(&lava_ocean.vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-        gpu.lava_index_buffer =
-            gpu.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Lava Index Buffer"),
-                    contents: bytemuck::cast_slice(&lava_ocean.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
+        gpu.lava_vertex_buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Lava Vertex Buffer"),
+                contents: bytemuck::cast_slice(&lava_ocean.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        gpu.lava_index_buffer = gpu
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Lava Index Buffer"),
+                contents: bytemuck::cast_slice(&lava_ocean.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
         gpu.lava_index_count = lava_ocean.indices.len() as u32;
 
         // Bridge
@@ -2167,7 +2170,8 @@ impl BattleArenaApp {
                 } else {
                     let cross = default_dir.cross(barrel_dir);
                     let w = 1.0 + dot;
-                    let len = (cross.x * cross.x + cross.y * cross.y + cross.z * cross.z + w * w).sqrt();
+                    let len =
+                        (cross.x * cross.x + cross.y * cross.y + cross.z * cross.z + w * w).sqrt();
                     [cross.x / len, cross.y / len, cross.z / len, w / len]
                 }
             };
@@ -2724,8 +2728,11 @@ impl BattleArenaApp {
                     let grabbed = scene.cannon.is_grabbed();
                     println!(
                         "[Cannon] {}",
-                        if grabbed { "Grabbed! Walk to move it, F to fire, G to release" }
-                        else { "Released at current position" }
+                        if grabbed {
+                            "Grabbed! Walk to move it, F to fire, G to release"
+                        } else {
+                            "Released at current position"
+                        }
                     );
                 } else {
                     println!("[Cannon] Too far away to grab (walk closer)");

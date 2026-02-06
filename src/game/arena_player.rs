@@ -6,7 +6,7 @@
 use glam::Vec3;
 
 use super::terrain::{
-    get_bridge_height, is_inside_hexagon, terrain_height_at_island, BridgeConfig,
+    BridgeConfig, get_bridge_height, is_inside_hexagon, terrain_height_at_island,
 };
 
 /// Movement key state

@@ -84,10 +84,10 @@ impl LavaSteamConfig {
     ) -> Self {
         Self {
             steam_color: Vec3::new(0.72, 0.68, 0.62), // Warm white-gray steam
-            steam_density: 4.0,                         // Thick wall — blocks view
-            steam_height: 30.0,                         // Tall enough to block sky at edge
-            wind_strength: 0.6,                         // Moderate gusts push wisps inward
-            steam_edge_softness: 10.0,                  // Tight edge — wall starts right at island rim
+            steam_density: 4.0,                       // Thick wall — blocks view
+            steam_height: 30.0,                       // Tall enough to block sky at edge
+            wind_strength: 0.6,                       // Moderate gusts push wisps inward
+            steam_edge_softness: 10.0, // Tight edge — wall starts right at island rim
             island1_center,
             island2_center,
             island_radius,
@@ -113,9 +113,9 @@ impl FogPostConfig {
     pub fn battle_arena() -> Self {
         Self {
             fog_color: Vec3::new(0.45, 0.35, 0.40), // Warm haze
-            density: 0.003,                           // Very light distance fog
-            height_fog_start: -2.0,                   // Only below terrain
-            height_fog_density: 0.015,                // Minimal height fog
+            density: 0.003,                         // Very light distance fog
+            height_fog_start: -2.0,                 // Only below terrain
+            height_fog_density: 0.015,              // Minimal height fog
         }
     }
 
@@ -154,16 +154,16 @@ struct FogUniforms {
     camera_pos: [f32; 3],         // 12 bytes (offset 96)
     _pad1: f32,                   // 4 bytes (offset 108) - total 112
     // Lava steam parameters
-    steam_color: [f32; 3],        // 12 bytes (offset 112)
-    steam_density: f32,           // 4 bytes (offset 124) - total 128
-    island1_center: [f32; 3],     // 12 bytes (offset 128)
-    island_radius: f32,           // 4 bytes (offset 140) - total 144
-    island2_center: [f32; 3],     // 12 bytes (offset 144)
-    lava_y: f32,                  // 4 bytes (offset 156) - total 160
-    steam_height: f32,            // 4 bytes (offset 160)
-    wind_time: f32,               // 4 bytes (offset 164)
-    wind_strength: f32,           // 4 bytes (offset 168)
-    steam_edge_softness: f32,     // 4 bytes (offset 172) - total 176
+    steam_color: [f32; 3],    // 12 bytes (offset 112)
+    steam_density: f32,       // 4 bytes (offset 124) - total 128
+    island1_center: [f32; 3], // 12 bytes (offset 128)
+    island_radius: f32,       // 4 bytes (offset 140) - total 144
+    island2_center: [f32; 3], // 12 bytes (offset 144)
+    lava_y: f32,              // 4 bytes (offset 156) - total 160
+    steam_height: f32,        // 4 bytes (offset 160)
+    wind_time: f32,           // 4 bytes (offset 164)
+    wind_strength: f32,       // 4 bytes (offset 168)
+    steam_edge_softness: f32, // 4 bytes (offset 172) - total 176
 }
 
 // Verify struct size at compile time
@@ -449,22 +449,31 @@ impl FogPostPass {
         let inv_view_proj = view_proj.inverse();
 
         // Steam defaults (zeroed = disabled)
-        let (steam_color, steam_density, island1_center, island_radius, island2_center, lava_y, steam_height, wind_strength, steam_edge_softness) =
-            if let Some(ref s) = self.steam_config {
-                (
-                    s.steam_color.to_array(),
-                    s.steam_density,
-                    s.island1_center.to_array(),
-                    s.island_radius,
-                    s.island2_center.to_array(),
-                    s.lava_y,
-                    s.steam_height,
-                    s.wind_strength,
-                    s.steam_edge_softness,
-                )
-            } else {
-                ([0.0; 3], 0.0, [0.0; 3], 0.0, [0.0; 3], 0.0, 0.0, 0.0, 0.0)
-            };
+        let (
+            steam_color,
+            steam_density,
+            island1_center,
+            island_radius,
+            island2_center,
+            lava_y,
+            steam_height,
+            wind_strength,
+            steam_edge_softness,
+        ) = if let Some(ref s) = self.steam_config {
+            (
+                s.steam_color.to_array(),
+                s.steam_density,
+                s.island1_center.to_array(),
+                s.island_radius,
+                s.island2_center.to_array(),
+                s.lava_y,
+                s.steam_height,
+                s.wind_strength,
+                s.steam_edge_softness,
+            )
+        } else {
+            ([0.0; 3], 0.0, [0.0; 3], 0.0, [0.0; 3], 0.0, 0.0, 0.0, 0.0)
+        };
 
         let uniforms = FogUniforms {
             fog_color: self.config.fog_color.to_array(),
@@ -616,18 +625,17 @@ fn perm_table() -> [u8; 512] {
     const P: [u8; 256] = [
         151, 160, 137, 91, 90, 15, 131, 13, 201, 95, 96, 53, 194, 233, 7, 225, 140, 36, 103, 30,
         69, 142, 8, 99, 37, 240, 21, 10, 23, 190, 6, 148, 247, 120, 234, 75, 0, 26, 197, 62, 94,
-        252, 219, 203, 117, 35, 11, 32, 57, 177, 33, 88, 237, 149, 56, 87, 174, 20, 125, 136,
-        171, 168, 68, 175, 74, 165, 71, 134, 139, 48, 27, 166, 77, 146, 158, 231, 83, 111, 229,
-        122, 60, 211, 133, 230, 220, 105, 92, 41, 55, 46, 245, 40, 244, 102, 143, 54, 65, 25, 63,
-        161, 1, 216, 80, 73, 209, 76, 132, 187, 208, 89, 18, 169, 200, 196, 135, 130, 116, 188,
-        159, 86, 164, 100, 109, 198, 173, 186, 3, 64, 52, 217, 226, 250, 124, 123, 5, 202, 38,
-        147, 118, 126, 255, 82, 85, 212, 207, 206, 59, 227, 47, 16, 58, 17, 182, 189, 28, 42,
-        223, 183, 170, 213, 119, 248, 152, 2, 44, 154, 163, 70, 221, 153, 101, 155, 167, 43, 172,
-        9, 129, 22, 39, 253, 19, 98, 108, 110, 79, 113, 224, 232, 178, 185, 112, 104, 218, 246,
-        97, 228, 251, 34, 242, 193, 238, 210, 144, 12, 191, 179, 162, 241, 81, 51, 145, 235, 249,
-        14, 239, 107, 49, 192, 214, 31, 181, 199, 106, 157, 184, 84, 204, 176, 115, 121, 50, 45,
-        127, 4, 150, 254, 138, 236, 205, 93, 222, 114, 67, 29, 24, 72, 243, 141, 128, 195, 78,
-        66, 215, 61, 156, 180,
+        252, 219, 203, 117, 35, 11, 32, 57, 177, 33, 88, 237, 149, 56, 87, 174, 20, 125, 136, 171,
+        168, 68, 175, 74, 165, 71, 134, 139, 48, 27, 166, 77, 146, 158, 231, 83, 111, 229, 122, 60,
+        211, 133, 230, 220, 105, 92, 41, 55, 46, 245, 40, 244, 102, 143, 54, 65, 25, 63, 161, 1,
+        216, 80, 73, 209, 76, 132, 187, 208, 89, 18, 169, 200, 196, 135, 130, 116, 188, 159, 86,
+        164, 100, 109, 198, 173, 186, 3, 64, 52, 217, 226, 250, 124, 123, 5, 202, 38, 147, 118,
+        126, 255, 82, 85, 212, 207, 206, 59, 227, 47, 16, 58, 17, 182, 189, 28, 42, 223, 183, 170,
+        213, 119, 248, 152, 2, 44, 154, 163, 70, 221, 153, 101, 155, 167, 43, 172, 9, 129, 22, 39,
+        253, 19, 98, 108, 110, 79, 113, 224, 232, 178, 185, 112, 104, 218, 246, 97, 228, 251, 34,
+        242, 193, 238, 210, 144, 12, 191, 179, 162, 241, 81, 51, 145, 235, 249, 14, 239, 107, 49,
+        192, 214, 31, 181, 199, 106, 157, 184, 84, 204, 176, 115, 121, 50, 45, 127, 4, 150, 254,
+        138, 236, 205, 93, 222, 114, 67, 29, 24, 72, 243, 141, 128, 195, 78, 66, 215, 61, 156, 180,
     ];
     let mut perm = [0u8; 512];
     for i in 0..256 {
@@ -667,11 +675,7 @@ fn tileable_perlin_3d(x: f32, y: f32, z: f32, period: f32, perm: &[u8; 512]) -> 
     let bbb = perm[perm[perm[xi1] as usize + yi1] as usize + zi1];
 
     let x1 = lerp(
-        lerp(
-            grad3d(aaa, xf, yf, zf),
-            grad3d(baa, xf - 1.0, yf, zf),
-            u,
-        ),
+        lerp(grad3d(aaa, xf, yf, zf), grad3d(baa, xf - 1.0, yf, zf), u),
         lerp(
             grad3d(aba, xf, yf - 1.0, zf),
             grad3d(bba, xf - 1.0, yf - 1.0, zf),
