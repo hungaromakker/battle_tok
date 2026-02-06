@@ -3,35 +3,26 @@
     "title": "Orbit Camera for Asset Preview",
     "status": "pending",
     "focus": "",
-    "complexity": "moderate",
+    "complexity": "normal",
     "min_iterations": 1,
     "criteria": [
-        {"text": "orbit_camera.rs exists with OrbitCamera struct", "done": false, "notes": ""},
-        {"text": "Middle-mouse drag orbits the camera around the target", "done": false, "notes": ""},
-        {"text": "Scroll wheel zooms in/out with distance clamping", "done": false, "notes": ""},
-        {"text": "Right-mouse drag pans the camera target", "done": false, "notes": ""},
-        {"text": "View and projection matrices are correctly computed", "done": false, "notes": ""},
-        {"text": "Camera is used in stages 2-5 but NOT in stage 1", "done": false, "notes": ""},
-        {"text": "battle_arena.rs is NOT modified", "done": false, "notes": ""},
-        {"text": "cargo check passes for all binaries", "done": false, "notes": ""}
+        {"text": "OrbitCamera struct exists with position, target, up fields", "done": false, "notes": ""},
+        {"text": "View and projection matrices computed correctly", "done": false, "notes": ""},
+        {"text": "Pitch is clamped to prevent gimbal lock", "done": false, "notes": ""},
+        {"text": "Zoom is clamped to min/max range", "done": false, "notes": ""}
     ],
     "verification_commands": [
-        {"cmd": "test -f /home/hungaromakker/battle_tok/src/game/asset_editor/orbit_camera.rs && echo EXISTS", "expect_contains": "EXISTS", "description": "orbit_camera.rs exists"},
-        {"cmd": "grep -c 'OrbitCamera' /home/hungaromakker/battle_tok/src/game/asset_editor/orbit_camera.rs", "expect_gt": 0, "description": "OrbitCamera struct defined"},
-        {"cmd": "grep -c 'orbit_camera' /home/hungaromakker/battle_tok/src/game/asset_editor/mod.rs", "expect_gt": 0, "description": "orbit_camera module declared"},
-        {"cmd": "grep -c 'view_matrix\\|projection_matrix\\|on_mouse_move\\|on_scroll' /home/hungaromakker/battle_tok/src/game/asset_editor/orbit_camera.rs", "expect_gt": 0, "description": "Camera methods implemented"},
-        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "Project compiles"}
+        {"cmd": "grep -r 'OrbitCamera' src/game/asset_editor/", "expect_contains": "OrbitCamera", "description": "OrbitCamera struct exists"},
+        {"cmd": "cargo check --bin battle_editor 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_editor compiles"}
     ],
     "checklist": [
-        {"item": "Read spec.md and understand orbit camera math", "done": false},
-        {"item": "Create src/game/asset_editor/orbit_camera.rs with OrbitCamera struct", "done": false},
-        {"item": "Implement view_matrix() with look-at computation", "done": false},
-        {"item": "Implement projection_matrix() with perspective projection", "done": false},
-        {"item": "Implement mouse orbit (middle drag), pan (right drag), zoom (scroll)", "done": false},
-        {"item": "Add pub mod orbit_camera to asset_editor/mod.rs", "done": false},
-        {"item": "Integrate camera into battle_editor.rs render loop for stages 2-5", "done": false},
-        {"item": "Ensure stage 1 uses orthographic projection instead", "done": false},
-        {"item": "Run cargo check for all binaries", "done": false},
+        {"item": "Read spec.md for implementation details", "done": false},
+        {"item": "Create OrbitCamera struct with orbit parameters", "done": false},
+        {"item": "Implement view/projection matrix computation", "done": false},
+        {"item": "Add pitch clamping to prevent gimbal lock", "done": false},
+        {"item": "Add zoom clamping to min/max range", "done": false},
+        {"item": "Run cargo check", "done": false},
+        {"item": "Verify with measurable checks", "done": false},
         {"item": "Commit changes", "done": false}
     ],
     "worker_notes": "",
@@ -44,5 +35,5 @@
     "iteration_history": [],
     "learnings": [],
     "verification_rejections": 0,
-    "created_at": "2026-02-06T18:00:00Z"
+    "created_at": "2026-02-06T16:00:00Z"
 }

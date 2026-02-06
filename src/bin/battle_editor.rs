@@ -11,6 +11,11 @@
 //! - 3: Sculpt stage
 //! - 4: Color stage
 //! - 5: Save stage
+//! - Middle mouse drag: Orbit camera (stages 2-5)
+//! - Right mouse drag: Pan camera (stages 2-5)
+//! - Scroll wheel: Zoom camera (stages 2-5)
+//! - Ctrl+Z: Undo
+//! - Ctrl+Y: Redo
 //! - ESC: Exit
 
 use std::sync::Arc;
@@ -18,11 +23,12 @@ use std::time::Instant;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, WindowEvent};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowAttributes, WindowId};
 
+use battle_tok_engine::game::asset_editor::orbit_camera::OrbitMouseButton;
 use battle_tok_engine::game::asset_editor::AssetEditor;
 
 // ============================================================================
@@ -57,6 +63,10 @@ struct BattleEditorApp {
     gpu: Option<EditorGpu>,
     editor: AssetEditor,
 
+    // Input state
+    /// Whether Ctrl key is currently held (for keyboard shortcuts)
+    ctrl_held: bool,
+
     // Timing
     start_time: Instant,
     last_frame: Instant,
@@ -71,6 +81,7 @@ impl BattleEditorApp {
             window: None,
             gpu: None,
             editor: AssetEditor::new(),
+            ctrl_held: false,
             start_time: Instant::now(),
             last_frame: Instant::now(),
             frame_count: 0,
@@ -157,7 +168,32 @@ impl BattleEditorApp {
 
     /// Handle keyboard input.
     fn handle_key(&mut self, key: KeyCode, pressed: bool) {
+        // Track Ctrl modifier state (pressed or released)
+        match key {
+            KeyCode::ControlLeft | KeyCode::ControlRight => {
+                self.ctrl_held = pressed;
+                return;
+            }
+            _ => {}
+        }
+
         if !pressed {
+            return;
+        }
+
+        // Ctrl+Z => Undo
+        if key == KeyCode::KeyZ && self.ctrl_held {
+            if let Some(cmd) = self.editor.undo_stack.undo() {
+                println!("Undo: {:?}", std::mem::discriminant(cmd));
+            }
+            return;
+        }
+
+        // Ctrl+Y => Redo
+        if key == KeyCode::KeyY && self.ctrl_held {
+            if let Some(cmd) = self.editor.undo_stack.redo() {
+                println!("Redo: {:?}", std::mem::discriminant(cmd));
+            }
             return;
         }
 
@@ -273,10 +309,46 @@ impl ApplicationHandler for BattleEditorApp {
                 }
             }
 
+            // -- Mouse input: forward to orbit camera for stages 2-5 --
+            WindowEvent::MouseInput { button, state, .. } => {
+                if self.editor.uses_orbit_camera() {
+                    let orbit_btn = match button {
+                        MouseButton::Middle => Some(OrbitMouseButton::Middle),
+                        MouseButton::Right => Some(OrbitMouseButton::Right),
+                        _ => None,
+                    };
+                    if let Some(btn) = orbit_btn {
+                        self.editor
+                            .camera
+                            .handle_mouse_drag(btn, state == ElementState::Pressed);
+                    }
+                }
+            }
+
+            WindowEvent::CursorMoved { position, .. } => {
+                if self.editor.uses_orbit_camera() {
+                    self.editor
+                        .camera
+                        .handle_mouse_move(position.x as f32, position.y as f32);
+                }
+            }
+
+            WindowEvent::MouseWheel { delta, .. } => {
+                if self.editor.uses_orbit_camera() {
+                    let scroll = match delta {
+                        MouseScrollDelta::LineDelta(_, y) => y,
+                        MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 100.0,
+                    };
+                    self.editor.camera.handle_scroll(scroll);
+                }
+            }
+
             WindowEvent::Resized(new_size) => {
                 if let Some(ref mut gpu) = self.gpu {
                     gpu.resize(new_size);
                 }
+                // Update orbit camera aspect ratio
+                self.editor.camera.resize(new_size.width, new_size.height);
             }
 
             WindowEvent::RedrawRequested => {
@@ -325,6 +397,11 @@ fn main() {
     println!();
     println!("Controls:");
     println!("  1-5: Switch editor stage");
+    println!("  Middle mouse drag: Orbit (stages 2-5)");
+    println!("  Right mouse drag: Pan (stages 2-5)");
+    println!("  Scroll wheel: Zoom (stages 2-5)");
+    println!("  Ctrl+Z: Undo");
+    println!("  Ctrl+Y: Redo");
     println!("  ESC: Exit");
     println!();
 

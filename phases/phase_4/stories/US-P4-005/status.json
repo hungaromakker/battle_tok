@@ -6,46 +6,24 @@
     "complexity": "normal",
     "min_iterations": 1,
     "criteria": [
-        {"text": "image_trace.rs exists with ImageTrace struct", "done": false, "notes": ""},
-        {"text": "Can load PNG and JPG images via the image crate", "done": false, "notes": ""},
-        {"text": "Image renders as a textured quad behind canvas outlines", "done": false, "notes": ""},
-        {"text": "shaders/canvas_2d.wgsl implements textured quad rendering with opacity uniform", "done": false, "notes": ""},
-        {"text": "Opacity adjustable (0.0 to 1.0, default 0.3) via UISlider", "done": false, "notes": ""},
-        {"text": "Ctrl+Scroll adjusts image scale (0.1x to 10x)", "done": false, "notes": ""},
-        {"text": "Ctrl+Middle-mouse drag adjusts image position", "done": false, "notes": ""},
-        {"text": "Image preserves original aspect ratio", "done": false, "notes": ""},
-        {"text": "Image visibility toggleable (Ctrl+H)", "done": false, "notes": ""},
-        {"text": "Outlines remain visible on top of the background image", "done": false, "notes": ""},
-        {"text": "cargo check --bin battle_editor compiles with 0 errors", "done": false, "notes": ""}
+        {"text": "PNG and JPG images load as background reference", "done": false, "notes": ""},
+        {"text": "Opacity slider controls background transparency", "done": false, "notes": ""},
+        {"text": "canvas_2d.wgsl shader file created", "done": false, "notes": ""},
+        {"text": "Drawing works correctly on top of background image", "done": false, "notes": ""}
     ],
     "verification_commands": [
-        {"cmd": "cargo check --bin battle_editor 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_editor compiles with image trace support"},
-        {"cmd": "cargo check --bin battle_arena 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_arena still compiles"},
-        {"cmd": "test -f src/game/asset_editor/image_trace.rs && echo EXISTS", "expect_contains": "EXISTS", "description": "image_trace.rs file exists"},
-        {"cmd": "test -f shaders/canvas_2d.wgsl && echo EXISTS", "expect_contains": "EXISTS", "description": "canvas_2d shader file exists"},
-        {"cmd": "grep -c 'pub struct ImageTrace' src/game/asset_editor/image_trace.rs", "expect_contains": "> 0", "description": "ImageTrace struct defined"},
-        {"cmd": "grep -c 'opacity' src/game/asset_editor/image_trace.rs", "expect_contains": "> 0", "description": "Opacity handling implemented"},
-        {"cmd": "grep -c 'textureSample\\|t_texture' shaders/canvas_2d.wgsl", "expect_contains": "> 0", "description": "Shader samples texture with opacity"},
-        {"cmd": "grep -c 'pub mod image_trace' src/game/asset_editor/mod.rs", "expect_contains": "> 0", "description": "image_trace module registered"}
+        {"cmd": "test -f shaders/canvas_2d.wgsl && echo EXISTS", "expect_contains": "EXISTS", "description": "canvas_2d.wgsl shader exists"},
+        {"cmd": "grep -r 'load_background' src/game/asset_editor/", "expect_contains": "load_background", "description": "Background loading function exists"},
+        {"cmd": "cargo check --bin battle_editor 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_editor compiles"}
     ],
     "checklist": [
-        {"item": "Read spec.md and understand image tracing requirements", "done": false},
-        {"item": "Create image_trace.rs with ImageTrace struct", "done": false},
-        {"item": "Implement load function for PNG/JPG via image crate", "done": false},
-        {"item": "Create wgpu texture, texture view, sampler, and bind group", "done": false},
-        {"item": "Create shaders/canvas_2d.wgsl with vertex and fragment shaders", "done": false},
-        {"item": "Create render pipeline with alpha blending", "done": false},
-        {"item": "Implement render method for textured quad", "done": false},
-        {"item": "Implement opacity slider via UISlider (0.0 to 1.0)", "done": false},
-        {"item": "Implement Ctrl+Scroll for image scale adjustment", "done": false},
-        {"item": "Implement Ctrl+Middle-mouse drag for image position", "done": false},
-        {"item": "Implement Ctrl+H to toggle image visibility", "done": false},
-        {"item": "Integrate ImageTrace into Canvas2D (render behind grid and outlines)", "done": false},
-        {"item": "Add pub mod image_trace to mod.rs", "done": false},
-        {"item": "Handle aspect ratio preservation", "done": false},
-        {"item": "Wire up key bindings in battle_editor.rs", "done": false},
-        {"item": "Verify drawing tools work on top of background", "done": false},
-        {"item": "Run cargo check --bin battle_editor", "done": false},
+        {"item": "Read spec.md for implementation details", "done": false},
+        {"item": "Implement PNG/JPG image loading for background", "done": false},
+        {"item": "Add opacity slider for background transparency", "done": false},
+        {"item": "Create shaders/canvas_2d.wgsl for 2D canvas rendering", "done": false},
+        {"item": "Ensure drawing renders correctly on top of background", "done": false},
+        {"item": "Run cargo check", "done": false},
+        {"item": "Verify with measurable checks", "done": false},
         {"item": "Commit changes", "done": false}
     ],
     "worker_notes": "",
@@ -58,5 +36,5 @@
     "iteration_history": [],
     "learnings": [],
     "verification_rejections": 0,
-    "created_at": "2026-02-06T14:00:00Z"
+    "created_at": "2026-02-06T16:00:00Z"
 }

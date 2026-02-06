@@ -4,7 +4,17 @@
 //! The editor allows creating game assets through a multi-stage pipeline:
 //! Draw2D -> Extrude -> Sculpt -> Color -> Save.
 
+pub mod canvas_2d;
+pub mod orbit_camera;
+pub mod undo;
+pub mod variety;
+
 use glam::Vec3;
+
+use canvas_2d::Canvas2D;
+use crate::game::types::Vertex;
+use orbit_camera::OrbitCamera;
+use undo::UndoStack;
 
 // ============================================================================
 // ENUMS
@@ -165,6 +175,12 @@ pub struct AssetEditor {
     pub draft: AssetDraft,
     /// Whether the editor is actively editing (vs idle/menu)
     pub active: bool,
+    /// Undo/redo command stack
+    pub undo_stack: UndoStack,
+    /// Orbit camera for 3D preview in stages 2-5
+    pub camera: OrbitCamera,
+    /// 2D drawing canvas for the Draw2D stage (Stage 1)
+    pub canvas: Canvas2D,
 }
 
 impl Default for AssetEditor {
@@ -180,6 +196,9 @@ impl AssetEditor {
             stage: EditorStage::Draw2D,
             draft: AssetDraft::default(),
             active: true,
+            undo_stack: UndoStack::new(),
+            camera: OrbitCamera::new(1280.0 / 800.0),
+            canvas: Canvas2D::new(),
         }
     }
 
@@ -208,11 +227,17 @@ impl AssetEditor {
     }
 
     /// Render the editor UI and viewport.
-    /// Currently a stub -- rendering is handled by the binary's wgpu loop.
-    pub fn render(&self) {
-        // Stub: will be filled in by subsequent stories
-        // The binary handles actual wgpu rendering; this will provide
-        // render data (meshes, UI elements) to the binary.
+    /// Returns vertex/index data for the current stage.
+    /// For Draw2D stage, delegates to the Canvas2D renderer.
+    pub fn render_stage(&self, vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>) {
+        match self.stage {
+            EditorStage::Draw2D => {
+                self.canvas.render(vertices, indices);
+            }
+            _ => {
+                // Other stages will be filled in by subsequent stories
+            }
+        }
     }
 
     /// Get the window title string showing the current stage.
@@ -224,11 +249,22 @@ impl AssetEditor {
         )
     }
 
+    /// Returns `true` if the orbit camera should be active for the current stage.
+    ///
+    /// The orbit camera is used in stages 2-5 (Extrude, Sculpt, Color, Save)
+    /// for 3D preview. Stage 1 (Draw2D) uses an orthographic 2D canvas.
+    pub fn uses_orbit_camera(&self) -> bool {
+        self.stage != EditorStage::Draw2D
+    }
+
     /// Reset the editor to start a new asset.
     pub fn reset(&mut self) {
         self.draft = AssetDraft::default();
         self.stage = EditorStage::Draw2D;
         self.active = true;
+        self.undo_stack.clear();
+        self.camera.reset();
+        self.canvas = Canvas2D::new();
     }
 }
 

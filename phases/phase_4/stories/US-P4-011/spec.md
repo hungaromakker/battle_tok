@@ -4,36 +4,30 @@
 Create `src/game/asset_editor/asset_file.rs` implementing the `.btasset` binary file format for persisting editor assets to disk. The format uses a fixed-size header with magic bytes, version, vertex/index counts, and offsets to metadata and variety parameter sections. Vertex and index data is written as raw bytes (via `bytemuck`), while metadata and variety parameters are appended as JSON. The asset editor is a **separate binary** (`battle_editor`); `battle_arena.rs` is never modified.
 
 ## The Core Concept / Why This Matters
-A custom binary format is essential for fast, compact asset storage. Unlike generic formats (OBJ, glTF), `.btasset` stores exactly what the engine needs — vertex positions, normals, colors, indices, metadata, and variety parameters — in a single file with zero parsing overhead for the geometry data. The fixed header enables quick validation and random access to sections. JSON metadata sections keep human-readable info (name, category, tags) easily inspectable while the bulk geometry remains compact binary. Round-trip fidelity is critical: what you save must be exactly what you load.
+A custom binary format is essential for fast, compact asset storage. Unlike generic formats (OBJ, glTF), `.btasset` stores exactly what the engine needs in a single file with zero parsing overhead for geometry data. The fixed header enables quick validation and random access to sections. JSON metadata sections keep human-readable info easily inspectable while bulk geometry remains compact binary. Round-trip fidelity is critical: what you save must be exactly what you load.
 
 ## Goal
 Create `src/game/asset_editor/asset_file.rs` with `save_btasset()` and `load_btasset()` functions implementing a compact binary format with lossless round-trip for mesh data, metadata, and variety parameters.
 
 ## Files to Create/Modify
-- **Create** `src/game/asset_editor/asset_file.rs` — `BtassetHeader`, `AssetMetadata`, `LoadedAsset`, save/load functions
-- **Modify** `src/game/asset_editor/mod.rs` — Add `pub mod asset_file;`, wire Stage 5 (Save) UI to call save/load functions
+- **Create** `src/game/asset_editor/asset_file.rs` - `BtassetHeader`, `AssetMetadata`, `LoadedAsset`, save/load functions
+- **Modify** `src/game/asset_editor/mod.rs` - Add `pub mod asset_file;`, wire Stage 5 (Save) UI to call save/load functions
 
 ## Implementation Steps
 1. Define `BtassetHeader` as a `#[repr(C)]` struct deriving `bytemuck::Pod` and `bytemuck::Zeroable`:
-   ```rust
-   #[repr(C)]
-   #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-   pub struct BtassetHeader {
-       pub magic: [u8; 4],           // "BTAS"
-       pub version: u32,             // 1
-       pub vertex_count: u32,        // number of vertices
-       pub index_count: u32,         // number of indices
-       pub metadata_offset: u32,     // byte offset to JSON metadata
-       pub variety_offset: u32,      // byte offset to variety JSON
-       pub _reserved: [u8; 8],       // future use, zeroed
-   }
-   ```
-   Total header size: exactly 32 bytes.
+   - `magic: [u8; 4]` - always `b"BTAS"`
+   - `version: u32` - currently 1
+   - `vertex_count: u32` - number of vertices
+   - `index_count: u32` - number of indices
+   - `metadata_offset: u32` - byte offset to JSON metadata
+   - `variety_offset: u32` - byte offset to variety JSON
+   - `_reserved: [u8; 8]` - future use, zeroed
+   - Total header size: exactly 32 bytes
 2. Define `AssetMetadata` struct with `serde::Serialize` + `Deserialize`:
    - `name: String`, `category: String`, `tags: Vec<String>`, `created_at: String`, `vertex_count: u32`, `index_count: u32`
-3. Define `LoadedAsset` struct containing: `vertices: Vec<Vertex>`, `indices: Vec<u32>`, `metadata: AssetMetadata`, `variety_params: Option<VarietyParams>`
+3. Define `LoadedAsset` struct: `vertices: Vec<Vertex>`, `indices: Vec<u32>`, `metadata: AssetMetadata`, `variety_params: Option<VarietyParams>`
 4. Implement `save_btasset(path, vertices, indices, metadata, variety_params) -> Result<(), AssetFileError>`:
-   - Compute offsets: header (32 bytes) → vertex data (40 bytes × count) → index data (4 bytes × count) → metadata JSON → variety JSON
+   - Compute offsets: header (32 bytes) then vertex data (40 bytes per vertex) then index data (4 bytes per index) then metadata JSON then variety JSON
    - Write header with magic `b"BTAS"`, version 1, counts, offsets
    - Write vertex data as raw bytes via `bytemuck::cast_slice()`
    - Write index data as raw bytes via `bytemuck::cast_slice()`
@@ -45,18 +39,29 @@ Create `src/game/asset_editor/asset_file.rs` with `save_btasset()` and `load_bta
    - Read header via `bytemuck::from_bytes()`
    - Extract vertex slice and cast via `bytemuck::cast_slice()`
    - Extract index slice and cast via `bytemuck::cast_slice()`
-   - Parse metadata JSON from `metadata_offset` to `variety_offset`
-   - Parse variety JSON from `variety_offset` to end of file (if present)
+   - Parse metadata JSON from metadata_offset to variety_offset
+   - Parse variety JSON from variety_offset to end of file (if present)
 6. Define `AssetFileError` enum covering: `InvalidMagic`, `UnsupportedVersion`, `FileTooShort`, `IoError(std::io::Error)`, `JsonError(serde_json::Error)`
-7. File location convention: `assets/world/<category>/<name>.btasset` (e.g., `assets/world/tree/oak_tree.btasset`)
-8. Wire Stage 5 UI in `mod.rs`: when in Stage 5, show save dialog fields (name, category, tags). On save, call `save_btasset()` with current mesh data. On load, call `load_btasset()` and replace current editor mesh.
+7. File location convention: `assets/world/<category>/<name>.btasset`
+8. Wire Stage 5 UI in `mod.rs`: when in Stage 5, show save dialog fields (name, category, tags). On save action, call `save_btasset()` with current mesh data. On load action, call `load_btasset()` and replace current editor mesh.
 
 ## Code Patterns
 ```rust
 use bytemuck;
 use serde::{Serialize, Deserialize};
 use std::io::Write;
-use std::fs;
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct BtassetHeader {
+    pub magic: [u8; 4],
+    pub version: u32,
+    pub vertex_count: u32,
+    pub index_count: u32,
+    pub metadata_offset: u32,
+    pub variety_offset: u32,
+    pub _reserved: [u8; 8],
+}
 
 pub fn save_btasset(
     path: &std::path::Path,
@@ -83,7 +88,7 @@ pub fn save_btasset(
         _reserved: [0u8; 8],
     };
 
-    let mut file = fs::File::create(path)?;
+    let mut file = std::fs::File::create(path)?;
     file.write_all(bytemuck::bytes_of(&header))?;
     file.write_all(vertex_bytes)?;
     file.write_all(index_bytes)?;
@@ -98,7 +103,7 @@ pub fn save_btasset(
 ## Acceptance Criteria
 - [ ] `asset_file.rs` exists with `BtassetHeader`, `AssetMetadata`, `LoadedAsset` types
 - [ ] `BtassetHeader` is exactly 32 bytes with `b"BTAS"` magic, `#[repr(C)]`, and derives `bytemuck::Pod`
-- [ ] `save_btasset()` writes header + vertex data + index data + metadata JSON + variety JSON
+- [ ] `save_btasset()` writes header then vertex data then index data then metadata JSON then variety JSON
 - [ ] `load_btasset()` reads and parses all sections correctly
 - [ ] Vertex data is 40 bytes per vertex: position `[f32;3]` + normal `[f32;3]` + color `[f32;4]`
 - [ ] Index data is `u32` array written as raw bytes
@@ -130,10 +135,10 @@ pub fn save_btasset(
   `description`: `asset_file module registered in mod.rs`
 
 ## Success Looks Like
-The artist finishes painting a tree asset and switches to Stage 5 (Save). They type "Oak Tree" as the name, select "tree" category, add tags "deciduous" and "forest". They click Save and a file `assets/world/tree/oak_tree.btasset` appears on disk. They close the editor, reopen it, click Load, select the file, and the exact same tree appears — every vertex position, normal, and color is identical. The file is compact (a 500-vertex tree is about 20KB + metadata). Loading is instantaneous.
+The artist finishes painting a tree asset and switches to Stage 5 (Save). They type "Oak Tree" as the name, select "tree" category, add tags "deciduous" and "forest". They click Save and a file `assets/world/tree/oak_tree.btasset` appears on disk. They close the editor, reopen it, click Load, select the file, and the exact same tree appears -- every vertex position, normal, and color is identical. The file is compact (a 500-vertex tree is about 20KB + metadata). Loading is instantaneous.
 
 ## Dependencies
-- Depends on: US-P4-006 (needs a complete mesh with vertex data to save)
+- Depends on: US-P4-009 (needs a complete mesh with painted vertex colors to save)
 
 ## Complexity
 - Complexity: normal
