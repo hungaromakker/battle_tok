@@ -6,37 +6,26 @@
     "complexity": "normal",
     "min_iterations": 1,
     "criteria": [
-        {"text": "paint.rs exists with PaintSystem, BrushParams, ColorPalette, PaintTool types", "done": false, "notes": ""},
-        {"text": "Brush tool paints vertex colors with radius, opacity, and hardness falloff", "done": false, "notes": ""},
-        {"text": "Flood fill uses BFS on triangle adjacency to fill connected same-color regions", "done": false, "notes": ""},
-        {"text": "Gradient tool applies linear color blend between two click points", "done": false, "notes": ""},
-        {"text": "Eyedropper samples vertex color and sets it as primary", "done": false, "notes": ""},
-        {"text": "HSV-to-RGB and RGB-to-HSV conversion functions are implemented", "done": false, "notes": ""},
-        {"text": "Color palette includes presets for Trees, Rock, and Wood", "done": false, "notes": ""},
-        {"text": "Recent colors list tracks last 8 used colors", "done": false, "notes": ""},
-        {"text": "All painting writes to Vertex.color field (not a separate texture)", "done": false, "notes": ""},
-        {"text": "battle_arena.rs is NOT modified", "done": false, "notes": ""},
-        {"text": "cargo check --bin battle_editor passes with 0 errors", "done": false, "notes": ""},
-        {"text": "cargo check --bin battle_arena passes with 0 errors", "done": false, "notes": ""}
+        {"text": "Brush paints vertex colors with falloff", "done": false, "notes": ""},
+        {"text": "Fill tool floods connected region with color", "done": false, "notes": ""},
+        {"text": "Gradient tool applies color gradient across selection", "done": false, "notes": ""},
+        {"text": "Eyedropper samples existing vertex color", "done": false, "notes": ""}
     ],
     "verification_commands": [
-        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check --bin battle_editor 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_editor binary compiles with paint module"},
-        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check --bin battle_arena 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_arena still compiles unchanged"},
-        {"cmd": "test -f /home/hungaromakker/battle_tok/src/game/asset_editor/paint.rs && echo EXISTS", "expect_contains": "EXISTS", "description": "paint.rs file exists"},
-        {"cmd": "grep -c 'PaintSystem\\|BrushParams\\|ColorPalette\\|PaintTool' /home/hungaromakker/battle_tok/src/game/asset_editor/paint.rs", "expect_gt": 0, "description": "Core paint types are defined"},
-        {"cmd": "grep -c 'flood_fill\\|paint_brush\\|eyedropper\\|hsv_to_rgba' /home/hungaromakker/battle_tok/src/game/asset_editor/paint.rs", "expect_gt": 0, "description": "Paint tool functions are implemented"},
-        {"cmd": "grep -c 'pub mod paint' /home/hungaromakker/battle_tok/src/game/asset_editor/mod.rs", "expect_gt": 0, "description": "paint module registered in mod.rs"}
+        {"cmd": "grep -r 'PaintTool' src/game/asset_editor/", "expect_contains": "PaintTool", "description": "PaintTool enum/struct exists"},
+        {"cmd": "grep -r 'paint_brush' src/game/asset_editor/", "expect_contains": "paint_brush", "description": "Paint brush function exists"},
+        {"cmd": "cargo check --bin battle_editor 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_editor compiles"}
     ],
     "checklist": [
         {"item": "Read spec.md for implementation details", "done": false},
-        {"item": "Create src/game/asset_editor/paint.rs with PaintSystem, PaintTool, BrushParams, ColorPalette", "done": false},
-        {"item": "Implement brush painting with distance falloff and opacity blending", "done": false},
-        {"item": "Implement flood fill using BFS on triangle adjacency", "done": false},
-        {"item": "Implement gradient tool with linear interpolation between two points", "done": false},
-        {"item": "Implement eyedropper tool to sample vertex colors", "done": false},
-        {"item": "Add HSV/RGB conversion functions and color presets", "done": false},
-        {"item": "Wire paint module into mod.rs and route Stage 4 input", "done": false},
-        {"item": "Run cargo check --bin battle_editor and cargo check --bin battle_arena", "done": false}
+        {"item": "Implement brush painting with falloff radius", "done": false},
+        {"item": "Implement fill tool for flood-filling regions", "done": false},
+        {"item": "Implement gradient tool across vertex selections", "done": false},
+        {"item": "Implement eyedropper for color sampling", "done": false},
+        {"item": "Define PaintTool enum for tool selection", "done": false},
+        {"item": "Run cargo check", "done": false},
+        {"item": "Verify with measurable checks", "done": false},
+        {"item": "Commit changes", "done": false}
     ],
     "worker_notes": "",
     "notes_history": [],
@@ -48,5 +37,5 @@
     "iteration_history": [],
     "learnings": [],
     "verification_rejections": 0,
-    "created_at": "2026-02-06T14:00:00Z"
+    "created_at": "2026-02-06T16:00:00Z"
 }

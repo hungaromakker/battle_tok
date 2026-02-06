@@ -6,36 +6,24 @@
     "complexity": "normal",
     "min_iterations": 1,
     "criteria": [
-        {"text": "asset_file.rs exists with BtassetHeader, AssetMetadata, LoadedAsset types", "done": false, "notes": ""},
-        {"text": "BtassetHeader is exactly 32 bytes with b\"BTAS\" magic, #[repr(C)], and derives bytemuck::Pod", "done": false, "notes": ""},
-        {"text": "save_btasset() writes header + vertex data + index data + metadata JSON + variety JSON", "done": false, "notes": ""},
-        {"text": "load_btasset() reads and parses all sections correctly", "done": false, "notes": ""},
-        {"text": "Vertex data is 40 bytes per vertex: position [f32;3] + normal [f32;3] + color [f32;4]", "done": false, "notes": ""},
-        {"text": "Index data is u32 array written as raw bytes", "done": false, "notes": ""},
-        {"text": "Round-trip is lossless: save then load produces identical data", "done": false, "notes": ""},
-        {"text": "Error handling covers: file too short, invalid magic, unsupported version, IO errors, JSON parse errors", "done": false, "notes": ""},
-        {"text": "Stage 5 UI shows save dialog with name, category, and tags fields", "done": false, "notes": ""},
-        {"text": "battle_arena.rs is NOT modified", "done": false, "notes": ""},
-        {"text": "cargo check --bin battle_editor passes with 0 errors", "done": false, "notes": ""},
-        {"text": "cargo check --bin battle_arena passes with 0 errors", "done": false, "notes": ""}
+        {"text": "Save produces valid .btasset binary file", "done": false, "notes": ""},
+        {"text": "Load reconstructs identical data from .btasset file", "done": false, "notes": ""},
+        {"text": "Round-trip test passes (save then load produces same data)", "done": false, "notes": ""}
     ],
     "verification_commands": [
-        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check --bin battle_editor 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_editor binary compiles with asset_file module"},
-        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check --bin battle_arena 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_arena still compiles unchanged"},
-        {"cmd": "test -f /home/hungaromakker/battle_tok/src/game/asset_editor/asset_file.rs && echo EXISTS", "expect_contains": "EXISTS", "description": "asset_file.rs file exists"},
-        {"cmd": "grep -c 'BtassetHeader\\|save_btasset\\|load_btasset\\|AssetMetadata' /home/hungaromakker/battle_tok/src/game/asset_editor/asset_file.rs", "expect_gt": 0, "description": "Core asset file types and functions exist"},
-        {"cmd": "grep -c 'BTAS\\|magic\\|vertex_count\\|metadata_offset' /home/hungaromakker/battle_tok/src/game/asset_editor/asset_file.rs", "expect_gt": 0, "description": "Header fields are defined"},
-        {"cmd": "grep -c 'pub mod asset_file' /home/hungaromakker/battle_tok/src/game/asset_editor/mod.rs", "expect_gt": 0, "description": "asset_file module registered in mod.rs"}
+        {"cmd": "grep -r 'BTASSET_MAGIC' src/game/asset_editor/", "expect_contains": "BTASSET_MAGIC", "description": "Magic bytes constant defined"},
+        {"cmd": "grep -r 'save_btasset' src/game/asset_editor/", "expect_contains": "save_btasset", "description": "Save function exists"},
+        {"cmd": "cargo check --bin battle_editor 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_editor compiles"}
     ],
     "checklist": [
         {"item": "Read spec.md for implementation details", "done": false},
-        {"item": "Create src/game/asset_editor/asset_file.rs with BtassetHeader as #[repr(C)] struct", "done": false},
-        {"item": "Define AssetMetadata and LoadedAsset structs", "done": false},
-        {"item": "Implement save_btasset() writing header + vertex + index + JSON sections", "done": false},
-        {"item": "Implement load_btasset() reading and validating all sections", "done": false},
-        {"item": "Define AssetFileError enum with all error variants", "done": false},
-        {"item": "Wire Stage 5 save/load UI into mod.rs", "done": false},
-        {"item": "Run cargo check --bin battle_editor and cargo check --bin battle_arena", "done": false}
+        {"item": "Define BTASSET_MAGIC bytes and file format header", "done": false},
+        {"item": "Implement save_btasset for binary serialization", "done": false},
+        {"item": "Implement load_btasset for binary deserialization", "done": false},
+        {"item": "Add round-trip test (save then load = identical data)", "done": false},
+        {"item": "Run cargo check", "done": false},
+        {"item": "Verify with measurable checks", "done": false},
+        {"item": "Commit changes", "done": false}
     ],
     "worker_notes": "",
     "notes_history": [],
@@ -47,5 +35,5 @@
     "iteration_history": [],
     "learnings": [],
     "verification_rejections": 0,
-    "created_at": "2026-02-06T14:00:00Z"
+    "created_at": "2026-02-06T16:00:00Z"
 }

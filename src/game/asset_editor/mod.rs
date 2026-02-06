@@ -6,6 +6,7 @@
 
 pub mod canvas_2d;
 pub mod orbit_camera;
+pub mod ui_panels;
 pub mod undo;
 pub mod variety;
 

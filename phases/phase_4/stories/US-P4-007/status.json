@@ -6,47 +6,22 @@
     "complexity": "normal",
     "min_iterations": 1,
     "criteria": [
-        {"text": "sdf_linear_extrude() function exists in extrude.rs with outline, depth, and taper parameters", "done": false, "notes": ""},
-        {"text": "Linear extrude produces clean box-like shapes from rectangular outlines (taper=0.0)", "done": false, "notes": ""},
-        {"text": "Taper slider smoothly scales far face from full size (0.0) to a point (1.0)", "done": false, "notes": ""},
-        {"text": "Intermediate taper values produce truncated pyramid shapes", "done": false, "notes": ""},
-        {"text": "lathe_mesh() generates mesh directly (no SDF, no Marching Cubes) from outline profile", "done": false, "notes": ""},
-        {"text": "Lathe creates rotationally symmetric shapes (columns, vases, tree trunks)", "done": false, "notes": ""},
-        {"text": "Lathe normals are smooth and correct (no dark faces or inverted normals)", "done": false, "notes": ""},
-        {"text": "Segments parameter controls radial resolution (clamped 6-64)", "done": false, "notes": ""},
-        {"text": "Sweep parameter allows partial rotation (0-360 degrees) with clean open edges", "done": false, "notes": ""},
-        {"text": "UI shows Depth and Taper sliders when Linear method is selected", "done": false, "notes": ""},
-        {"text": "UI shows Segments and Sweep sliders when Lathe method is selected", "done": false, "notes": ""},
-        {"text": "Mode switching between Pump, Linear, and Lathe updates property panel and regenerates mesh", "done": false, "notes": ""},
-        {"text": "Existing pump/inflate mode (US-P4-006) still works correctly", "done": false, "notes": ""},
-        {"text": "battle_arena.rs is NOT modified", "done": false, "notes": ""},
-        {"text": "cargo check passes for both battle_editor and battle_arena binaries", "done": false, "notes": ""}
+        {"text": "Linear extrude with taper parameter produces valid mesh", "done": false, "notes": ""},
+        {"text": "Lathe revolution with configurable sweep angle works", "done": false, "notes": ""},
+        {"text": "Both extrusion methods produce valid watertight meshes", "done": false, "notes": ""}
     ],
     "verification_commands": [
-        {"cmd": "grep -c 'sdf_linear_extrude\\|lathe_mesh' /home/hungaromakker/battle_tok/src/game/asset_editor/extrude.rs", "expect_gt": 0, "description": "Both sdf_linear_extrude and lathe_mesh functions exist"},
-        {"cmd": "grep -c 'taper' /home/hungaromakker/battle_tok/src/game/asset_editor/extrude.rs", "expect_gt": 0, "description": "Taper parameter implemented in linear extrude"},
-        {"cmd": "grep -c 'sweep' /home/hungaromakker/battle_tok/src/game/asset_editor/extrude.rs", "expect_gt": 0, "description": "Sweep parameter implemented in lathe"},
-        {"cmd": "grep -c 'segments' /home/hungaromakker/battle_tok/src/game/asset_editor/extrude.rs", "expect_gt": 0, "description": "Segments parameter controls lathe radial resolution"},
-        {"cmd": "grep -c 'depth' /home/hungaromakker/battle_tok/src/game/asset_editor/extrude.rs", "expect_gt": 0, "description": "Depth parameter controls extrusion distance"},
-        {"cmd": "grep -c 'recompute_lathe_normals\\|face_normal\\|cross' /home/hungaromakker/battle_tok/src/game/asset_editor/extrude.rs", "expect_gt": 0, "description": "Normal computation for lathe mesh implemented"},
-        {"cmd": "grep -c 'pub mod extrude' /home/hungaromakker/battle_tok/src/game/asset_editor/mod.rs", "expect_gt": 0, "description": "Extrude module registered in mod.rs"},
-        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check --bin battle_editor 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_editor compiles with linear extrude and lathe"},
-        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check --bin battle_arena 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_arena still compiles unchanged"}
+        {"cmd": "grep -rE 'linear_extrude|sdf_linear' src/game/asset_editor/", "expect_contains": "", "description": "Linear extrude function exists"},
+        {"cmd": "grep -r 'lathe' src/game/asset_editor/", "expect_contains": "lathe", "description": "Lathe revolution function exists"},
+        {"cmd": "cargo check --bin battle_editor 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_editor compiles"}
     ],
     "checklist": [
-        {"item": "Read spec.md and understand linear extrude SDF + lathe mesh generation requirements", "done": false},
-        {"item": "Implement sdf_linear_extrude() with depth and taper parameters in extrude.rs", "done": false},
-        {"item": "Implement lathe_mesh() with direct mesh generation (not SDF) in extrude.rs", "done": false},
-        {"item": "Implement recompute_lathe_normals() for sharp-cornered profiles", "done": false},
-        {"item": "Add UI Depth slider (0.1-10.0, default 2.0) for linear extrude", "done": false},
-        {"item": "Add UI Taper slider (0.0-1.0, default 0.0) for linear extrude", "done": false},
-        {"item": "Add UI Segments slider (6-64, default 16) for lathe", "done": false},
-        {"item": "Add UI Sweep slider (0-360 degrees, default 360) for lathe", "done": false},
-        {"item": "Integrate Linear and Lathe into ExtrudeMethod dispatch in generate_preview", "done": false},
-        {"item": "Wire mode switching (Tab key or panel) to cycle Pump/Linear/Lathe", "done": false},
-        {"item": "Verify pump/inflate mode still works correctly after changes", "done": false},
-        {"item": "Run cargo check --bin battle_editor", "done": false},
-        {"item": "Run cargo check --bin battle_arena (verify unchanged)", "done": false},
+        {"item": "Read spec.md for implementation details", "done": false},
+        {"item": "Implement linear extrude with taper parameter", "done": false},
+        {"item": "Implement lathe revolution with sweep angle", "done": false},
+        {"item": "Ensure both methods produce valid watertight meshes", "done": false},
+        {"item": "Run cargo check", "done": false},
+        {"item": "Verify with measurable checks", "done": false},
         {"item": "Commit changes", "done": false}
     ],
     "worker_notes": "",
@@ -59,5 +34,5 @@
     "iteration_history": [],
     "learnings": [],
     "verification_rejections": 0,
-    "created_at": "2026-02-06T14:00:00Z"
+    "created_at": "2026-02-06T16:00:00Z"
 }

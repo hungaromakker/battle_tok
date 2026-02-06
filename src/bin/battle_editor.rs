@@ -11,6 +11,12 @@
 //! - 3: Sculpt stage
 //! - 4: Color stage
 //! - 5: Save stage
+//! - D: Freehand draw tool (stage 1)
+//! - L: Line tool (stage 1)
+//! - G: Toggle grid (stage 1)
+//! - Left mouse: Draw (stage 1)
+//! - Middle/right mouse drag: Pan canvas (stage 1)
+//! - Scroll wheel: Zoom canvas (stage 1)
 //! - Middle mouse drag: Orbit camera (stages 2-5)
 //! - Right mouse drag: Pan camera (stages 2-5)
 //! - Scroll wheel: Zoom camera (stages 2-5)
@@ -29,7 +35,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use battle_tok_engine::game::asset_editor::orbit_camera::OrbitMouseButton;
-use battle_tok_engine::game::asset_editor::AssetEditor;
+use battle_tok_engine::game::asset_editor::{AssetEditor, EditorStage};
 
 // ============================================================================
 // GPU RESOURCES (minimal for editor)
@@ -66,6 +72,8 @@ struct BattleEditorApp {
     // Input state
     /// Whether Ctrl key is currently held (for keyboard shortcuts)
     ctrl_held: bool,
+    /// Current mouse position in screen pixels
+    current_mouse: (f32, f32),
 
     // Timing
     start_time: Instant,
@@ -82,6 +90,7 @@ impl BattleEditorApp {
             gpu: None,
             editor: AssetEditor::new(),
             ctrl_held: false,
+            current_mouse: (0.0, 0.0),
             start_time: Instant::now(),
             last_frame: Instant::now(),
             frame_count: 0,
@@ -183,7 +192,10 @@ impl BattleEditorApp {
 
         // Ctrl+Z => Undo
         if key == KeyCode::KeyZ && self.ctrl_held {
-            if let Some(cmd) = self.editor.undo_stack.undo() {
+            if self.editor.stage == EditorStage::Draw2D {
+                // In Draw2D stage, undo removes the last drawn outline
+                self.editor.canvas.undo();
+            } else if let Some(cmd) = self.editor.undo_stack.undo() {
                 println!("Undo: {:?}", std::mem::discriminant(cmd));
             }
             return;
@@ -195,6 +207,25 @@ impl BattleEditorApp {
                 println!("Redo: {:?}", std::mem::discriminant(cmd));
             }
             return;
+        }
+
+        // Canvas-specific keys when in Draw2D stage
+        if self.editor.stage == EditorStage::Draw2D {
+            match key {
+                KeyCode::KeyD => {
+                    self.editor.canvas.select_freehand();
+                    return;
+                }
+                KeyCode::KeyL => {
+                    self.editor.canvas.select_line();
+                    return;
+                }
+                KeyCode::KeyG => {
+                    self.editor.canvas.toggle_grid();
+                    return;
+                }
+                _ => {}
+            }
         }
 
         let stage_key = match key {
@@ -309,36 +340,70 @@ impl ApplicationHandler for BattleEditorApp {
                 }
             }
 
-            // -- Mouse input: forward to orbit camera for stages 2-5 --
+            // -- Mouse input: forward to canvas (stage 1) or orbit camera (stages 2-5) --
             WindowEvent::MouseInput { button, state, .. } => {
-                if self.editor.uses_orbit_camera() {
+                let pressed = state == ElementState::Pressed;
+                let (mx, my) = self.current_mouse;
+
+                if self.editor.stage == EditorStage::Draw2D {
+                    // Draw2D stage: forward to Canvas2D
+                    match button {
+                        MouseButton::Left => {
+                            if pressed {
+                                self.editor.canvas.on_left_press(mx, my);
+                            } else {
+                                self.editor.canvas.on_left_release();
+                            }
+                        }
+                        MouseButton::Middle => {
+                            if pressed {
+                                self.editor.canvas.on_middle_press(mx, my);
+                            } else {
+                                self.editor.canvas.on_middle_release();
+                            }
+                        }
+                        MouseButton::Right => {
+                            if pressed {
+                                self.editor.canvas.on_right_press(mx, my);
+                            } else {
+                                self.editor.canvas.on_right_release();
+                            }
+                        }
+                        _ => {}
+                    }
+                } else {
+                    // Stages 2-5: forward to orbit camera
                     let orbit_btn = match button {
                         MouseButton::Middle => Some(OrbitMouseButton::Middle),
                         MouseButton::Right => Some(OrbitMouseButton::Right),
                         _ => None,
                     };
                     if let Some(btn) = orbit_btn {
-                        self.editor
-                            .camera
-                            .handle_mouse_drag(btn, state == ElementState::Pressed);
+                        self.editor.camera.handle_mouse_drag(btn, pressed);
                     }
                 }
             }
 
             WindowEvent::CursorMoved { position, .. } => {
-                if self.editor.uses_orbit_camera() {
-                    self.editor
-                        .camera
-                        .handle_mouse_move(position.x as f32, position.y as f32);
+                let (mx, my) = (position.x as f32, position.y as f32);
+                self.current_mouse = (mx, my);
+
+                if self.editor.stage == EditorStage::Draw2D {
+                    self.editor.canvas.on_mouse_move(mx, my);
+                } else {
+                    self.editor.camera.handle_mouse_move(mx, my);
                 }
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
-                if self.editor.uses_orbit_camera() {
-                    let scroll = match delta {
-                        MouseScrollDelta::LineDelta(_, y) => y,
-                        MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 100.0,
-                    };
+                let scroll = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 100.0,
+                };
+
+                if self.editor.stage == EditorStage::Draw2D {
+                    self.editor.canvas.on_scroll(scroll);
+                } else {
                     self.editor.camera.handle_scroll(scroll);
                 }
             }
@@ -349,6 +414,10 @@ impl ApplicationHandler for BattleEditorApp {
                 }
                 // Update orbit camera aspect ratio
                 self.editor.camera.resize(new_size.width, new_size.height);
+                // Update canvas viewport dimensions
+                self.editor
+                    .canvas
+                    .set_viewport_size(new_size.width as f32, new_size.height as f32);
             }
 
             WindowEvent::RedrawRequested => {
@@ -397,6 +466,12 @@ fn main() {
     println!();
     println!("Controls:");
     println!("  1-5: Switch editor stage");
+    println!("  D: Freehand draw tool (stage 1)");
+    println!("  L: Line tool (stage 1)");
+    println!("  G: Toggle grid (stage 1)");
+    println!("  Left mouse: Draw (stage 1)");
+    println!("  Middle/right drag: Pan canvas (stage 1)");
+    println!("  Scroll wheel: Zoom canvas (stage 1)");
     println!("  Middle mouse drag: Orbit (stages 2-5)");
     println!("  Right mouse drag: Pan (stages 2-5)");
     println!("  Scroll wheel: Zoom (stages 2-5)");
