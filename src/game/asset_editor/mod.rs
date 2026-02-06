@@ -349,6 +349,7 @@ impl AssetEditor {
         self.camera.reset();
         self.canvas = Canvas2D::new();
         self.sculpt = SculptBridge::new();
+        self.paint = PaintSystem::new();
     }
 }
 
