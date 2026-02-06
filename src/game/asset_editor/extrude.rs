@@ -891,4 +891,255 @@ mod tests {
         ext.generate_preview(&[outline]);
         assert!(ext.has_mesh());
     }
+
+    #[test]
+    fn test_profiles_produce_different_meshes() {
+        let outline = Outline2D {
+            points: vec![[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]],
+            closed: true,
+        };
+
+        let mut ext = Extruder::new();
+        ext.params.mc_resolution = 16;
+
+        // Generate mesh with Elliptical profile
+        ext.params.profile = PumpProfile::Elliptical;
+        ext.generate_preview(&[outline.clone()]);
+        let elliptical_verts = ext.mesh_vertices.len();
+        let elliptical_indices = ext.mesh_indices.len();
+
+        // Generate mesh with Flat profile
+        ext.params.profile = PumpProfile::Flat;
+        ext.generate_preview(&[outline.clone()]);
+        let flat_verts = ext.mesh_vertices.len();
+        let flat_indices = ext.mesh_indices.len();
+
+        // Generate mesh with Pointed profile
+        ext.params.profile = PumpProfile::Pointed;
+        ext.generate_preview(&[outline]);
+        let pointed_verts = ext.mesh_vertices.len();
+        let pointed_indices = ext.mesh_indices.len();
+
+        // All profiles should produce valid meshes
+        assert!(elliptical_verts > 0, "Elliptical should produce vertices");
+        assert!(flat_verts > 0, "Flat should produce vertices");
+        assert!(pointed_verts > 0, "Pointed should produce vertices");
+
+        // The profiles should produce different mesh topologies since
+        // the SDF shapes are different. At least two should differ.
+        let all_same = elliptical_indices == flat_indices
+            && flat_indices == pointed_indices
+            && elliptical_verts == flat_verts
+            && flat_verts == pointed_verts;
+        assert!(
+            !all_same,
+            "Different profiles should produce different meshes (E:{}/{}, F:{}/{}, P:{}/{})",
+            elliptical_verts,
+            elliptical_indices,
+            flat_verts,
+            flat_indices,
+            pointed_verts,
+            pointed_indices,
+        );
+    }
+
+    #[test]
+    fn test_sdf_profiles_at_midpoint() {
+        // Test SDF values at a point halfway between boundary and center
+        // for each profile. This verifies the profile curves differ.
+        let square = test_square();
+        let inradius = 1.0;
+
+        // Point at (0.5, 0, 0) is 0.5 from boundary in X direction,
+        // so normalized_dist ~ 0.5 for a square with inradius 1.0
+        let test_point = Vec3::new(0.5, 0.0, 0.0);
+
+        let mut params = ExtrudeParams::default();
+
+        params.profile = PumpProfile::Elliptical;
+        let elliptical_val = sdf_pumped(test_point, &square, &params, inradius);
+
+        params.profile = PumpProfile::Flat;
+        let flat_val = sdf_pumped(test_point, &square, &params, inradius);
+
+        params.profile = PumpProfile::Pointed;
+        let pointed_val = sdf_pumped(test_point, &square, &params, inradius);
+
+        // All should be negative (inside the shape at z=0)
+        assert!(
+            elliptical_val < 0.0,
+            "Elliptical: expected inside, got {}",
+            elliptical_val
+        );
+        assert!(flat_val < 0.0, "Flat: expected inside, got {}", flat_val);
+        assert!(
+            pointed_val < 0.0,
+            "Pointed: expected inside, got {}",
+            pointed_val
+        );
+
+        // Flat should give the most interior value (most negative) since
+        // the flat profile has max depth everywhere inside
+        assert!(
+            flat_val <= elliptical_val,
+            "Flat ({}) should be more inside than Elliptical ({})",
+            flat_val,
+            elliptical_val
+        );
+        assert!(
+            flat_val <= pointed_val,
+            "Flat ({}) should be more inside than Pointed ({})",
+            flat_val,
+            pointed_val
+        );
+    }
+
+    #[test]
+    fn test_sdf_symmetry_about_z() {
+        // The pump SDF should be symmetric about the z=0 plane
+        let square = test_square();
+        let params = ExtrudeParams::default();
+        let inradius = 1.0;
+
+        let above = sdf_pumped(Vec3::new(0.0, 0.0, 0.2), &square, &params, inradius);
+        let below = sdf_pumped(Vec3::new(0.0, 0.0, -0.2), &square, &params, inradius);
+        assert!(
+            (above - below).abs() < 1e-6,
+            "SDF should be symmetric about z=0: above={}, below={}",
+            above,
+            below
+        );
+    }
+
+    #[test]
+    fn test_inflation_affects_depth() {
+        // Higher inflation should push the surface further in Z
+        let square = test_square();
+        let inradius = 1.0;
+
+        let mut params = ExtrudeParams::default();
+        let test_point = Vec3::new(0.0, 0.0, 0.3);
+
+        params.inflation = 0.2;
+        let low_inflation = sdf_pumped(test_point, &square, &params, inradius);
+
+        params.inflation = 0.8;
+        let high_inflation = sdf_pumped(test_point, &square, &params, inradius);
+
+        // Higher inflation = more interior space, so SDF should be more negative
+        assert!(
+            high_inflation < low_inflation,
+            "Higher inflation should push surface further: low={}, high={}",
+            low_inflation,
+            high_inflation
+        );
+    }
+
+    #[test]
+    fn test_thickness_affects_depth() {
+        // Higher thickness should push the surface further in Z
+        let square = test_square();
+        let inradius = 1.0;
+
+        let mut params = ExtrudeParams::default();
+        let test_point = Vec3::new(0.0, 0.0, 0.3);
+
+        params.thickness = 0.5;
+        let thin = sdf_pumped(test_point, &square, &params, inradius);
+
+        params.thickness = 3.0;
+        let thick = sdf_pumped(test_point, &square, &params, inradius);
+
+        assert!(
+            thick < thin,
+            "Higher thickness should push surface further: thin={}, thick={}",
+            thin,
+            thick
+        );
+    }
+
+    #[test]
+    fn test_generate_preview_uses_first_valid_outline() {
+        // Given multiple outlines, only the first valid one (>= 3 points)
+        // should be used for extrusion.
+        let invalid = Outline2D {
+            points: vec![[0.0, 0.0], [1.0, 1.0]], // too few
+            closed: false,
+        };
+        let small_square = Outline2D {
+            points: vec![[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]],
+            closed: true,
+        };
+        let big_square = Outline2D {
+            points: vec![[-2.0, -2.0], [2.0, -2.0], [2.0, 2.0], [-2.0, 2.0]],
+            closed: true,
+        };
+
+        let mut ext = Extruder::new();
+        ext.params.mc_resolution = 12;
+
+        // First call: only the small square (first valid)
+        ext.generate_preview(&[invalid.clone(), small_square.clone(), big_square.clone()]);
+        let small_first_count = ext.mesh_indices.len();
+
+        // Second call: big square is the first valid
+        ext.generate_preview(&[big_square, invalid, small_square]);
+        let big_first_count = ext.mesh_indices.len();
+
+        // The bigger outline should produce a different (likely larger) mesh
+        assert!(small_first_count > 0);
+        assert!(big_first_count > 0);
+        assert_ne!(
+            small_first_count, big_first_count,
+            "Different outlines should produce different mesh sizes"
+        );
+    }
+
+    #[test]
+    fn test_dirty_flag_management() {
+        let mut ext = Extruder::new();
+        assert!(ext.dirty, "New extruder should be dirty");
+
+        let outline = Outline2D {
+            points: vec![[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]],
+            closed: true,
+        };
+        ext.params.mc_resolution = 12;
+        ext.generate_preview(&[outline]);
+        assert!(!ext.dirty, "After generate_preview, dirty should be false");
+    }
+
+    #[test]
+    fn test_point_in_polygon_degenerate() {
+        // Fewer than 3 points should always return false
+        assert!(!point_in_polygon(Vec2::ZERO, &[]));
+        assert!(!point_in_polygon(Vec2::ZERO, &[Vec2::ZERO]));
+        assert!(!point_in_polygon(Vec2::ZERO, &[Vec2::ZERO, Vec2::X]));
+    }
+
+    #[test]
+    fn test_min_distance_degenerate() {
+        assert_eq!(min_distance_to_polygon(Vec2::ZERO, &[]), f32::MAX);
+        let d = min_distance_to_polygon(Vec2::new(3.0, 4.0), &[Vec2::ZERO]);
+        assert!((d - 5.0).abs() < 0.01); // distance = sqrt(9+16) = 5
+    }
+
+    #[test]
+    fn test_sdf_pumped_boundary_near_zero() {
+        // A point exactly on the polygon boundary at z=0 should have
+        // SDF close to zero (the surface passes through the boundary).
+        let square = test_square();
+        let params = ExtrudeParams::default();
+        let inradius = 1.0;
+
+        // Point on the right edge of the square at z=0
+        let on_boundary = Vec3::new(1.0, 0.0, 0.0);
+        let val = sdf_pumped(on_boundary, &square, &params, inradius);
+        // Should be near zero (within the grid discretization tolerance)
+        assert!(
+            val.abs() < 0.1,
+            "On-boundary point should have near-zero SDF, got {}",
+            val
+        );
+    }
 }
