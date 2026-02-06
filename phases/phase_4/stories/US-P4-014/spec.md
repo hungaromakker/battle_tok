@@ -1,176 +1,192 @@
 # US-P4-014: World Placement System
 
 ## Description
-Create `src/game/asset_editor/placement.rs` with a `PlacementSystem` struct that enables placing saved assets into the game world. A ghost preview follows the cursor at terrain height, snapping to the ground with optional normal alignment. Single-click places one asset with a variety seed derived from position. A scatter brush (Ctrl+Click) places multiple assets in a circular area using Poisson disk sampling to avoid overlap. The editor provides rotate (R) and scale ([ / ]) controls for the preview. Each placed asset is stored as a `PlacedAsset` with minimal data. The asset editor is a **separate binary** (`battle_editor`); `battle_arena.rs` is never modified.
+Create `src/game/asset_editor/placement.rs` with a `PlacementSystem` for placing saved assets into the game world. Features include: a ghost preview that follows the cursor on terrain, click-to-place with variety seed derived from world position, scatter brush (Ctrl+Click) using Poisson disk sampling for natural mass placement, rotation (R key) and scale ([ / ] keys) controls, ground conforming via terrain raycast, and conversion to `CreatureInstance` (from `engine/src/render/instancing.rs`) for GPU instanced rendering. Each `PlacedAsset` stores minimal data -- position, asset_id, variety_seed, rotation, scale -- because the Variety System (US-P4-013) regenerates all visual variation deterministically from the seed. The editor is a separate binary (`cargo run --bin battle_editor`). `battle_arena.rs` is never modified.
 
 ## The Core Concept / Why This Matters
-Asset creation is only half the pipeline -- placement is where assets become a living world. The placement system bridges the gap between the asset editor and the game environment. Ghost preview eliminates guesswork by showing exactly where and how an asset will appear before committing. The scatter brush enables rapid environment decoration -- placing dozens of grass tufts or rocks in seconds with natural-looking distribution (Poisson disk sampling prevents the grid pattern look of uniform placement). Ground conforming ensures assets sit naturally on uneven terrain. The variety seed ties into US-P4-013 so every placed instance looks unique without storing per-instance mesh data.
+The placement system is where asset creation meets world building. It bridges the gap between having individual assets (from the editor pipeline) and having a populated game world. Without placement tools, artists would need to manually specify coordinates in data files. The ghost preview shows exactly where the asset will land before committing. The scatter brush enables rapid environment dressing -- painting trees across a hillside or rocks along a riverbed with a single drag.
+
+**Poisson disk sampling** is the key algorithm for scatter brush. Unlike pure random placement (which creates visible clusters and gaps), Poisson disk sampling guarantees a minimum distance between all points while still looking natural. This produces the "blue noise" distribution seen in real forests and rock fields.
+
+**Ground conforming** via raycast means assets sit naturally on terrain regardless of slope. The system stores minimal data per placement (position + seed + rotation + scale) because the Variety System regenerates all visual variation deterministically.
 
 ## Goal
-Create `src/game/asset_editor/placement.rs` with ghost preview, single-click placement, scatter brush with Poisson disk sampling, ground conforming, and rotate/scale controls, all integrated with the variety system for per-instance variation.
+Create `src/game/asset_editor/placement.rs` with `PlacementSystem` and `PlacedAsset` providing ghost preview, single placement, scatter brush with Poisson disk sampling, rotation/scale controls, ground-conforming placement, and conversion to `CreatureInstance` for GPU rendering.
 
 ## Files to Create/Modify
-- **Create** `src/game/asset_editor/placement.rs` - `PlacementSystem`, `PlacedAsset`, `ScatterBrush`, ghost preview, placement logic
-- **Modify** `src/game/asset_editor/mod.rs` - Add `pub mod placement;`, add `placement: PlacementSystem` field to `AssetEditor`, wire placement input/rendering
+- **Create** `src/game/asset_editor/placement.rs` -- `PlacementSystem`, `PlacedAsset`, ghost preview, single/scatter placement, Poisson disk sampling, ground conforming, instance generation
+- **Modify** `src/game/asset_editor/mod.rs` -- Add `pub mod placement;`, add `placement: PlacementSystem` field, wire input routing for R, [, ], click, Ctrl+click
+- **Modify** `src/bin/battle_editor.rs` -- Forward placement input when library asset is selected
 
 ## Implementation Steps
-1. Define `PlacedAsset` struct (minimal per-instance data):
-   - `asset_id: String` - references library entry
-   - `position: [f32; 3]` - world position
-   - `variety_seed: u32` - derived from position via `seed_from_position()`
-   - `manual_rotation: f32` - additional Y rotation (radians) from R key
-   - `manual_scale: f32` - additional scale multiplier from [ / ] keys
-   - `ground_normal: [f32; 3]` - terrain normal at placement point
-2. Define `ScatterBrush` struct:
-   - `radius: f32` - brush circle radius (default 5.0)
-   - `density: f32` - assets per unit area (default 0.5)
-   - `min_spacing: f32` - minimum distance between placements (default 1.0)
-3. Define `PlacementSystem` struct:
-   - `active: bool` - placement mode enabled
-   - `selected_asset_id: Option<String>` - which asset to place (from library)
-   - `ghost_position: [f32; 3]` - current cursor world position on terrain
-   - `ghost_rotation: f32` - preview rotation (accumulated from R key)
-   - `ghost_scale: f32` - preview scale (adjusted by [ / ] keys)
-   - `placed_assets: Vec<PlacedAsset>` - all placed instances
-   - `scatter: ScatterBrush` - scatter brush parameters
-4. Implement ghost preview update:
-   - Each frame, raycast from cursor through camera into the scene
-   - Find intersection with terrain (Y-plane or actual terrain mesh)
-   - Set `ghost_position` to intersection point
-   - Render the selected asset mesh at ghost position with semi-transparent overlay
-5. Implement single-click placement:
-   - On left-click (without Ctrl), create `PlacedAsset`:
-     - `position` = `ghost_position`
-     - `variety_seed` = `seed_from_position(position.x, position.z)` (from variety.rs)
-     - `manual_rotation` = current `ghost_rotation`
-     - `manual_scale` = current `ghost_scale`
-     - `ground_normal` = terrain normal at position (default `[0, 1, 0]` for flat)
-   - Push to `placed_assets`
-6. Implement rotate and scale controls:
-   - R key: increment `ghost_rotation` by 15 degrees (PI/12 radians)
-   - `]` key: multiply `ghost_scale` by 1.1
-   - `[` key: multiply `ghost_scale` by 0.9 (clamped to [0.1, 5.0])
-7. Implement Poisson disk sampling for scatter brush:
-   - `poisson_disk_sample(center, radius, min_spacing, density, seed) -> Vec<[f32; 2]>`
-   - Create SimpleRng from seed
-   - Generate candidate points in circle, reject those too close to existing points
-   - Cap at `(PI * radius^2 * density)` maximum points
-8. Implement scatter placement (Ctrl+Click):
-   - Generate Poisson disk points within scatter brush radius around cursor
-   - For each point, create a `PlacedAsset` with position-derived variety seed
-   - Add all to `placed_assets`
-9. Implement ground conforming:
-   - For each placement point, raycast downward to find terrain surface
-   - Align asset Y-axis to terrain normal (tilt to match slope)
-   - Store `ground_normal` in `PlacedAsset` for rendering
-10. Wire into `mod.rs`: when an asset is selected from the library panel, activate placement mode. Render ghost preview during update. Handle click, Ctrl+click, R, [, ] inputs.
+
+1. Define placement data structures:
+   ```rust
+   #[derive(Clone, Debug, Serialize, Deserialize)]
+   pub struct PlacedAsset {
+       pub asset_id: String,
+       pub position: Vec3,
+       pub variety_seed: u32,
+       pub manual_rotation: f32,
+       pub manual_scale: f32,
+   }
+
+   pub struct PlacementSystem {
+       pub selected_asset: Option<String>,
+       pub ghost_position: Vec3,
+       pub ghost_rotation: f32,
+       pub ghost_scale: f32,
+       pub placed_instances: Vec<PlacedAsset>,
+       pub scatter_mode: bool,
+       pub scatter_radius: f32,
+       pub scatter_density: f32,
+       pub scatter_min_spacing: f32,
+   }
+   ```
+
+2. Implement ghost preview update:
+   ```rust
+   impl PlacementSystem {
+       pub fn new() -> Self {
+           Self {
+               selected_asset: None, ghost_position: Vec3::ZERO,
+               ghost_rotation: 0.0, ghost_scale: 1.0,
+               placed_instances: Vec::new(), scatter_mode: false,
+               scatter_radius: 5.0, scatter_density: 0.3, scatter_min_spacing: 2.0,
+           }
+       }
+       pub fn update_ghost(&mut self, cursor_world_pos: Vec3) { self.ghost_position = cursor_world_pos; }
+       pub fn rotate_ghost(&mut self, delta: f32) {
+           self.ghost_rotation = (self.ghost_rotation + delta).rem_euclid(std::f32::consts::TAU);
+       }
+       pub fn scale_ghost(&mut self, delta: f32) {
+           self.ghost_scale = (self.ghost_scale + delta).clamp(0.1, 5.0);
+       }
+   }
+   ```
+
+3. Implement single-click placement:
+   ```rust
+   pub fn place(&mut self) -> Option<PlacedAsset> {
+       let asset_id = self.selected_asset.as_ref()?.clone();
+       let seed = seed_from_position(self.ghost_position.x, self.ghost_position.y, self.ghost_position.z);
+       let placed = PlacedAsset {
+           asset_id, position: self.ghost_position, variety_seed: seed,
+           manual_rotation: self.ghost_rotation, manual_scale: self.ghost_scale,
+       };
+       self.placed_instances.push(placed.clone());
+       Some(placed)
+   }
+   ```
+
+4. Implement Poisson disk sampling (Bridson's algorithm):
+   ```rust
+   pub fn poisson_disk_sample(
+       center: [f32; 2], radius: f32, min_dist: f32, max_attempts: u32, seed: u32,
+   ) -> Vec<[f32; 2]> {
+       let mut rng = SimpleRng::new(seed);
+       let cell_size = min_dist / std::f32::consts::SQRT_2;
+       let grid_side = (2.0 * radius / cell_size).ceil() as usize + 1;
+       let mut grid: Vec<Option<usize>> = vec![None; grid_side * grid_side];
+       let mut points: Vec<[f32; 2]> = Vec::new();
+       let mut active: Vec<usize> = Vec::new();
+       // Initialize with center, then iteratively add points in annulus [r, 2r]
+       // Check spatial grid for minimum distance violations
+       // Remove from active list after max_attempts failures
+       points
+   }
+   ```
+
+5. Implement scatter placement with ground raycast:
+   ```rust
+   pub fn scatter(&mut self, ground_raycast: &dyn Fn(f32, f32) -> Option<f32>) -> Vec<PlacedAsset> {
+       let asset_id = match &self.selected_asset { Some(id) => id.clone(), None => return Vec::new() };
+       let center_seed = seed_from_position(self.ghost_position.x, 0.0, self.ghost_position.z);
+       let sample_points = poisson_disk_sample(
+           [self.ghost_position.x, self.ghost_position.z],
+           self.scatter_radius, self.scatter_min_spacing, 30, center_seed,
+       );
+       let mut newly_placed = Vec::new();
+       for pt in &sample_points {
+           let ground_y = ground_raycast(pt[0], pt[1]).unwrap_or(0.0);
+           let position = Vec3::new(pt[0], ground_y, pt[1]);
+           let seed = seed_from_position(position.x, position.y, position.z);
+           let placed = PlacedAsset {
+               asset_id: asset_id.clone(), position, variety_seed: seed,
+               manual_rotation: self.ghost_rotation, manual_scale: self.ghost_scale,
+           };
+           self.placed_instances.push(placed.clone());
+           newly_placed.push(placed);
+       }
+       newly_placed
+   }
+   ```
+
+6. Implement keyboard controls: R = rotate 15 degrees, [ = scale -0.1, ] = scale +0.1, Click = place, Ctrl+Click = scatter.
+
+7. Implement conversion to `CreatureInstance` for GPU instanced rendering:
+   ```rust
+   pub fn generate_instances(&self, variety_params: &VarietyParams) -> Vec<CreatureInstance> {
+       self.placed_instances.iter().map(|pa| {
+           let variety = generate_variety(variety_params, pa.variety_seed);
+           let total_scale = pa.manual_scale * variety.scale.x;
+           let total_rotation_y = pa.manual_rotation + variety.rotation_y;
+           let rotation = glam::Quat::from_rotation_y(total_rotation_y);
+           CreatureInstance::new(pa.position.into(), rotation.into(), total_scale, 0)
+       }).collect()
+   }
+   ```
+
+8. Implement save/load for `assets/world/placements.json`.
 
 ## Code Patterns
+Poisson disk sampling (Bridson's fast algorithm, O(n)):
 ```rust
-use serde::{Serialize, Deserialize};
-use crate::game::asset_editor::variety::{seed_from_position, SimpleRng};
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PlacedAsset {
-    pub asset_id: String,
-    pub position: [f32; 3],
-    pub variety_seed: u32,
-    pub manual_rotation: f32,
-    pub manual_scale: f32,
-    pub ground_normal: [f32; 3],
-}
-
-pub struct PlacementSystem {
-    pub active: bool,
-    pub selected_asset_id: Option<String>,
-    pub ghost_position: [f32; 3],
-    pub ghost_rotation: f32,
-    pub ghost_scale: f32,
-    pub placed_assets: Vec<PlacedAsset>,
-    pub scatter: ScatterBrush,
-}
-
-impl PlacementSystem {
-    pub fn place_single(&mut self, terrain_normal: [f32; 3]) {
-        if let Some(ref asset_id) = self.selected_asset_id {
-            let seed = seed_from_position(self.ghost_position[0], self.ghost_position[2]);
-            self.placed_assets.push(PlacedAsset {
-                asset_id: asset_id.clone(),
-                position: self.ghost_position,
-                variety_seed: seed,
-                manual_rotation: self.ghost_rotation,
-                manual_scale: self.ghost_scale,
-                ground_normal: terrain_normal,
-            });
-        }
-    }
-}
-
-pub fn poisson_disk_sample(
-    center: [f32; 2], radius: f32, min_spacing: f32, density: f32, seed: u32,
-) -> Vec<[f32; 2]> {
-    let mut rng = SimpleRng::new(seed);
-    let max_points = (std::f32::consts::PI * radius * radius * density) as usize;
-    let mut points: Vec<[f32; 2]> = Vec::new();
-    for _ in 0..(max_points * 30) {
-        if points.len() >= max_points { break; }
-        let angle = rng.range(0.0, std::f32::consts::TAU);
-        let r = rng.range(0.0, radius);
-        let candidate = [center[0] + r * angle.cos(), center[1] + r * angle.sin()];
-        let too_close = points.iter().any(|p| {
-            let dx = p[0] - candidate[0];
-            let dy = p[1] - candidate[1];
-            (dx * dx + dy * dy).sqrt() < min_spacing
-        });
-        if !too_close { points.push(candidate); }
-    }
-    points
-}
+// 1. Initialize with seed point
+// 2. For each active point, try k candidates in annulus [r, 2r]
+// 3. Accept if no existing point within distance r (spatial grid check)
+// 4. Deactivate point after k failed attempts
 ```
 
+`CreatureInstance` layout (48 bytes): position [f32;3], _pad0 u32, rotation [f32;4], scale f32, baked_sdf_id u32, animation_state u32, tint_color u32.
+
 ## Acceptance Criteria
-- [ ] `placement.rs` exists with `PlacementSystem`, `PlacedAsset`, `ScatterBrush` types
-- [ ] Ghost preview renders selected asset at cursor position on terrain
-- [ ] Left-click places a single asset with variety seed derived from world position
-- [ ] R key rotates ghost preview by 15-degree increments
-- [ ] `[` and `]` keys scale ghost preview (clamped to reasonable range)
-- [ ] Ctrl+Click activates scatter brush, placing multiple assets with Poisson disk sampling
-- [ ] Poisson disk sampling maintains minimum spacing between placed assets
-- [ ] Ground conforming aligns assets to terrain normal
-- [ ] `PlacedAsset` stores minimal data: asset_id, position, variety_seed, manual rotation/scale, ground_normal
-- [ ] Variety seed is deterministic: same position always produces same seed
+- [ ] `placement.rs` exists with `PlacementSystem` and `PlacedAsset` structs
+- [ ] Ghost preview follows cursor position on terrain surface
+- [ ] Click places asset with variety seed derived from position
+- [ ] R key rotates ghost by 15-degree increments
+- [ ] [ and ] keys scale ghost (clamped 0.1 to 5.0)
+- [ ] Scatter brush (Ctrl+Click) uses Poisson disk sampling
+- [ ] Poisson disk sampling respects minimum spacing
+- [ ] Ground conforming uses raycast for terrain height
+- [ ] `generate_instances()` produces valid `CreatureInstance` data
+- [ ] Placements saved to / loaded from `assets/world/placements.json`
+- [ ] `PlacedAsset` derives `Serialize` and `Deserialize`
 - [ ] `battle_arena.rs` is NOT modified
-- [ ] `cargo check --bin battle_editor` passes with 0 errors
-- [ ] `cargo check --bin battle_arena` passes with 0 errors
+- [ ] `cargo check` passes with 0 errors
 
 ## Verification Commands
-- `cmd`: `cargo check --bin battle_editor 2>&1; echo EXIT:0`
-  `expect_contains`: `EXIT:0`
-  `description`: `battle_editor binary compiles with placement module`
-- `cmd`: `cargo check --bin battle_arena 2>&1; echo EXIT:0`
-  `expect_contains`: `EXIT:0`
-  `description`: `battle_arena still compiles unchanged`
-- `cmd`: `test -f src/game/asset_editor/placement.rs && echo EXISTS`
+- `cmd`: `test -f /home/hungaromakker/battle_tok/src/game/asset_editor/placement.rs && echo EXISTS`
   `expect_contains`: `EXISTS`
-  `description`: `placement.rs file exists`
-- `cmd`: `grep -c 'PlacementSystem\|PlacedAsset\|ScatterBrush' src/game/asset_editor/placement.rs`
+  `description`: `placement.rs module exists`
+- `cmd`: `grep -c 'PlacementSystem\|PlacedAsset\|poisson_disk_sample' /home/hungaromakker/battle_tok/src/game/asset_editor/placement.rs`
   `expect_gt`: 0
-  `description`: `Core placement types are defined`
-- `cmd`: `grep -c 'poisson_disk_sample\|place_single\|scatter_place\|ghost_position' src/game/asset_editor/placement.rs`
+  `description`: `Placement types and Poisson sampling defined`
+- `cmd`: `grep -c 'scatter\|ghost_position\|rotate_ghost\|scale_ghost\|generate_instances' /home/hungaromakker/battle_tok/src/game/asset_editor/placement.rs`
   `expect_gt`: 0
-  `description`: `Placement functions are implemented`
-- `cmd`: `grep -c 'seed_from_position\|variety_seed' src/game/asset_editor/placement.rs`
-  `expect_gt`: 0
-  `description`: `Variety system integration exists`
-- `cmd`: `grep -c 'pub mod placement' src/game/asset_editor/mod.rs`
+  `description`: `Placement functions implemented`
+- `cmd`: `grep -c 'pub mod placement' /home/hungaromakker/battle_tok/src/game/asset_editor/mod.rs`
   `expect_gt`: 0
   `description`: `placement module registered in mod.rs`
+- `cmd`: `cd /home/hungaromakker/battle_tok && cargo check 2>&1; echo EXIT:$?`
+  `expect_contains`: `EXIT:0`
+  `description`: `Project compiles`
 
 ## Success Looks Like
-The artist selects an oak tree from the library panel. A semi-transparent ghost tree follows their cursor, hovering at terrain height. They click and a tree appears with a unique variation (slightly different size and color tint). They press R twice to rotate the next tree 30 degrees, then click again. They hold Ctrl and click on a grassy hillside -- a dozen grass tufts appear in a natural-looking cluster with no overlaps. Each tuft is slightly different due to its position-based variety seed. On a slope, the assets tilt to match the terrain angle. The scatter brush makes decorating large areas fast, while single-click gives precise control.
+The artist selects an oak tree from the library. A translucent ghost tree follows their cursor over the terrain, always sitting on the ground surface. They press R a few times to rotate it, ] to make it bigger. They click and a tree appears exactly where the ghost was, with a unique variety variation determined by the position. They hold Ctrl and click on a hillside -- a natural-looking cluster of trees fills a circle. Each tree is slightly different (variety system) and all sit properly on the terrain surface with no overlapping (Poisson disk). They save and the placements persist across editor restarts. The world starts to feel like a real environment.
 
 ## Dependencies
-- Depends on: US-P4-013 (variety system for per-instance variation), US-P4-012 (library panel for asset selection)
+- Depends on: US-P4-012 (needs library to select assets for placement), US-P4-013 (needs variety for per-instance variation and seed_from_position)
 
 ## Complexity
 - Complexity: complex
