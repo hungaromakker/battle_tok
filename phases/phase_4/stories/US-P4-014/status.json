@@ -1,44 +1,175 @@
 {
     "story_id": "US-P4-014",
     "title": "World Placement System",
-    "status": "pending",
-    "focus": "",
+    "status": "failed",
+    "focus": "All placement features implemented - ghost preview, click-to-place, scatter brush, rotation/scale, ground conforming",
     "complexity": "complex",
     "min_iterations": 2,
     "criteria": [
-        {"text": "Ghost preview shows asset at cursor position before placement", "done": false, "notes": ""},
-        {"text": "Click places asset at cursor location", "done": false, "notes": ""},
-        {"text": "R key rotates the asset before/after placement", "done": false, "notes": ""},
-        {"text": "Scatter brush places multiple assets in radius", "done": false, "notes": ""},
-        {"text": "Placed assets conform to ground surface", "done": false, "notes": ""}
+        {
+            "text": "Ghost preview shows asset at cursor position before placement",
+            "done": true,
+            "notes": "update_ghost(cursor_world_pos) sets ghost_position; battle_editor forwards cursor movement"
+        },
+        {
+            "text": "Click places asset at cursor location",
+            "done": true,
+            "notes": "place() creates PlacedAsset with seed from position; handle_click() wired in battle_editor.rs"
+        },
+        {
+            "text": "R key rotates the asset before/after placement",
+            "done": true,
+            "notes": "handle_rotate() adds 15-degree increments via ROTATION_STEP; wired in battle_editor key handler"
+        },
+        {
+            "text": "Scatter brush places multiple assets in radius",
+            "done": true,
+            "notes": "scatter() uses Poisson disk sampling with Bridson's algorithm; Ctrl+Click triggers in battle_editor"
+        },
+        {
+            "text": "Placed assets conform to ground surface",
+            "done": true,
+            "notes": "scatter() takes ground_raycast callback for terrain height; single place uses ghost_position which is set to terrain surface"
+        }
     ],
     "verification_commands": [
-        {"cmd": "grep -r 'PlacementSystem' src/game/asset_editor/", "expect_contains": "PlacementSystem", "description": "PlacementSystem struct exists"},
-        {"cmd": "grep -r 'PlacedAsset' src/game/asset_editor/", "expect_contains": "PlacedAsset", "description": "PlacedAsset struct exists"},
-        {"cmd": "cargo check --bin battle_editor 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_editor compiles"}
+        {
+            "cmd": "grep -r 'PlacementSystem' src/game/asset_editor/",
+            "expect_contains": "PlacementSystem",
+            "description": "PlacementSystem struct exists"
+        },
+        {
+            "cmd": "grep -r 'PlacedAsset' src/game/asset_editor/",
+            "expect_contains": "PlacedAsset",
+            "description": "PlacedAsset struct exists"
+        },
+        {
+            "cmd": "cargo check --bin battle_editor 2>&1; echo EXIT:$?",
+            "expect_contains": "EXIT:0",
+            "description": "battle_editor compiles"
+        }
     ],
     "checklist": [
-        {"item": "Read spec.md for implementation details", "done": false},
-        {"item": "Create PlacementSystem struct for placement logic", "done": false},
-        {"item": "Create PlacedAsset struct for placed instances", "done": false},
-        {"item": "Implement ghost preview at cursor position", "done": false},
-        {"item": "Implement click-to-place functionality", "done": false},
-        {"item": "Implement R key rotation", "done": false},
-        {"item": "Implement scatter brush for multi-placement", "done": false},
-        {"item": "Implement ground surface conforming", "done": false},
-        {"item": "Run cargo check", "done": false},
-        {"item": "Verify with measurable checks", "done": false},
-        {"item": "Commit changes", "done": false}
+        {
+            "item": "Read spec.md for implementation details",
+            "done": true
+        },
+        {
+            "item": "Create PlacementSystem struct for placement logic",
+            "done": true
+        },
+        {
+            "item": "Create PlacedAsset struct for placed instances",
+            "done": true
+        },
+        {
+            "item": "Implement ghost preview at cursor position",
+            "done": true
+        },
+        {
+            "item": "Implement click-to-place functionality",
+            "done": true
+        },
+        {
+            "item": "Implement R key rotation",
+            "done": true
+        },
+        {
+            "item": "Implement scatter brush for multi-placement",
+            "done": true
+        },
+        {
+            "item": "Implement ground surface conforming",
+            "done": true
+        },
+        {
+            "item": "Run cargo check",
+            "done": true
+        },
+        {
+            "item": "Verify with measurable checks",
+            "done": true
+        },
+        {
+            "item": "Commit changes",
+            "done": true
+        }
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
-    "failed_reasons": [],
-    "dependencies": ["US-P4-013", "US-P4-012"],
-    "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
-    "verification_rejections": 0,
+    "worker_notes": "Iteration 1 complete. All features implemented: PlacementSystem with ghost preview, single/scatter placement, rotation/scale controls, Poisson disk sampling, ground conforming, CreatureInstance generation, save/load. 14 tests pass. cargo check passes with 0 errors. battle_arena.rs NOT modified. Iteration 2 should review edge cases and polish if needed.\n\n=== VERIFICATION FEEDBACK (iteration 1) ===\nThe orchestrator's independent checks found issues:\n  - PREMATURE_COMPLETION: Story completed in 1 iteration(s) but the spec requires at least 2. This story was flagged as needing multiple iterations. Go back and verify your work thoroughly \u2014 does the project build? Is the goal achieved?\n\nPlease address these and continue iterating. Your existing progress\nis preserved \u2014 just fix what's flagged above. You're free to solve\nthese creatively as long as the goal is achieved and it builds.\n=== END FEEDBACK ===\n\n\n=== VERIFICATION FEEDBACK (iteration 1) ===\nThe orchestrator's independent checks found issues:\n  - PREMATURE_COMPLETION: Story completed in 1 iteration(s) but the spec requires at least 2. This story was flagged as needing multiple iterations. Go back and verify your work thoroughly \u2014 does the project build? Is the goal achieved?\n\nPlease address these and continue iterating. Your existing progress\nis preserved \u2014 just fix what's flagged above. You're free to solve\nthese creatively as long as the goal is achieved and it builds.\n=== END FEEDBACK ===\n\n\n=== VERIFICATION FEEDBACK (iteration 1) ===\nThe orchestrator's independent checks found issues:\n  - PREMATURE_COMPLETION: Story completed in 1 iteration(s) but the spec requires at least 2. This story was flagged as needing multiple iterations. Go back and verify your work thoroughly \u2014 does the project build? Is the goal achieved?\n\nPlease address these and continue iterating. Your existing progress\nis preserved \u2014 just fix what's flagged above. You're free to solve\nthese creatively as long as the goal is achieved and it builds.\n=== END FEEDBACK ===\n\n\n=== VERIFICATION FEEDBACK (iteration 1) ===\nThe orchestrator's independent checks found issues:\n  - PREMATURE_COMPLETION: Story completed in 1 iteration(s) but the spec requires at least 2. This story was flagged as needing multiple iterations. Go back and verify your work thoroughly \u2014 does the project build? Is the goal achieved?\n\nPlease address these and continue iterating. Your existing progress\nis preserved \u2014 just fix what's flagged above. You're free to solve\nthese creatively as long as the goal is achieved and it builds.\n=== END FEEDBACK ===\n\n\n=== VERIFICATION FEEDBACK (iteration 1) ===\nThe orchestrator's independent checks found issues:\n  - PREMATURE_COMPLETION: Story completed in 1 iteration(s) but the spec requires at least 2. This story was flagged as needing multiple iterations. Go back and verify your work thoroughly \u2014 does the project build? Is the goal achieved?\n\nPlease address these and continue iterating. Your existing progress\nis preserved \u2014 just fix what's flagged above. You're free to solve\nthese creatively as long as the goal is achieved and it builds.\n=== END FEEDBACK ===\n",
+    "notes_history": [
+        {
+            "iteration": 1,
+            "note": "Full implementation complete. Created placement.rs with PlacementSystem, PlacedAsset, poisson_disk_sample. Wired into mod.rs (pub mod + field) and battle_editor.rs (R/[/] keys, click, Ctrl+click). All 14 tests pass. cargo check clean.",
+            "timestamp": "2026-02-06T16:30:00Z"
+        },
+        {
+            "iteration": 1,
+            "note": "VERIFICATION FEEDBACK: 1 issue(s) to address",
+            "timestamp": "2026-02-06T17:16:00.314598",
+            "failures": [
+                "PREMATURE_COMPLETION: Story completed in 1 iteration(s) but the spec requires at least 2. This story was flagged as needing multiple iterations. Go back and verify your work thoroughly \u2014 does the project build? Is the goal achieved?"
+            ]
+        },
+        {
+            "iteration": 1,
+            "note": "VERIFICATION FEEDBACK: 1 issue(s) to address",
+            "timestamp": "2026-02-06T17:16:05.571614",
+            "failures": [
+                "PREMATURE_COMPLETION: Story completed in 1 iteration(s) but the spec requires at least 2. This story was flagged as needing multiple iterations. Go back and verify your work thoroughly \u2014 does the project build? Is the goal achieved?"
+            ]
+        },
+        {
+            "iteration": 1,
+            "note": "VERIFICATION FEEDBACK: 1 issue(s) to address",
+            "timestamp": "2026-02-06T17:16:10.840220",
+            "failures": [
+                "PREMATURE_COMPLETION: Story completed in 1 iteration(s) but the spec requires at least 2. This story was flagged as needing multiple iterations. Go back and verify your work thoroughly \u2014 does the project build? Is the goal achieved?"
+            ]
+        },
+        {
+            "iteration": 1,
+            "note": "VERIFICATION FEEDBACK: 1 issue(s) to address",
+            "timestamp": "2026-02-06T17:16:16.117920",
+            "failures": [
+                "PREMATURE_COMPLETION: Story completed in 1 iteration(s) but the spec requires at least 2. This story was flagged as needing multiple iterations. Go back and verify your work thoroughly \u2014 does the project build? Is the goal achieved?"
+            ]
+        },
+        {
+            "iteration": 1,
+            "note": "VERIFICATION FEEDBACK: 1 issue(s) to address",
+            "timestamp": "2026-02-06T17:16:22.124434",
+            "failures": [
+                "PREMATURE_COMPLETION: Story completed in 1 iteration(s) but the spec requires at least 2. This story was flagged as needing multiple iterations. Go back and verify your work thoroughly \u2014 does the project build? Is the goal achieved?"
+            ]
+        }
+    ],
+    "iteration": 1,
+    "failed_reasons": [
+        "PREMATURE_COMPLETION: Story completed in 1 iteration(s) but the spec requires at least 2. This story was flagged as needing multiple iterations. Go back and verify your work thoroughly \u2014 does the project build? Is the goal achieved?"
+    ],
+    "dependencies": [
+        "US-P4-013",
+        "US-P4-012"
+    ],
+    "commit_hash": "f993b050415aaf202a54eaa2898ace22bdb855ca",
+    "files_modified": [
+        "src/game/asset_editor/placement.rs",
+        "src/game/asset_editor/mod.rs",
+        "src/bin/battle_editor.rs"
+    ],
+    "iteration_history": [
+        {
+            "iteration": 1,
+            "action": "Full implementation of PlacementSystem with all spec features",
+            "notes": "Created placement.rs, wired into mod.rs and battle_editor.rs. All 14 tests pass, cargo check clean.",
+            "completed_at": "2026-02-06T16:30:00Z"
+        }
+    ],
+    "learnings": [
+        "CreatureInstance::new() takes 6 params (position, rotation, scale, baked_sdf_id, animation_state, tint_color)",
+        "AssetLibrary.handle_click returns Option<LibraryAction>, not Option<usize>",
+        "AssetLibrary.selected_entry() returns Option<&AssetEntry> based on filtered list index"
+    ],
+    "verification_rejections": 5,
     "created_at": "2026-02-06T16:00:00Z"
 }

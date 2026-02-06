@@ -30,7 +30,12 @@
 //! - Ctrl+I: Load reference image for tracing (stage 1)
 //! - Ctrl+H: Toggle reference image visibility (stage 1)
 //! - Ctrl+Scroll: Adjust reference image scale (stage 1)
-//! - Ctrl+Z: Undo
+//! - R: Rotate placement ghost 15° (placement mode)
+//! - [ / ]: Scale placement ghost down/up (placement mode)
+//! - Click: Place asset at cursor (placement mode)
+//! - Ctrl+Click: Scatter-place assets around cursor (placement mode)
+//! - Ctrl+S: Save placements to file (placement mode)
+//! - Ctrl+Z: Undo (Draw2D) / Undo last placement (placement mode)
 //! - Ctrl+Y: Redo
 //! - ESC: Exit
 
@@ -49,6 +54,7 @@ use wgpu::util::DeviceExt;
 
 use battle_tok_engine::game::asset_editor::image_trace::{CanvasViewport, ImageTrace};
 use battle_tok_engine::game::asset_editor::orbit_camera::OrbitMouseButton;
+use battle_tok_engine::game::asset_editor::placement::{placements_path, screen_to_ground};
 use battle_tok_engine::game::asset_editor::{AssetEditor, EditorStage};
 use battle_tok_engine::game::types::Vertex;
 
@@ -147,10 +153,20 @@ struct BattleEditorApp {
 
 impl BattleEditorApp {
     fn new() -> Self {
+        let mut editor = AssetEditor::new();
+
+        // Auto-load saved placements if the file exists
+        let placements_path = placements_path();
+        if placements_path.exists() {
+            if let Err(e) = editor.placement.load(&placements_path) {
+                eprintln!("Failed to load placements: {e}");
+            }
+        }
+
         Self {
             window: None,
             gpu: None,
-            editor: AssetEditor::new(),
+            editor,
             ctrl_held: false,
             current_mouse: (0.0, 0.0),
             start_time: Instant::now(),
@@ -445,7 +461,10 @@ impl BattleEditorApp {
 
         // Ctrl+Z => Undo
         if key == KeyCode::KeyZ && self.ctrl_held {
-            if self.editor.stage == EditorStage::Draw2D {
+            // Placement undo takes priority when placement is active
+            if self.editor.placement.is_active() && self.editor.placement.instance_count() > 0 {
+                self.editor.placement.undo_last();
+            } else if self.editor.stage == EditorStage::Draw2D {
                 // In Draw2D stage, undo removes the last drawn outline
                 self.editor.canvas.undo();
             } else if let Some(cmd) = self.editor.undo_stack.undo() {
@@ -458,6 +477,15 @@ impl BattleEditorApp {
         if key == KeyCode::KeyY && self.ctrl_held {
             if let Some(cmd) = self.editor.undo_stack.redo() {
                 println!("Redo: {:?}", std::mem::discriminant(cmd));
+            }
+            return;
+        }
+
+        // Ctrl+S => Save placements to disk
+        if key == KeyCode::KeyS && self.ctrl_held {
+            let path = placements_path();
+            if let Err(e) = self.editor.placement.save(&path) {
+                eprintln!("Save placements failed: {e}");
             }
             return;
         }
@@ -558,6 +586,10 @@ impl BattleEditorApp {
             match key {
                 KeyCode::KeyR => {
                     self.editor.placement.handle_rotate();
+                    return;
+                }
+                KeyCode::KeyX => {
+                    self.editor.placement.handle_delete();
                     return;
                 }
                 KeyCode::BracketLeft => {
@@ -1010,6 +1042,21 @@ impl ApplicationHandler for BattleEditorApp {
                 } else {
                     self.editor.camera.handle_mouse_move(mx, my);
                 }
+
+                // Update ghost preview position via ground-plane raycast
+                if self.editor.placement.is_active()
+                    && let Some(gpu) = &self.gpu
+                {
+                    let sw = gpu.surface_config.width as f32;
+                    let sh = gpu.surface_config.height as f32;
+                    let vp = glam::Mat4::from_cols_array_2d(
+                        &self.editor.camera.view_projection_matrix(),
+                    );
+                    let inv_vp = vp.inverse();
+                    if let Some(ground_pos) = screen_to_ground(mx, my, sw, sh, inv_vp) {
+                        self.editor.placement.update_ghost(ground_pos);
+                    }
+                }
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
@@ -1125,6 +1172,12 @@ fn main() {
     println!("  Ctrl+H: Toggle reference image (stage 1)");
     println!("  Ctrl+Scroll: Adjust image scale (stage 1)");
     println!("  F10: Toggle asset library panel");
+    println!("  R: Rotate placement ghost (15 degrees)");
+    println!("  X: Delete nearest placed asset");
+    println!("  [/]: Scale placement ghost (0.1 steps)");
+    println!("  Click: Place asset (when library item selected)");
+    println!("  Ctrl+Click: Scatter brush (Poisson disk)");
+    println!("  Ctrl+S: Save placements");
     println!("  Ctrl+Z: Undo");
     println!("  Ctrl+Y: Redo");
     println!("  ESC: Exit");

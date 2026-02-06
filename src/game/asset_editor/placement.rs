@@ -123,6 +123,36 @@ impl PlacementSystem {
         Some(placed)
     }
 
+    /// Place a single asset with ground conforming via raycast.
+    /// The ghost position's Y is replaced by the raycast result.
+    /// Falls back to ghost_position.y if raycast returns None.
+    pub fn place_with_raycast(
+        &mut self,
+        ground_raycast: &dyn Fn(f32, f32) -> Option<f32>,
+    ) -> Option<PlacedAsset> {
+        let ground_y = ground_raycast(self.ghost_position.x, self.ghost_position.z)
+            .unwrap_or(self.ghost_position.y);
+        self.ghost_position.y = ground_y;
+        self.place()
+    }
+
+    /// Remove the last placed asset (undo). Returns the removed asset or None.
+    pub fn undo_last(&mut self) -> Option<PlacedAsset> {
+        let removed = self.placed_instances.pop();
+        if let Some(ref pa) = removed {
+            println!(
+                "Placement: undid '{}' at ({:.1}, {:.1}, {:.1})",
+                pa.asset_id, pa.position.x, pa.position.y, pa.position.z,
+            );
+        }
+        removed
+    }
+
+    /// Return the number of placed instances.
+    pub fn instance_count(&self) -> usize {
+        self.placed_instances.len()
+    }
+
     /// Scatter-place assets in a circle around the ghost position using Poisson
     /// disk sampling. Each point is ground-conformed via the provided raycast.
     ///
@@ -147,16 +177,23 @@ impl PlacementSystem {
             center_seed,
         );
 
+        // Use a separate RNG for per-asset rotation jitter so each scattered
+        // asset faces a slightly different direction (looks natural in forests/fields).
+        let mut jitter_rng = SimpleRng::new(center_seed.wrapping_add(7));
+
         let mut newly_placed = Vec::new();
         for pt in &sample_points {
             let ground_y = ground_raycast(pt[0], pt[1]).unwrap_or(0.0);
             let position = Vec3::new(pt[0], ground_y, pt[1]);
             let seed = seed_from_position(position.x, position.y, position.z);
+            // Random rotation jitter: base rotation + random offset in [0, TAU)
+            let rotation_jitter = jitter_rng.next_f32() * std::f32::consts::TAU;
             let placed = PlacedAsset {
                 asset_id: asset_id.clone(),
                 position,
                 variety_seed: seed,
-                manual_rotation: self.ghost_rotation,
+                manual_rotation: (self.ghost_rotation + rotation_jitter)
+                    .rem_euclid(std::f32::consts::TAU),
                 manual_scale: self.ghost_scale,
             };
             self.placed_instances.push(placed.clone());
@@ -236,6 +273,40 @@ impl PlacementSystem {
         }
     }
 
+    /// Handle X key: remove the nearest placed asset to the ghost position.
+    pub fn handle_delete(&mut self) {
+        if let Some(removed) = self.remove_nearest(self.ghost_position, 5.0) {
+            println!(
+                "Placement: removed '{}' at ({:.1}, {:.1}, {:.1})",
+                removed.asset_id, removed.position.x, removed.position.y, removed.position.z,
+            );
+        } else {
+            println!("Placement: no asset within range to remove");
+        }
+    }
+
+    /// Remove the placed asset nearest to `position` within `max_distance`.
+    /// Returns the removed asset, or None if nothing was close enough.
+    pub fn remove_nearest(&mut self, position: Vec3, max_distance: f32) -> Option<PlacedAsset> {
+        if self.placed_instances.is_empty() {
+            return None;
+        }
+
+        let max_dist_sq = max_distance * max_distance;
+        let mut best_idx = None;
+        let mut best_dist_sq = max_dist_sq;
+
+        for (i, pa) in self.placed_instances.iter().enumerate() {
+            let dist_sq = (pa.position - position).length_squared();
+            if dist_sq < best_dist_sq {
+                best_dist_sq = dist_sq;
+                best_idx = Some(i);
+            }
+        }
+
+        best_idx.map(|idx| self.placed_instances.remove(idx))
+    }
+
     /// Select an asset for placement (called when library selection changes).
     pub fn select_asset(&mut self, asset_id: Option<String>) {
         self.selected_asset = asset_id;
@@ -244,6 +315,22 @@ impl PlacementSystem {
     /// Returns true if an asset is selected and ready for placement.
     pub fn is_active(&self) -> bool {
         self.selected_asset.is_some()
+    }
+
+    /// Adjust scatter brush radius, clamped to [1.0, 50.0].
+    pub fn adjust_scatter_radius(&mut self, delta: f32) {
+        self.scatter_radius = (self.scatter_radius + delta).clamp(1.0, 50.0);
+        println!("Placement: scatter radius = {:.1}", self.scatter_radius);
+    }
+
+    /// Adjust scatter minimum spacing, clamped to [0.5, scatter_radius].
+    pub fn adjust_scatter_spacing(&mut self, delta: f32) {
+        self.scatter_min_spacing =
+            (self.scatter_min_spacing + delta).clamp(0.5, self.scatter_radius);
+        println!(
+            "Placement: scatter spacing = {:.1}",
+            self.scatter_min_spacing
+        );
     }
 
     /// Clear all placed instances.
@@ -398,6 +485,64 @@ pub fn poisson_disk_sample(
     }
 
     points
+}
+
+// ============================================================================
+// SCREEN-TO-GROUND RAYCAST
+// ============================================================================
+
+/// Cast a ray from screen coordinates through the camera and intersect with
+/// the Y=0 ground plane. Returns the world-space hit point, or `None` if
+/// the ray is parallel to the ground plane (looking straight up).
+///
+/// * `screen_x`, `screen_y` - cursor position in pixels
+/// * `screen_w`, `screen_h` - viewport dimensions in pixels
+/// * `inv_vp` - inverse of the view-projection matrix (`Mat4`)
+pub fn screen_to_ground(
+    screen_x: f32,
+    screen_y: f32,
+    screen_w: f32,
+    screen_h: f32,
+    inv_vp: glam::Mat4,
+) -> Option<Vec3> {
+    // Convert screen coords to NDC [-1, 1]
+    let ndc_x = (2.0 * screen_x / screen_w) - 1.0;
+    let ndc_y = 1.0 - (2.0 * screen_y / screen_h);
+
+    // Unproject near and far points
+    let near_ndc = glam::Vec4::new(ndc_x, ndc_y, -1.0, 1.0);
+    let far_ndc = glam::Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+
+    let near_world = inv_vp * near_ndc;
+    let far_world = inv_vp * far_ndc;
+
+    if near_world.w.abs() < 1e-8 || far_world.w.abs() < 1e-8 {
+        return None;
+    }
+
+    let near = Vec3::new(
+        near_world.x / near_world.w,
+        near_world.y / near_world.w,
+        near_world.z / near_world.w,
+    );
+    let far = Vec3::new(
+        far_world.x / far_world.w,
+        far_world.y / far_world.w,
+        far_world.z / far_world.w,
+    );
+
+    // Ray-plane intersection with Y=0
+    let dir = far - near;
+    if dir.y.abs() < 1e-8 {
+        return None; // Ray parallel to ground
+    }
+
+    let t = -near.y / dir.y;
+    if t < 0.0 {
+        return None; // Intersection behind camera
+    }
+
+    Some(near + dir * t)
 }
 
 // ============================================================================
@@ -581,8 +726,327 @@ mod tests {
     }
 
     #[test]
+    fn test_screen_to_ground_center() {
+        use glam::Mat4;
+        // Camera at (0, 10, 0) looking straight down -> center of screen hits (0, 0, 0)
+        let view = Mat4::look_at_rh(
+            Vec3::new(0.0, 10.0, 10.0),
+            Vec3::ZERO,
+            Vec3::Y,
+        );
+        let proj = Mat4::perspective_rh(45.0_f32.to_radians(), 1.0, 0.1, 100.0);
+        let vp = proj * view;
+        let inv_vp = vp.inverse();
+        // Center of screen
+        let result = screen_to_ground(640.0, 400.0, 1280.0, 800.0, inv_vp);
+        assert!(result.is_some(), "Should hit ground plane");
+        let hit = result.unwrap();
+        // Y should be approximately 0 (ground plane)
+        assert!(hit.y.abs() < 0.1, "Y should be near 0, got {}", hit.y);
+    }
+
+    #[test]
+    fn test_undo_last() {
+        let mut ps = PlacementSystem::new();
+        ps.selected_asset = Some("tree".to_string());
+        ps.ghost_position = Vec3::new(1.0, 0.0, 2.0);
+        ps.place();
+        assert_eq!(ps.placed_instances.len(), 1);
+
+        let removed = ps.undo_last();
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().asset_id, "tree");
+        assert!(ps.placed_instances.is_empty());
+    }
+
+    #[test]
+    fn test_place_with_raycast() {
+        let mut ps = PlacementSystem::new();
+        ps.selected_asset = Some("rock".to_string());
+        ps.ghost_position = Vec3::new(5.0, 0.0, 3.0);
+
+        // Hilly terrain: y = 7.0 at all positions
+        let raycast = |_x: f32, _z: f32| -> Option<f32> { Some(7.0) };
+        let placed = ps.place_with_raycast(&raycast).unwrap();
+        assert_eq!(placed.position.y, 7.0, "Should conform to terrain height");
+    }
+
+    #[test]
+    fn test_instance_count() {
+        let mut ps = PlacementSystem::new();
+        assert_eq!(ps.instance_count(), 0);
+        ps.selected_asset = Some("a".to_string());
+        ps.place();
+        assert_eq!(ps.instance_count(), 1);
+        ps.place();
+        assert_eq!(ps.instance_count(), 2);
+    }
+
+    #[test]
     fn test_poisson_invalid_params() {
         assert!(poisson_disk_sample([0.0, 0.0], 0.0, 1.0, 30, 1).is_empty());
         assert!(poisson_disk_sample([0.0, 0.0], 5.0, 0.0, 30, 1).is_empty());
+    }
+
+    #[test]
+    fn test_place_with_raycast_fallback() {
+        let mut ps = PlacementSystem::new();
+        ps.selected_asset = Some("bush".to_string());
+        ps.ghost_position = Vec3::new(5.0, 3.0, 5.0);
+
+        // Raycast returns None (no terrain), should fallback to ghost Y
+        let raycast = |_x: f32, _z: f32| -> Option<f32> { None };
+        let placed = ps.place_with_raycast(&raycast).unwrap();
+        assert_eq!(placed.position.y, 3.0);
+    }
+
+    #[test]
+    fn test_screen_to_ground_basic() {
+        // Camera looking straight down at the origin
+        let view = glam::Mat4::look_at_rh(
+            Vec3::new(0.0, 10.0, 0.0),
+            Vec3::ZERO,
+            Vec3::NEG_Z,
+        );
+        let proj = glam::Mat4::perspective_rh(
+            std::f32::consts::FRAC_PI_4,
+            1.0,
+            0.1,
+            100.0,
+        );
+        let inv_vp = (proj * view).inverse();
+
+        // Center of screen should hit near origin on the ground plane
+        let hit = screen_to_ground(400.0, 300.0, 800.0, 600.0, inv_vp);
+        assert!(hit.is_some());
+        let p = hit.unwrap();
+        assert!(p.y.abs() < 0.01, "Ground hit Y should be ~0, got {}", p.y);
+    }
+
+    #[test]
+    fn test_screen_to_ground_no_intersection() {
+        // Camera looking straight up -- ray won't intersect Y=0 going forward
+        let view = glam::Mat4::look_at_rh(
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.0, 10.0, 0.0),
+            Vec3::Z,
+        );
+        let proj = glam::Mat4::perspective_rh(
+            std::f32::consts::FRAC_PI_4,
+            1.0,
+            0.1,
+            100.0,
+        );
+        let inv_vp = (proj * view).inverse();
+        let hit = screen_to_ground(400.0, 300.0, 800.0, 600.0, inv_vp);
+        assert!(hit.is_none());
+    }
+
+    #[test]
+    fn test_save_load_roundtrip() {
+        let mut ps = PlacementSystem::new();
+        ps.selected_asset = Some("flower".to_string());
+        ps.ghost_position = Vec3::new(1.0, 2.0, 3.0);
+        ps.ghost_rotation = 0.5;
+        ps.ghost_scale = 1.8;
+        ps.place();
+        ps.ghost_position = Vec3::new(4.0, 5.0, 6.0);
+        ps.place();
+
+        let dir = std::env::temp_dir().join("battle_tok_test_placement");
+        let path = dir.join("test_placements.json");
+
+        ps.save(&path).unwrap();
+        assert!(path.exists());
+
+        let mut ps2 = PlacementSystem::new();
+        ps2.load(&path).unwrap();
+        assert_eq!(ps2.placed_instances.len(), 2);
+        assert_eq!(ps2.placed_instances[0].asset_id, "flower");
+        assert_eq!(ps2.placed_instances[0].position, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(ps2.placed_instances[0].manual_rotation, 0.5);
+        assert_eq!(ps2.placed_instances[0].manual_scale, 1.8);
+        assert_eq!(ps2.placed_instances[1].position, Vec3::new(4.0, 5.0, 6.0));
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_scatter_with_sloped_ground() {
+        let mut ps = PlacementSystem::new();
+        ps.selected_asset = Some("tree".to_string());
+        ps.ghost_position = Vec3::new(0.0, 0.0, 0.0);
+
+        // Sloped ground: y = 0.5 * x
+        let raycast = |x: f32, _z: f32| -> Option<f32> { Some(x * 0.5) };
+        let placed = ps.scatter(&raycast);
+
+        assert!(!placed.is_empty());
+        for p in &placed {
+            let expected_y = p.position.x * 0.5;
+            assert!(
+                (p.position.y - expected_y).abs() < 0.01,
+                "Asset at x={:.1} should have y={:.1}, got y={:.1}",
+                p.position.x,
+                expected_y,
+                p.position.y,
+            );
+        }
+    }
+
+    #[test]
+    fn test_remove_nearest() {
+        let mut ps = PlacementSystem::new();
+        ps.selected_asset = Some("bush".to_string());
+
+        // Place three assets at known positions
+        ps.ghost_position = Vec3::new(0.0, 0.0, 0.0);
+        ps.place();
+        ps.ghost_position = Vec3::new(10.0, 0.0, 0.0);
+        ps.place();
+        ps.ghost_position = Vec3::new(20.0, 0.0, 0.0);
+        ps.place();
+        assert_eq!(ps.instance_count(), 3);
+
+        // Remove nearest to (9.5, 0, 0) within max_distance=5 -> should find (10, 0, 0)
+        let removed = ps.remove_nearest(Vec3::new(9.5, 0.0, 0.0), 5.0);
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().position.x, 10.0);
+        assert_eq!(ps.instance_count(), 2);
+
+        // Try to remove with nothing in range
+        let removed = ps.remove_nearest(Vec3::new(100.0, 0.0, 0.0), 2.0);
+        assert!(removed.is_none());
+        assert_eq!(ps.instance_count(), 2);
+    }
+
+    #[test]
+    fn test_remove_nearest_empty() {
+        let mut ps = PlacementSystem::new();
+        assert!(ps.remove_nearest(Vec3::ZERO, 10.0).is_none());
+    }
+
+    #[test]
+    fn test_scatter_rotation_jitter() {
+        let mut ps = PlacementSystem::new();
+        ps.selected_asset = Some("grass".to_string());
+        ps.ghost_position = Vec3::ZERO;
+        ps.ghost_rotation = 0.0;
+
+        let raycast = |_x: f32, _z: f32| -> Option<f32> { Some(0.0) };
+        let placed = ps.scatter(&raycast);
+
+        // With rotation jitter, not all assets should have the same rotation
+        if placed.len() >= 2 {
+            let rotations: Vec<f32> = placed.iter().map(|p| p.manual_rotation).collect();
+            let all_same = rotations.windows(2).all(|w| (w[0] - w[1]).abs() < 1e-5);
+            assert!(
+                !all_same,
+                "Scattered assets should have varied rotations from jitter"
+            );
+        }
+    }
+
+    #[test]
+    fn test_adjust_scatter_radius() {
+        let mut ps = PlacementSystem::new();
+        assert_eq!(ps.scatter_radius, 5.0);
+        ps.adjust_scatter_radius(3.0);
+        assert_eq!(ps.scatter_radius, 8.0);
+        // Clamp at max
+        ps.adjust_scatter_radius(100.0);
+        assert_eq!(ps.scatter_radius, 50.0);
+        // Clamp at min
+        ps.adjust_scatter_radius(-100.0);
+        assert_eq!(ps.scatter_radius, 1.0);
+    }
+
+    #[test]
+    fn test_adjust_scatter_spacing() {
+        let mut ps = PlacementSystem::new();
+        assert_eq!(ps.scatter_min_spacing, 2.0);
+        ps.adjust_scatter_spacing(1.0);
+        assert_eq!(ps.scatter_min_spacing, 3.0);
+        // Clamp at min
+        ps.adjust_scatter_spacing(-10.0);
+        assert_eq!(ps.scatter_min_spacing, 0.5);
+    }
+
+    #[test]
+    fn test_scatter_without_selection() {
+        let mut ps = PlacementSystem::new();
+        let raycast = |_x: f32, _z: f32| -> Option<f32> { Some(0.0) };
+        let placed = ps.scatter(&raycast);
+        assert!(placed.is_empty());
+    }
+
+    #[test]
+    fn test_scatter_preserves_scale() {
+        let mut ps = PlacementSystem::new();
+        ps.selected_asset = Some("tree".to_string());
+        ps.ghost_scale = 2.5;
+        ps.ghost_position = Vec3::ZERO;
+
+        let raycast = |_x: f32, _z: f32| -> Option<f32> { Some(0.0) };
+        let placed = ps.scatter(&raycast);
+
+        for p in &placed {
+            assert_eq!(p.manual_scale, 2.5);
+        }
+    }
+
+    #[test]
+    fn test_generate_instances_empty() {
+        let ps = PlacementSystem::new();
+        let params = VarietyParams::default();
+        let instances = ps.generate_instances(&params);
+        assert!(instances.is_empty());
+    }
+
+    #[test]
+    fn test_select_deselect() {
+        let mut ps = PlacementSystem::new();
+        assert!(!ps.is_active());
+        ps.select_asset(Some("oak".to_string()));
+        assert!(ps.is_active());
+        ps.select_asset(None);
+        assert!(!ps.is_active());
+    }
+
+    #[test]
+    fn test_clear() {
+        let mut ps = PlacementSystem::new();
+        ps.selected_asset = Some("tree".to_string());
+        ps.place();
+        ps.place();
+        assert_eq!(ps.instance_count(), 2);
+        ps.clear();
+        assert_eq!(ps.instance_count(), 0);
+    }
+
+    #[test]
+    fn test_poisson_negative_radius() {
+        assert!(poisson_disk_sample([0.0, 0.0], -5.0, 1.0, 30, 1).is_empty());
+    }
+
+    #[test]
+    fn test_poisson_min_dist_larger_than_radius() {
+        let points = poisson_disk_sample([0.0, 0.0], 1.0, 5.0, 30, 42);
+        assert_eq!(points.len(), 1);
+        assert_eq!(points[0], [0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_default_impl() {
+        let ps = PlacementSystem::default();
+        assert_eq!(ps.ghost_scale, 1.0);
+        assert!(ps.placed_instances.is_empty());
+    }
+
+    #[test]
+    fn test_placements_path() {
+        let path = placements_path();
+        assert!(path.ends_with("placements.json"));
     }
 }
