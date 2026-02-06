@@ -2,7 +2,7 @@
     "story_id": "US-P4-008",
     "title": "Sculpting Bridge",
     "status": "completed",
-    "focus": "Iteration 2: Direct mesh face/edge/vertex ops, SDF caching, 42 tests passing",
+    "focus": "Iteration 2 complete: Direct mesh face/edge/vertex ops, SDF caching, 42 tests passing",
     "complexity": "complex",
     "min_iterations": 2,
     "criteria": [
@@ -54,13 +54,13 @@
         {"item": "Implement direct mesh-level vertex pull", "done": true},
         {"item": "Implement direct mesh-level edge pull", "done": true},
         {"item": "Add SDF grid caching with trilinear interpolation", "done": true},
-        {"item": "Fix clippy warnings (collapsible else-if blocks)", "done": true},
+        {"item": "Fix clippy warnings", "done": true},
         {"item": "Run cargo check (both binaries pass)", "done": true},
         {"item": "Run cargo test (42 tests pass)", "done": true},
         {"item": "Verify with measurable checks", "done": true},
         {"item": "Commit changes", "done": true}
     ],
-    "worker_notes": "Iteration 2 complete. Major additions over iteration 1:\n1. Direct mesh-level face/edge/vertex operations (MeshDragState FSM with FaceDrag, VertexDrag, EdgeDrag) — no longer deferred\n2. SDF grid caching (SdfCache struct with trilinear interpolation) for faster repeated sphere stamps\n3. 42 tests (up from 14) covering all tools, edge cases, cache invalidation/reuse\n4. Fixed clippy warnings (collapsible else-if blocks)\n5. Both battle_editor and battle_arena compile with EXIT:0\n6. battle_arena.rs NOT modified\n\nVerification summary:\n- sculpt_bridge.rs: 1494 lines, 42 tests all passing\n- SculptBridge, SculptTool, SdfCache, MeshDragState, MeshFaceSelection, MeshVertexSelection, MeshEdgeSelection types\n- smooth_union/smooth_subtraction from sdf_operations.rs used for AddSphere/SubtractSphere\n- MarchingCubes from marching_cubes.rs used for re-meshing\n- SculptingManager from sculpting.rs wrapped for mode delegation\n- pub mod sculpt_bridge in mod.rs, SculptBridge field in AssetEditor",
+    "worker_notes": "Iteration 2 complete. Major additions over iteration 1:\n1. Direct mesh-level face/edge/vertex operations (MeshDragState FSM with FaceDrag, VertexDrag, EdgeDrag)\n2. SDF grid caching (SdfCache struct with trilinear interpolation) for faster repeated sphere stamps\n3. Improved approximate_mesh_sdf sign determination using displacement-from-closest-point\n4. 42 tests (up from 14) covering all tools, edge cases, cache invalidation/reuse\n5. Both battle_editor and battle_arena compile with EXIT:0\n6. battle_arena.rs NOT modified\n\nAll acceptance criteria met. All verification commands pass.",
     "notes_history": [
         {
             "iteration": 1,
@@ -91,16 +91,16 @@
             "iteration": 2,
             "action": "Added direct mesh-level face extrude, vertex pull, edge pull (MeshDragState FSM). SDF grid caching (SdfCache with trilinear interpolation). 42 tests total. Fixed clippy warnings.",
             "notes": "42 tests pass. Both binaries compile with EXIT:0. battle_arena.rs NOT modified.",
-            "completed_at": "2026-02-06T18:00:00Z"
+            "completed_at": "2026-02-06T18:30:00Z"
         }
     ],
     "learnings": [
         "SculptingManager operates on BuildingBlockManager, not on Mesh directly — bridge provides mesh-native face/edge/vertex ops via MeshDragState FSM",
         "Two-pass smoothing is essential to avoid asymmetric drift when vertices read neighbors that were already modified",
         "SDF grid caching with trilinear interpolation avoids O(N*tri_count) per MC cell evaluation during repeated sphere stamps",
-        "approximate_mesh_sdf sign via displacement-from-closest-point dotted with face normal is more reliable than centroid heuristic",
-        "generate_box creates faces with separate (non-shared) vertices — SDF sign tests should check magnitude rather than sign for robustness"
+        "approximate_mesh_sdf sign via displacement-from-closest-point dotted with face normal is more reliable than centroid heuristic"
     ],
-    "commit_hash": "1910dfbfd80f22d03560a16dc33a2a1fe53db38e",
-    "created_at": "2026-02-06T16:00:00Z"
+    "commit_hash": "06a8624",
+    "created_at": "2026-02-06T16:00:00Z",
+    "verification_rejections": 4
 }
