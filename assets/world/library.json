@@ -1,0 +1,17 @@
+[
+  {
+    "id": "updated_oak",
+    "name": "Updated Oak",
+    "category": "Tree",
+    "tags": [
+      "test"
+    ],
+    "path": "assets/world/oak_tree.btasset",
+    "vertex_count": 100,
+    "bounds_size": [
+      1.0,
+      2.0,
+      1.0
+    ]
+  }
+]

@@ -45,9 +45,12 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowAttributes, WindowId};
 
+use wgpu::util::DeviceExt;
+
 use battle_tok_engine::game::asset_editor::image_trace::{CanvasViewport, ImageTrace};
 use battle_tok_engine::game::asset_editor::orbit_camera::OrbitMouseButton;
 use battle_tok_engine::game::asset_editor::{AssetEditor, EditorStage};
+use battle_tok_engine::game::types::Vertex;
 
 // ============================================================================
 // GPU RESOURCES (minimal for editor)
@@ -59,6 +62,8 @@ struct EditorGpu {
     queue: wgpu::Queue,
     surface: wgpu::Surface<'static>,
     surface_config: wgpu::SurfaceConfiguration,
+    /// Render pipeline for 2D canvas overlays (vertex-colored triangles).
+    overlay_pipeline: wgpu::RenderPipeline,
 }
 
 impl EditorGpu {
@@ -169,11 +174,81 @@ impl BattleEditorApp {
         };
         surface.configure(&device, &surface_config);
 
+        // Create overlay shader and pipeline for canvas rendering
+        let overlay_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Editor Overlay Shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../shaders/editor_overlay.wgsl").into(),
+            ),
+        });
+
+        let overlay_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Editor Overlay Pipeline Layout"),
+                bind_group_layouts: &[],
+                push_constant_ranges: &[],
+            });
+
+        let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Editor Overlay Pipeline"),
+            layout: Some(&overlay_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &overlay_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: 0,
+                            shader_location: 0, // position
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: 12,
+                            shader_location: 1, // normal
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x4,
+                            offset: 24,
+                            shader_location: 2, // color
+                        },
+                    ],
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &overlay_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None, // No culling for 2D overlays
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         self.gpu = Some(EditorGpu {
             device,
             queue,
             surface,
             surface_config,
+            overlay_pipeline,
         });
 
         // Set initial window title
@@ -239,6 +314,77 @@ impl BattleEditorApp {
                 }
             }
             return;
+        }
+
+        // F10: toggle asset library panel
+        if key == KeyCode::F10 {
+            self.editor.library.visible = !self.editor.library.visible;
+            println!(
+                "Library panel: {}",
+                if self.editor.library.visible {
+                    "visible"
+                } else {
+                    "hidden"
+                }
+            );
+            return;
+        }
+
+        // If library is visible, route character keys to search
+        if self.editor.library.visible {
+            match key {
+                KeyCode::Backspace => {
+                    self.editor.library.handle_backspace();
+                    return;
+                }
+                k => {
+                    let c = match k {
+                        KeyCode::KeyA => Some('a'),
+                        KeyCode::KeyB => Some('b'),
+                        KeyCode::KeyC => Some('c'),
+                        KeyCode::KeyD => Some('d'),
+                        KeyCode::KeyE => Some('e'),
+                        KeyCode::KeyF => Some('f'),
+                        KeyCode::KeyG => Some('g'),
+                        KeyCode::KeyH => Some('h'),
+                        KeyCode::KeyI => Some('i'),
+                        KeyCode::KeyJ => Some('j'),
+                        KeyCode::KeyK => Some('k'),
+                        KeyCode::KeyL => Some('l'),
+                        KeyCode::KeyM => Some('m'),
+                        KeyCode::KeyN => Some('n'),
+                        KeyCode::KeyO => Some('o'),
+                        KeyCode::KeyP => Some('p'),
+                        KeyCode::KeyQ => Some('q'),
+                        KeyCode::KeyR => Some('r'),
+                        KeyCode::KeyS => Some('s'),
+                        KeyCode::KeyT => Some('t'),
+                        KeyCode::KeyU => Some('u'),
+                        KeyCode::KeyV => Some('v'),
+                        KeyCode::KeyW => Some('w'),
+                        KeyCode::KeyX => Some('x'),
+                        KeyCode::KeyY => Some('y'),
+                        KeyCode::KeyZ => Some('z'),
+                        KeyCode::Space => Some(' '),
+                        KeyCode::Minus => Some('-'),
+                        KeyCode::Digit0 => Some('0'),
+                        KeyCode::Digit1 => Some('1'),
+                        KeyCode::Digit2 => Some('2'),
+                        KeyCode::Digit3 => Some('3'),
+                        KeyCode::Digit4 => Some('4'),
+                        KeyCode::Digit5 => Some('5'),
+                        KeyCode::Digit6 => Some('6'),
+                        KeyCode::Digit7 => Some('7'),
+                        KeyCode::Digit8 => Some('8'),
+                        KeyCode::Digit9 => Some('9'),
+                        _ => None,
+                    };
+                    if let Some(ch) = c {
+                        self.editor.library.handle_char(ch);
+                        return;
+                    }
+                }
+            }
         }
 
         // Extrude-stage keys (Stage 2)
@@ -438,6 +584,61 @@ impl BattleEditorApp {
             }
         }
 
+        // Render canvas overlay (grid, outlines, tool previews)
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        self.editor.render_stage(&mut vertices, &mut indices);
+
+        // Render library panel overlay
+        let screen_w = gpu.surface_config.width as f32;
+        let screen_h = gpu.surface_config.height as f32;
+        let (lib_verts, lib_idxs) = self.editor.library.generate_panel(screen_w, screen_h);
+        if !lib_verts.is_empty() {
+            let base = vertices.len() as u32;
+            vertices.extend_from_slice(&lib_verts);
+            indices.extend(lib_idxs.iter().map(|i| i + base));
+        }
+
+        if !vertices.is_empty() && !indices.is_empty() {
+            let vertex_buffer = gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Canvas Vertex Buffer"),
+                    contents: bytemuck::cast_slice(&vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+            let index_buffer = gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Canvas Index Buffer"),
+                    contents: bytemuck::cast_slice(&indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
+
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Editor Canvas Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load, // Preserve clear + image trace
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+
+                pass.set_pipeline(&gpu.overlay_pipeline);
+                pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
+            }
+        }
+
         gpu.queue.submit(std::iter::once(encoder.finish()));
         output.present();
     }
@@ -472,10 +673,27 @@ impl ApplicationHandler for BattleEditorApp {
                 }
             }
 
-            // -- Mouse input: forward to canvas (stage 1) or orbit camera (stages 2-5) --
+            // -- Mouse input: library panel gets first dibs, then canvas/camera --
             WindowEvent::MouseInput { button, state, .. } => {
                 let pressed = state == ElementState::Pressed;
                 let (mx, my) = self.current_mouse;
+
+                // Library panel click handling (left click only)
+                if button == MouseButton::Left && pressed {
+                    let sw = self
+                        .gpu
+                        .as_ref()
+                        .map(|g| g.surface_config.width as f32)
+                        .unwrap_or(1280.0);
+                    let sh = self
+                        .gpu
+                        .as_ref()
+                        .map(|g| g.surface_config.height as f32)
+                        .unwrap_or(800.0);
+                    if self.editor.library.handle_click(mx, my, sw, sh).is_some() {
+                        return; // Consumed by library
+                    }
+                }
 
                 if self.editor.stage == EditorStage::Draw2D {
                     // Draw2D stage: forward to Canvas2D
@@ -532,6 +750,20 @@ impl ApplicationHandler for BattleEditorApp {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 100.0,
                 };
+
+                // Library panel scroll
+                if self.editor.library.visible {
+                    let sw = self
+                        .gpu
+                        .as_ref()
+                        .map(|g| g.surface_config.width as f32)
+                        .unwrap_or(1280.0);
+                    let (mx, _my) = self.current_mouse;
+                    if self.editor.library.contains_point(mx, sw) {
+                        self.editor.library.handle_scroll(scroll);
+                        return;
+                    }
+                }
 
                 if self.editor.stage == EditorStage::Draw2D {
                     if self.ctrl_held {
@@ -625,6 +857,7 @@ fn main() {
     println!("  Ctrl+I: Load reference image (stage 1)");
     println!("  Ctrl+H: Toggle reference image (stage 1)");
     println!("  Ctrl+Scroll: Adjust image scale (stage 1)");
+    println!("  F10: Toggle asset library panel");
     println!("  Ctrl+Z: Undo");
     println!("  Ctrl+Y: Redo");
     println!("  ESC: Exit");

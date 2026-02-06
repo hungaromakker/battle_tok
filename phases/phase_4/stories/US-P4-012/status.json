@@ -1,15 +1,15 @@
 {
     "story_id": "US-P4-012",
     "title": "Asset Library Panel",
-    "status": "pending",
-    "focus": "",
+    "status": "completed",
+    "focus": "All criteria met - library panel fully implemented",
     "complexity": "normal",
     "min_iterations": 1,
     "criteria": [
-        {"text": "F10 toggles the asset library panel visibility", "done": false, "notes": ""},
-        {"text": "Grid layout shows asset thumbnails/entries", "done": false, "notes": ""},
-        {"text": "Category filtering narrows displayed assets", "done": false, "notes": ""},
-        {"text": "Click selects an asset for use", "done": false, "notes": ""}
+        {"text": "F10 toggles the asset library panel visibility", "done": true, "notes": "F10 handler in battle_editor.rs toggles editor.library.visible"},
+        {"text": "Grid layout shows asset thumbnails/entries", "done": true, "notes": "4-column grid with 120x120 cells showing name, category, vertex count"},
+        {"text": "Category filtering narrows displayed assets", "done": true, "notes": "7 tabs (All + 6 categories), click tab to filter. filtered_entries() handles logic"},
+        {"text": "Click selects an asset for use", "done": true, "notes": "handle_click() returns LibraryAction::SelectAsset, selected cell highlighted in blue"}
     ],
     "verification_commands": [
         {"cmd": "grep -r 'AssetLibrary' src/game/asset_editor/", "expect_contains": "AssetLibrary", "description": "AssetLibrary struct exists"},
@@ -17,26 +17,38 @@
         {"cmd": "cargo check --bin battle_editor 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_editor compiles"}
     ],
     "checklist": [
-        {"item": "Read spec.md for implementation details", "done": false},
-        {"item": "Create AssetLibrary struct with panel state", "done": false},
-        {"item": "Create AssetEntry struct for individual assets", "done": false},
-        {"item": "Implement F10 toggle for panel visibility", "done": false},
-        {"item": "Implement grid layout for asset display", "done": false},
-        {"item": "Add category filtering functionality", "done": false},
-        {"item": "Implement click-to-select asset", "done": false},
-        {"item": "Run cargo check", "done": false},
-        {"item": "Verify with measurable checks", "done": false},
-        {"item": "Commit changes", "done": false}
+        {"item": "Read spec.md for implementation details", "done": true},
+        {"item": "Create AssetLibrary struct with panel state", "done": true},
+        {"item": "Create AssetEntry struct for individual assets", "done": true},
+        {"item": "Implement F10 toggle for panel visibility", "done": true},
+        {"item": "Implement grid layout for asset display", "done": true},
+        {"item": "Add category filtering functionality", "done": true},
+        {"item": "Implement click-to-select asset", "done": true},
+        {"item": "Run cargo check", "done": true},
+        {"item": "Verify with measurable checks", "done": true},
+        {"item": "Commit changes", "done": true}
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
+    "worker_notes": "All criteria met. Created library.rs with AssetLibrary, AssetEntry, LibraryAction. Panel renders 4-col grid with category tabs, search bar, click-to-select. F10 toggle wired in battle_editor.rs. Auto-adds entries on save. 12 unit tests pass. cargo check clean.",
+    "notes_history": [
+        {"iteration": 1, "note": "Implemented full library panel in single iteration. Created library.rs, added Serialize/Deserialize to AssetCategory, wired F10 in battle_editor.rs, connected save system to auto-add entries.", "timestamp": "2026-02-06T16:30:00Z"}
+    ],
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": ["US-P4-011"],
     "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
+    "files_modified": [
+        "src/game/asset_editor/library.rs",
+        "src/game/asset_editor/mod.rs",
+        "src/bin/battle_editor.rs"
+    ],
+    "iteration_history": [
+        {"iteration": 1, "action": "Full implementation of Asset Library Panel", "notes": "Created library.rs with all structs, rendering, filtering, I/O. Wired F10 toggle and save integration. All 12 tests pass, cargo check clean.", "completed_at": "2026-02-06T16:30:00Z"}
+    ],
+    "learnings": [
+        "The draw_text function requires screen_width and screen_height params for NDC conversion",
+        "AssetCategory needed Serialize/Deserialize derives added for JSON round-trip",
+        "Library panel rendering follows same add_quad/draw_text pattern as ui_panels.rs"
+    ],
     "verification_rejections": 0,
     "created_at": "2026-02-06T16:00:00Z"
 }

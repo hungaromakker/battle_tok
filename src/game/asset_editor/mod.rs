@@ -8,6 +8,7 @@ pub mod asset_file;
 pub mod canvas_2d;
 pub mod extrude;
 pub mod image_trace;
+pub mod library;
 pub mod orbit_camera;
 pub mod paint;
 pub mod sculpt_bridge;
@@ -22,6 +23,7 @@ use crate::render::building_blocks::BlockVertex;
 use asset_file::{AssetMetadata, load_btasset, save_btasset};
 use canvas_2d::Canvas2D;
 use extrude::{Extruder, PumpProfile};
+use library::AssetLibrary;
 use orbit_camera::OrbitCamera;
 use paint::PaintSystem;
 use sculpt_bridge::SculptBridge;
@@ -91,7 +93,7 @@ impl std::fmt::Display for EditorStage {
 }
 
 /// Categories of assets that can be created in the editor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum AssetCategory {
     /// Trees and vegetation
     Tree,
@@ -227,6 +229,8 @@ pub struct AssetEditor {
     pub paint: PaintSystem,
     /// Stage 5 save dialog fields
     pub save_dialog: SaveDialog,
+    /// Asset library panel (F10 toggle)
+    pub library: AssetLibrary,
 }
 
 impl Default for AssetEditor {
@@ -249,6 +253,7 @@ impl AssetEditor {
             sculpt: SculptBridge::new(),
             paint: PaintSystem::new(),
             save_dialog: SaveDialog::default(),
+            library: AssetLibrary::load(),
         }
     }
 
@@ -423,6 +428,25 @@ impl AssetEditor {
 
         save_btasset(&path, &vertices, &indices, &metadata, Some(&variety))
             .map_err(|e| format!("{e}"))?;
+
+        // Auto-add to library index
+        let asset_category = match self.save_dialog.category.as_str() {
+            "tree" => AssetCategory::Tree,
+            "grass" => AssetCategory::Grass,
+            "rock" => AssetCategory::Rock,
+            "structure" => AssetCategory::Structure,
+            "decoration" => AssetCategory::Decoration,
+            _ => AssetCategory::Prop,
+        };
+        self.library.add_entry(library::AssetEntry {
+            id: file_name.clone(),
+            name: self.save_dialog.name.clone(),
+            category: asset_category,
+            tags: metadata.tags.clone(),
+            path: path.display().to_string(),
+            vertex_count: metadata.vertex_count,
+            bounds_size: Vec3::ZERO,
+        });
 
         let msg = format!("Saved: {}", path.display());
         println!("{msg}");
