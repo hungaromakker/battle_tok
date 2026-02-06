@@ -1,15 +1,15 @@
 {
     "story_id": "US-P4-009",
     "title": "Vertex Color Painting",
-    "status": "pending",
-    "focus": "",
+    "status": "completed",
+    "focus": "All paint tools implemented and tested",
     "complexity": "normal",
     "min_iterations": 1,
     "criteria": [
-        {"text": "Brush paints vertex colors with falloff", "done": false, "notes": ""},
-        {"text": "Fill tool floods connected region with color", "done": false, "notes": ""},
-        {"text": "Gradient tool applies color gradient across selection", "done": false, "notes": ""},
-        {"text": "Eyedropper samples existing vertex color", "done": false, "notes": ""}
+        {"text": "Brush paints vertex colors with falloff", "done": true, "notes": "paint_brush() with radius/opacity/hardness falloff, 14 tests pass"},
+        {"text": "Fill tool floods connected region with color", "done": true, "notes": "flood_fill() with BFS on triangle adjacency, pre-cached colors for correctness"},
+        {"text": "Gradient tool applies color gradient across selection", "done": true, "notes": "apply_gradient() projects vertices onto start-end line, lerps between two colors"},
+        {"text": "Eyedropper samples existing vertex color", "done": true, "notes": "eyedropper() finds nearest vertex, copies color to palette with HSV sync"}
     ],
     "verification_commands": [
         {"cmd": "grep -r 'PaintTool' src/game/asset_editor/", "expect_contains": "PaintTool", "description": "PaintTool enum/struct exists"},
@@ -17,25 +17,35 @@
         {"cmd": "cargo check --bin battle_editor 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_editor compiles"}
     ],
     "checklist": [
-        {"item": "Read spec.md for implementation details", "done": false},
-        {"item": "Implement brush painting with falloff radius", "done": false},
-        {"item": "Implement fill tool for flood-filling regions", "done": false},
-        {"item": "Implement gradient tool across vertex selections", "done": false},
-        {"item": "Implement eyedropper for color sampling", "done": false},
-        {"item": "Define PaintTool enum for tool selection", "done": false},
-        {"item": "Run cargo check", "done": false},
-        {"item": "Verify with measurable checks", "done": false},
-        {"item": "Commit changes", "done": false}
+        {"item": "Read spec.md for implementation details", "done": true},
+        {"item": "Implement brush painting with falloff radius", "done": true},
+        {"item": "Implement fill tool for flood-filling regions", "done": true},
+        {"item": "Implement gradient tool across vertex selections", "done": true},
+        {"item": "Implement eyedropper for color sampling", "done": true},
+        {"item": "Define PaintTool enum for tool selection", "done": true},
+        {"item": "Run cargo check", "done": true},
+        {"item": "Verify with measurable checks", "done": true},
+        {"item": "Commit changes", "done": true}
     ],
-    "worker_notes": "",
-    "notes_history": [],
-    "iteration": 0,
+    "worker_notes": "All 4 paint tools implemented in paint.rs. PaintSystem integrates into AssetEditor as Stage 4 (Color). ColorPalette has Trees/Rock/Wood presets, recent colors (max 8), HSV sync. All 14 unit tests pass. Both battle_editor and battle_arena compile cleanly.",
+    "notes_history": [
+        {"iteration": 1, "note": "Implemented all paint tools, fixed flood fill to pre-cache colors, fixed brush test assertions. All 14 tests pass, both binaries compile.", "timestamp": "2026-02-06T17:00:00Z"}
+    ],
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": ["US-P4-006"],
-    "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
+    "commit_hash": "6bd265ca95255e901c51de14b01c90afbd0e6c11",
+    "files_modified": [
+        "src/game/asset_editor/paint.rs",
+        "src/game/asset_editor/mod.rs"
+    ],
+    "iteration_history": [
+        {"iteration": 1, "action": "Created paint.rs with PaintSystem, BrushParams, ColorPalette, PaintTool. Implemented brush, fill, gradient, eyedropper. Wired into mod.rs. Fixed tests and committed.", "notes": "All criteria met in single iteration", "completed_at": "2026-02-06T17:00:00Z"}
+    ],
+    "learnings": [
+        "Flood fill BFS must pre-cache triangle colors before painting to avoid corrupting neighbor color checks",
+        "When testing brush painting, avoid painting a color onto a background that already has that channel maxed (e.g. red onto white)"
+    ],
     "verification_rejections": 0,
     "created_at": "2026-02-06T16:00:00Z"
 }
