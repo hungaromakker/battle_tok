@@ -1,17 +1,17 @@
 {
     "story_id": "US-P4-001",
     "title": "Create battle_editor Binary + AssetEditor Module Skeleton",
-    "status": "pending",
+    "status": "completed",
     "focus": "",
     "complexity": "normal",
     "min_iterations": 2,
     "criteria": [
-        {"text": "cargo check --bin battle_editor compiles with 0 errors", "done": false, "notes": ""},
-        {"text": "cargo check --bin battle_arena still compiles (no changes to it)", "done": false, "notes": ""},
-        {"text": "battle_editor binary can be built and run, opening a window titled \"Battle T\u00f6k \u2014 Asset Editor\"", "done": false, "notes": ""},
-        {"text": "Keys 1-5 switch between editor stages (visible in title bar or on-screen text)", "done": false, "notes": ""},
-        {"text": "AssetEditor struct exists in src/game/asset_editor/mod.rs with all core enums", "done": false, "notes": ""},
-        {"text": "battle_arena.rs is NOT modified", "done": false, "notes": ""}
+        {"text": "cargo check --bin battle_editor compiles with 0 errors", "done": true, "notes": "Compiles cleanly with 0 errors (only pre-existing lib warnings)"},
+        {"text": "cargo check --bin battle_arena still compiles (no changes to it)", "done": true, "notes": "Verified: compiles with same pre-existing warnings, no regressions"},
+        {"text": "battle_editor binary can be built and run, opening a window titled \"Battle T\u00f6k \u2014 Asset Editor\"", "done": true, "notes": "Window title set to 'Battle Tok \u2014 Asset Editor' with stage info, 1280x800 window"},
+        {"text": "Keys 1-5 switch between editor stages (visible in title bar or on-screen text)", "done": true, "notes": "Keys 1-5 mapped to Draw2D/Extrude/Sculpt/Color/Save stages, reflected in window title"},
+        {"text": "AssetEditor struct exists in src/game/asset_editor/mod.rs with all core enums", "done": true, "notes": "AssetEditor, EditorStage, AssetCategory, AssetDraft, OutlinePoint all implemented with tests"},
+        {"text": "battle_arena.rs is NOT modified", "done": true, "notes": "battle_arena.rs was not touched at all"}
     ],
     "verification_commands": [
         {"cmd": "cargo check --bin battle_editor 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_editor binary compiles"},
@@ -21,24 +21,35 @@
         {"cmd": "grep -c 'pub mod asset_editor' src/game/mod.rs", "expect_gt": 0, "description": "asset_editor module registered"}
     ],
     "checklist": [
-        {"item": "Read spec.md for implementation details", "done": false},
-        {"item": "Add [[bin]] entry to Cargo.toml", "done": false},
-        {"item": "Create src/game/asset_editor/mod.rs with core types", "done": false},
-        {"item": "Create src/bin/battle_editor.rs with winit + wgpu init", "done": false},
-        {"item": "Add pub mod asset_editor to src/game/mod.rs", "done": false},
-        {"item": "Implement stage switching with keys 1-5", "done": false},
-        {"item": "Run cargo check for all binaries", "done": false},
-        {"item": "Commit changes", "done": false}
+        {"item": "Read spec.md for implementation details", "done": true},
+        {"item": "Add [[bin]] entry to Cargo.toml", "done": true},
+        {"item": "Create src/game/asset_editor/mod.rs with core types", "done": true},
+        {"item": "Create src/bin/battle_editor.rs with winit + wgpu init", "done": true},
+        {"item": "Add pub mod asset_editor to src/game/mod.rs", "done": true},
+        {"item": "Implement stage switching with keys 1-5", "done": true},
+        {"item": "Run cargo check for all binaries", "done": true},
+        {"item": "Commit changes", "done": true}
     ],
-    "worker_notes": "",
+    "worker_notes": "Cargo.toml already had the [[bin]] entry for battle_editor. Had to add depth_slice: None to RenderPassColorAttachment (wgpu 27 API). All tests in asset_editor module pass. Used AutoVsync for editor (vs Immediate in arena) since editor doesn't need max FPS.",
     "notes_history": [],
-    "iteration": 0,
+    "iteration": 2,
     "failed_reasons": [],
     "dependencies": [],
     "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
+    "files_modified": [
+        "src/bin/battle_editor.rs",
+        "src/game/asset_editor/mod.rs",
+        "src/game/mod.rs",
+        "phases/phase_4/stories/US-P4-001/status.json"
+    ],
+    "iteration_history": [
+        {"iteration": 1, "action": "Created all files: battle_editor.rs, asset_editor/mod.rs, updated game/mod.rs. First cargo check failed due to missing depth_slice field in wgpu 27 RenderPassColorAttachment."},
+        {"iteration": 2, "action": "Added depth_slice: None to RenderPassColorAttachment. Both binaries now compile successfully."}
+    ],
+    "learnings": [
+        "wgpu 27 requires depth_slice field in RenderPassColorAttachment (not present in earlier versions)",
+        "Cargo.toml already had the battle_editor binary entry from project scaffolding"
+    ],
     "verification_rejections": 0,
     "created_at": "2026-02-06T18:00:00Z"
 }
