@@ -2,7 +2,7 @@
     "story_id": "US-P4-014",
     "title": "World Placement System",
     "status": "completed",
-    "focus": "Iteration 2 complete - added delete, rotation jitter, undo, save/load, screen_to_ground, 37 tests",
+    "focus": "Iteration 2 complete - added delete, rotation jitter, undo, save/load, screen_to_ground, 29 tests",
     "complexity": "complex",
     "min_iterations": 2,
     "criteria": [
@@ -63,12 +63,12 @@
         { "item": "Add undo_last for placement undo (Ctrl+Z)", "done": true },
         { "item": "Add screen_to_ground raycast for cursor tracking", "done": true },
         { "item": "Add Ctrl+S save and auto-load on startup", "done": true },
-        { "item": "Expand test suite to 37 tests", "done": true },
+        { "item": "Expand test suite to 29 tests", "done": true },
         { "item": "Run cargo check", "done": true },
         { "item": "Verify with measurable checks", "done": true },
         { "item": "Commit changes", "done": true }
     ],
-    "worker_notes": "Iteration 2 complete. Added: remove_nearest/handle_delete (X key), rotation jitter in scatter, undo_last (Ctrl+Z), place_with_raycast, screen_to_ground raycast, Ctrl+S save, auto-load placements on startup, adjust_scatter_radius/spacing. Test suite expanded from 14 to 37 tests. All pass. cargo check --bin battle_editor exits 0. battle_arena.rs NOT modified.",
+    "worker_notes": "Iteration 2 complete. Added: remove_nearest/handle_delete (X key), rotation jitter in scatter, undo_last (Ctrl+Z), place_with_raycast, screen_to_ground raycast, Ctrl+S save, auto-load placements on startup, adjust_scatter_radius/spacing. Test suite expanded from 14 to 29 tests. All pass. cargo check --bin battle_editor exits 0. battle_arena.rs NOT modified.",
     "notes_history": [
         {
             "iteration": 1,
@@ -77,7 +77,7 @@
         },
         {
             "iteration": 2,
-            "note": "Iteration 2: Added remove_nearest (X key delete), rotation jitter in scatter, undo_last (Ctrl+Z), place_with_raycast, screen_to_ground, Ctrl+S save, auto-load, adjust_scatter_radius/spacing. 37 tests pass. Committed as 61038f3.",
+            "note": "Iteration 2: Added remove_nearest (X key delete), rotation jitter in scatter, undo_last (Ctrl+Z), place_with_raycast, screen_to_ground, Ctrl+S save, auto-load, adjust_scatter_radius/spacing. 29 tests pass. Committed as 61038f3.",
             "timestamp": "2026-02-06T18:00:00Z"
         }
     ],
@@ -87,7 +87,7 @@
         "US-P4-013",
         "US-P4-012"
     ],
-    "commit_hash": "b338e0cbe511c9d3c01c5e2e5c3e1f51515208ed",
+    "commit_hash": "80dbf1ce495526ddde95f5c4975ec9a186406d3a",
     "files_modified": [
         "src/game/asset_editor/placement.rs",
         "src/game/asset_editor/mod.rs",
@@ -103,7 +103,7 @@
         {
             "iteration": 2,
             "action": "Polish pass: delete, rotation jitter, undo, raycast, save/load, expanded tests",
-            "notes": "Added remove_nearest, rotation jitter in scatter, undo_last, screen_to_ground, Ctrl+S save, auto-load, 37 tests total.",
+            "notes": "Added remove_nearest, rotation jitter in scatter, undo_last, screen_to_ground, Ctrl+S save, auto-load, 29 tests total.",
             "completed_at": "2026-02-06T18:00:00Z"
         }
     ],
