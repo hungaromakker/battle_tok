@@ -43,8 +43,7 @@ pub use types::{fbm_noise, hash_2d, noise_2d, ridged_noise, smoothstep, turbulen
 pub use types::{generate_box, generate_oriented_box, generate_rotated_box, generate_sphere};
 
 pub use arena_cannon::{
-    ArenaCannon, CANNON_GRAB_OFFSET, CANNON_GRAB_RANGE, CANNON_TERRAIN_OFFSET,
-    generate_cannon_mesh,
+    ArenaCannon, CANNON_GRAB_OFFSET, CANNON_GRAB_RANGE, CANNON_TERRAIN_OFFSET, generate_cannon_mesh,
 };
 pub use arena_player::{AimingKeys, ArenaGround, BridgeDef, IslandDef, MovementKeys, Player};
 pub use arena_player::{

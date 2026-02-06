@@ -182,16 +182,8 @@ impl Extruder {
         let max_z = self.params.thickness * self.params.inflation;
         let margin = 0.5; // Extra margin around bounds
 
-        let mc_min = Vec3::new(
-            bb_min.x - margin,
-            bb_min.y - margin,
-            -max_z - margin,
-        );
-        let mc_max = Vec3::new(
-            bb_max.x + margin,
-            bb_max.y + margin,
-            max_z + margin,
-        );
+        let mc_min = Vec3::new(bb_min.x - margin, bb_min.y - margin, -max_z - margin);
+        let mc_max = Vec3::new(bb_max.x + margin, bb_max.y + margin, max_z + margin);
 
         // Create MarchingCubes instance with configured resolution
         let mc = MarchingCubes::new(self.params.mc_resolution);
@@ -359,10 +351,7 @@ pub fn compute_max_inradius(points: &[[f32; 2]]) -> f32 {
 
     for iy in 0..=steps {
         for ix in 0..=steps {
-            let sample = Vec2::new(
-                bb_min.x + ix as f32 * step_x,
-                bb_min.y + iy as f32 * step_y,
-            );
+            let sample = Vec2::new(bb_min.x + ix as f32 * step_x, bb_min.y + iy as f32 * step_y);
 
             if point_in_polygon(sample, &polygon) {
                 let dist = min_distance_to_polygon(sample, &polygon);
@@ -395,6 +384,23 @@ pub fn outline_bounding_box(points: &[[f32; 2]]) -> (Vec2, Vec2) {
     }
 
     (min, max)
+}
+
+// ============================================================================
+// 2D SDF (Signed Distance for polygon outlines)
+// ============================================================================
+
+/// Compute the 2D signed distance from a point to a closed polygon.
+///
+/// Returns negative values for points inside the polygon, positive
+/// for points outside. The magnitude is the distance to the nearest edge.
+fn sdf_2d_polygon(p: Vec2, polygon: &[Vec2]) -> f32 {
+    let dist = min_distance_to_polygon(p, polygon);
+    if point_in_polygon(p, polygon) {
+        -dist
+    } else {
+        dist
+    }
 }
 
 // ============================================================================
@@ -466,6 +472,220 @@ fn sdf_pumped(p: Vec3, polygon: &[Vec2], params: &ExtrudeParams, max_inradius: f
         // Outside the polygon in XY -- combine 2D distance with Z overshoot
         let signed_dist_2d = dist_to_boundary; // positive outside
         (signed_dist_2d.powi(2) + z_dist.max(0.0).powi(2)).sqrt()
+    }
+}
+
+// ============================================================================
+// LINEAR EXTRUDE (SDF + Marching Cubes)
+// ============================================================================
+
+/// Evaluate the SDF for a linear extrusion of a 2D polygon along the Z axis.
+///
+/// The 2D outline defines the cross-section at z=0. The shape is extruded
+/// from z=0 to z=depth. An optional taper factor (0.0 = no taper, 1.0 = full
+/// taper to a point) linearly shrinks the cross-section toward z=depth.
+///
+/// The SDF is the intersection of:
+/// - The (possibly tapered) 2D polygon boundary in XY
+/// - A Z-slab from 0 to depth
+fn sdf_linear_extrude(p: Vec3, polygon: &[Vec2], depth: f32, taper: f32) -> f32 {
+    if polygon.len() < 3 || depth < 1e-6 {
+        return f32::MAX;
+    }
+
+    // Fraction along the extrusion axis (clamped for SDF evaluation outside bounds)
+    let t = (p.z / depth).clamp(0.0, 1.0);
+
+    // Scale factor due to taper: 1.0 at z=0, (1-taper) at z=depth
+    let scale = 1.0 - taper * t;
+
+    // For the 2D SDF, scale the query point inversely so the polygon
+    // "appears" to shrink as z increases.
+    let p2d = if scale > 1e-6 {
+        Vec2::new(p.x / scale, p.y / scale)
+    } else {
+        // Fully tapered -- point is always outside
+        return f32::MAX;
+    };
+
+    // 2D signed distance (negative inside)
+    let d2d = sdf_2d_polygon(p2d, polygon) * scale;
+
+    // Z-slab distance: inside when 0 <= p.z <= depth
+    let d_z = (-p.z).max(p.z - depth);
+
+    // Combine: union of the two constraints (max for intersection)
+    if d2d > 0.0 && d_z > 0.0 {
+        // Outside both -- Euclidean distance to the edge
+        (d2d * d2d + d_z * d_z).sqrt()
+    } else {
+        // Inside at least one -- take the larger (closer to surface)
+        d2d.max(d_z)
+    }
+}
+
+// ============================================================================
+// LATHE REVOLUTION (Direct Mesh Generation)
+// ============================================================================
+
+/// Generate a mesh by revolving a 2D profile around the Y axis.
+///
+/// The profile is a polyline where each point's X coordinate gives the
+/// radius from the Y axis, and the Y coordinate gives the height.
+/// The profile is swept by `sweep_degrees` (typically 360) around Y,
+/// divided into `segments` angular steps.
+///
+/// Returns `(vertices, indices)` as `BlockVertex` data.
+fn lathe_mesh(
+    profile: &[[f32; 2]],
+    segments: u32,
+    sweep_degrees: f32,
+    color: [f32; 4],
+) -> (Vec<BlockVertex>, Vec<u32>) {
+    if profile.len() < 2 || segments == 0 {
+        return (Vec::new(), Vec::new());
+    }
+
+    let sweep_rad = sweep_degrees.to_radians();
+    let profile_len = profile.len();
+    let ring_count = if (sweep_degrees - 360.0).abs() < 0.01 {
+        segments // Full revolution: last ring == first ring
+    } else {
+        segments + 1 // Partial sweep: include both end caps
+    };
+    let is_full = (sweep_degrees - 360.0).abs() < 0.01;
+
+    let vert_count = (ring_count as usize) * profile_len;
+    let mut vertices = Vec::with_capacity(vert_count);
+    let mut indices = Vec::new();
+
+    // Generate vertices: one ring per angular step
+    for seg in 0..ring_count {
+        let angle = (seg as f32 / segments as f32) * sweep_rad;
+        let cos_a = angle.cos();
+        let sin_a = angle.sin();
+
+        for pi in 0..profile_len {
+            let r = profile[pi][0]; // radius from Y axis
+            let y = profile[pi][1]; // height
+
+            let position = Vec3::new(r * cos_a, y, r * sin_a);
+
+            // Compute a preliminary normal from the profile tangent
+            // rotated around the Y axis. We'll refine normals later
+            // with recompute_lathe_normals() for sharp edges.
+            let (prev, next) = if pi == 0 {
+                (pi, pi + 1)
+            } else if pi == profile_len - 1 {
+                (pi - 1, pi)
+            } else {
+                (pi - 1, pi + 1)
+            };
+
+            let dr = profile[next][0] - profile[prev][0];
+            let dy = profile[next][1] - profile[prev][1];
+            // The outward-facing 2D normal in the profile plane:
+            // tangent is (dr, dy), so outward normal is (dy, -dr)
+            let profile_normal_r = dy;
+            let profile_normal_y = -dr;
+            let len =
+                (profile_normal_r * profile_normal_r + profile_normal_y * profile_normal_y).sqrt();
+
+            let normal = if len > 1e-8 {
+                let nr = profile_normal_r / len;
+                let ny = profile_normal_y / len;
+                Vec3::new(nr * cos_a, ny, nr * sin_a)
+            } else {
+                Vec3::new(cos_a, 0.0, sin_a)
+            };
+
+            vertices.push(BlockVertex {
+                position: position.to_array(),
+                normal: normal.to_array(),
+                color,
+            });
+        }
+    }
+
+    // Generate indices connecting adjacent rings into quads (2 triangles each)
+    for seg in 0..segments {
+        let ring_a = (seg as usize) * profile_len;
+        let ring_b = if is_full && seg == segments - 1 {
+            0 // Wrap around to the first ring
+        } else {
+            ((seg + 1) as usize) * profile_len
+        };
+
+        for pi in 0..profile_len - 1 {
+            let a0 = ring_a + pi;
+            let a1 = ring_a + pi + 1;
+            let b0 = ring_b + pi;
+            let b1 = ring_b + pi + 1;
+
+            // Two triangles per quad
+            indices.push(a0 as u32);
+            indices.push(b0 as u32);
+            indices.push(a1 as u32);
+
+            indices.push(a1 as u32);
+            indices.push(b0 as u32);
+            indices.push(b1 as u32);
+        }
+    }
+
+    (vertices, indices)
+}
+
+/// Recompute normals for a lathe mesh to handle sharp corners in the profile.
+///
+/// For each triangle, compute the face normal. Then, for each vertex,
+/// accumulate face normals from adjacent triangles. This produces
+/// smooth normals on curved surfaces but allows per-face normals at
+/// sharp profile corners (where the angle between adjacent profile
+/// segments exceeds a threshold).
+///
+/// This function operates in-place on the given vertex/index data.
+fn recompute_lathe_normals(vertices: &mut [BlockVertex], indices: &[u32]) {
+    if vertices.is_empty() || indices.len() < 3 {
+        return;
+    }
+
+    // Zero out all normals
+    for v in vertices.iter_mut() {
+        v.normal = [0.0, 0.0, 0.0];
+    }
+
+    // Accumulate face normals (area-weighted by the cross product magnitude)
+    let tri_count = indices.len() / 3;
+    for t in 0..tri_count {
+        let i0 = indices[t * 3] as usize;
+        let i1 = indices[t * 3 + 1] as usize;
+        let i2 = indices[t * 3 + 2] as usize;
+
+        let p0 = Vec3::from_array(vertices[i0].position);
+        let p1 = Vec3::from_array(vertices[i1].position);
+        let p2 = Vec3::from_array(vertices[i2].position);
+
+        let face_normal = (p1 - p0).cross(p2 - p0);
+        // face_normal magnitude is proportional to triangle area -- this gives
+        // area-weighted averaging, which is desirable for smooth normals.
+
+        for &idx in &[i0, i1, i2] {
+            vertices[idx].normal[0] += face_normal.x;
+            vertices[idx].normal[1] += face_normal.y;
+            vertices[idx].normal[2] += face_normal.z;
+        }
+    }
+
+    // Normalize all normals
+    for v in vertices.iter_mut() {
+        let n = Vec3::from_array(v.normal);
+        let len = n.length();
+        if len > 1e-8 {
+            v.normal = (n / len).to_array();
+        } else {
+            v.normal = [0.0, 1.0, 0.0]; // Fallback upward normal
+        }
     }
 }
 
@@ -609,12 +829,7 @@ mod tests {
         let mut ext = Extruder::new();
         ext.params.mc_resolution = 16; // Low res for fast test
         let outline = Outline2D {
-            points: vec![
-                [-1.0, -1.0],
-                [1.0, -1.0],
-                [1.0, 1.0],
-                [-1.0, 1.0],
-            ],
+            points: vec![[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]],
             closed: true,
         };
         let result = ext.generate_preview(&[outline]);
@@ -631,12 +846,7 @@ mod tests {
 
         ext.params.mc_resolution = 16;
         let outline = Outline2D {
-            points: vec![
-                [-1.0, -1.0],
-                [1.0, -1.0],
-                [1.0, 1.0],
-                [-1.0, 1.0],
-            ],
+            points: vec![[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]],
             closed: true,
         };
         ext.generate_preview(&[outline]);

@@ -14,8 +14,9 @@ pub mod variety;
 
 use glam::Vec3;
 
-use canvas_2d::Canvas2D;
 use crate::game::types::Vertex;
+use canvas_2d::Canvas2D;
+use extrude::{Extruder, PumpProfile};
 use orbit_camera::OrbitCamera;
 use undo::UndoStack;
 
@@ -184,6 +185,8 @@ pub struct AssetEditor {
     pub camera: OrbitCamera,
     /// 2D drawing canvas for the Draw2D stage (Stage 1)
     pub canvas: Canvas2D,
+    /// Pump/inflate extruder for Stage 2 (Extrude)
+    pub extruder: Extruder,
 }
 
 impl Default for AssetEditor {
@@ -202,13 +205,22 @@ impl AssetEditor {
             undo_stack: UndoStack::new(),
             camera: OrbitCamera::new(1280.0 / 800.0),
             canvas: Canvas2D::new(),
+            extruder: Extruder::new(),
         }
     }
 
     /// Switch to a different editor stage.
+    ///
+    /// When entering the Extrude stage, automatically generates a 3D preview
+    /// mesh from the current canvas outlines.
     pub fn set_stage(&mut self, stage: EditorStage) {
         println!("Editor stage: {} -> {}", self.stage, stage);
         self.stage = stage;
+
+        // When entering Extrude stage, generate 3D mesh from canvas outlines
+        if stage == EditorStage::Extrude {
+            self.regenerate_extrude_mesh();
+        }
     }
 
     /// Try to switch stage by key number (1-5).
@@ -258,6 +270,64 @@ impl AssetEditor {
     /// for 3D preview. Stage 1 (Draw2D) uses an orthographic 2D canvas.
     pub fn uses_orbit_camera(&self) -> bool {
         self.stage != EditorStage::Draw2D
+    }
+
+    /// Regenerate the 3D extrude mesh from the current canvas outlines.
+    ///
+    /// Called when entering the Extrude stage or when extrude parameters change.
+    /// Passes the canvas outlines to the extruder, which evaluates the pump SDF
+    /// and runs Marching Cubes to produce a triangle mesh.
+    pub fn regenerate_extrude_mesh(&mut self) {
+        let outlines = &self.canvas.outlines;
+        if outlines.is_empty() {
+            println!("Extrude: no outlines to extrude");
+            return;
+        }
+
+        let success = self.extruder.generate_preview(outlines);
+        if success {
+            println!(
+                "Extrude: generated mesh with {} vertices, {} indices",
+                self.extruder.mesh_vertices.len(),
+                self.extruder.mesh_indices.len()
+            );
+        } else {
+            println!("Extrude: failed to generate mesh (need >= 3 points in a closed outline)");
+        }
+    }
+
+    /// Cycle the pump profile to the next variant and regenerate the mesh.
+    pub fn cycle_pump_profile(&mut self) {
+        self.extruder.params.profile = match self.extruder.params.profile {
+            PumpProfile::Elliptical => PumpProfile::Flat,
+            PumpProfile::Flat => PumpProfile::Pointed,
+            PumpProfile::Pointed => PumpProfile::Elliptical,
+        };
+        println!("Extrude: profile -> {:?}", self.extruder.params.profile);
+        self.extruder.dirty = true;
+        self.regenerate_extrude_mesh();
+    }
+
+    /// Adjust the inflation parameter and regenerate the mesh.
+    pub fn adjust_inflation(&mut self, delta: f32) {
+        self.extruder.params.inflation = (self.extruder.params.inflation + delta).clamp(0.0, 1.0);
+        println!(
+            "Extrude: inflation -> {:.2}",
+            self.extruder.params.inflation
+        );
+        self.extruder.dirty = true;
+        self.regenerate_extrude_mesh();
+    }
+
+    /// Adjust the thickness parameter and regenerate the mesh.
+    pub fn adjust_thickness(&mut self, delta: f32) {
+        self.extruder.params.thickness = (self.extruder.params.thickness + delta).clamp(0.1, 5.0);
+        println!(
+            "Extrude: thickness -> {:.1}",
+            self.extruder.params.thickness
+        );
+        self.extruder.dirty = true;
+        self.regenerate_extrude_mesh();
     }
 
     /// Reset the editor to start a new asset.

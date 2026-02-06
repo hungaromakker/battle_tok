@@ -352,10 +352,7 @@ impl Canvas2D {
     /// Toggle X-axis mirror symmetry.
     pub fn toggle_mirror(&mut self) {
         self.mirror_x = !self.mirror_x;
-        println!(
-            "Mirror X: {}",
-            if self.mirror_x { "on" } else { "off" }
-        );
+        println!("Mirror X: {}", if self.mirror_x { "on" } else { "off" });
     }
 
     /// Increase eraser radius by one step, clamped to maximum.
@@ -578,33 +575,9 @@ impl Canvas2D {
             let p2 = self.arc_points[1];
             let p3 = self.arc_points[2];
 
-            if let Some((center, radius)) = circumscribed_circle(p1, p2, p3) {
-                // Compute angles from center to each point
-                let a1 = (p1[1] - center[1]).atan2(p1[0] - center[0]);
-                let a2 = (p2[1] - center[1]).atan2(p2[0] - center[0]);
-                let a3 = (p3[1] - center[1]).atan2(p3[0] - center[0]);
-
-                // Determine sweep direction: we want to go from a1 to a3
-                // passing through a2. Check both clockwise and counter-clockwise.
-                let arc_points = generate_arc_points(center, radius, a1, a2, a3, Self::ARC_SEGMENTS);
-
-                if arc_points.len() >= 2 {
-                    let outline = Outline2D {
-                        points: arc_points,
-                        closed: false,
-                    };
-                    self.outlines.push(outline);
-                    println!("Arc tool: arc created with {} points", self.outlines.last().map_or(0, |o| o.len()));
-                }
-            } else {
-                println!("Arc tool: collinear points, creating straight line instead");
-                let outline = Outline2D {
-                    points: vec![p1, p3],
-                    closed: false,
-                };
-                self.outlines.push(outline);
-            }
-
+            let outline = arc_from_3_points(p1, p2, p3, Self::ARC_SEGMENTS);
+            println!("Arc tool: arc created with {} points", outline.points.len());
+            self.outlines.push(outline);
             self.arc_points.clear();
         }
     }
@@ -645,24 +618,48 @@ impl Canvas2D {
 
         // 3. Completed outlines
         for outline in &self.outlines {
-            self.render_outline(outline, Self::OUTLINE_COLOR, Self::LINE_HALF_WIDTH, vertices, indices);
+            self.render_outline(
+                outline,
+                Self::OUTLINE_COLOR,
+                Self::LINE_HALF_WIDTH,
+                vertices,
+                indices,
+            );
         }
 
         // 4. Mirror: render reflected copies of completed outlines
         if self.mirror_x {
             for outline in &self.outlines {
                 let mirrored = mirror_outline_x(outline);
-                self.render_outline(&mirrored, Self::MIRROR_OUTLINE_COLOR, Self::LINE_HALF_WIDTH, vertices, indices);
+                self.render_outline(
+                    &mirrored,
+                    Self::MIRROR_OUTLINE_COLOR,
+                    Self::LINE_HALF_WIDTH,
+                    vertices,
+                    indices,
+                );
             }
         }
 
         // 5. Active (in-progress) outline
         if let Some(ref active) = self.active_outline {
-            self.render_outline(active, Self::ACTIVE_COLOR, Self::LINE_HALF_WIDTH, vertices, indices);
+            self.render_outline(
+                active,
+                Self::ACTIVE_COLOR,
+                Self::LINE_HALF_WIDTH,
+                vertices,
+                indices,
+            );
             // Mirror the active outline too
             if self.mirror_x {
                 let mirrored = mirror_outline_x(active);
-                self.render_outline(&mirrored, Self::MIRROR_OUTLINE_COLOR, Self::LINE_HALF_WIDTH, vertices, indices);
+                self.render_outline(
+                    &mirrored,
+                    Self::MIRROR_OUTLINE_COLOR,
+                    Self::LINE_HALF_WIDTH,
+                    vertices,
+                    indices,
+                );
             }
         }
 
@@ -962,6 +959,43 @@ impl Canvas2D {
 // CIRCUMSCRIBED CIRCLE & ARC GENERATION
 // ============================================================================
 
+/// Create an arc outline from 3 points: start, through, and end.
+///
+/// Computes the circumscribed circle of the 3 points and generates
+/// intermediate arc points along the shorter arc from `p1` to `p3` passing
+/// through `p2`. If the points are collinear, returns a straight line
+/// from `p1` to `p3`.
+pub fn arc_from_3_points(
+    p1: [f32; 2],
+    p2: [f32; 2],
+    p3: [f32; 2],
+    num_segments: usize,
+) -> Outline2D {
+    if let Some((center, radius)) = circumscribed_circle(p1, p2, p3) {
+        let a1 = (p1[1] - center[1]).atan2(p1[0] - center[0]);
+        let a2 = (p2[1] - center[1]).atan2(p2[0] - center[0]);
+        let a3 = (p3[1] - center[1]).atan2(p3[0] - center[0]);
+        let points = generate_arc_points(center, radius, a1, a2, a3, num_segments);
+        if points.len() >= 2 {
+            Outline2D {
+                points,
+                closed: false,
+            }
+        } else {
+            Outline2D {
+                points: vec![p1, p3],
+                closed: false,
+            }
+        }
+    } else {
+        // Collinear fallback: straight line
+        Outline2D {
+            points: vec![p1, p3],
+            closed: false,
+        }
+    }
+}
+
 /// Compute the circumscribed circle (circumcircle) of three points.
 /// Returns `Some((center, radius))` if the points are not collinear,
 /// `None` otherwise.
@@ -1204,7 +1238,10 @@ mod tests {
     #[test]
     fn test_perp_distance_off_line() {
         let dist = perp_distance([1.0, 0.0], [0.0, 0.0], [0.0, 2.0]);
-        assert!((dist - 1.0).abs() < 0.001, "Point should be 1 unit from line");
+        assert!(
+            (dist - 1.0).abs() < 0.001,
+            "Point should be 1 unit from line"
+        );
     }
 
     #[test]
@@ -1397,13 +1434,7 @@ mod tests {
     #[test]
     fn test_erase_near_removes_points() {
         let outline = Outline2D {
-            points: vec![
-                [0.0, 0.0],
-                [1.0, 0.0],
-                [2.0, 0.0],
-                [3.0, 0.0],
-                [4.0, 0.0],
-            ],
+            points: vec![[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0], [4.0, 0.0]],
             closed: false,
         };
         // Erase around x=2 with radius 0.5 -- should remove point [2.0, 0.0]

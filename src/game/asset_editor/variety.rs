@@ -7,6 +7,7 @@
 //!
 //! This is a pure math/data module with no rendering or UI dependencies.
 
+use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -40,22 +41,43 @@ pub struct VarietyParams {
     pub noise_frequency: f32,
 }
 
+impl Default for VarietyParams {
+    fn default() -> Self {
+        Self {
+            scale_min: 0.8,
+            scale_max: 1.2,
+            scale_y_bias: 0.0,
+            random_y_rotation: true,
+            tilt_max_degrees: 5.0,
+            hue_shift_range: 15.0,
+            saturation_range: 0.1,
+            brightness_range: 0.1,
+            noise_displacement: 0.0,
+            noise_frequency: 1.0,
+        }
+    }
+}
+
 /// A concrete variety instance produced by `generate_variety`. Contains the
 /// sampled values that should be applied to a single asset placement.
 #[derive(Clone, Debug)]
 pub struct VarietyInstance {
     /// Non-uniform scale (x, y, z). Y may differ due to `scale_y_bias`.
-    pub scale: [f32; 3],
+    pub scale: Vec3,
     /// Y-axis rotation in radians.
-    pub y_rotation: f32,
-    /// Tilt angles (x-axis, z-axis) in radians.
-    pub tilt: [f32; 2],
+    pub rotation_y: f32,
+    /// Tilt angle from vertical in radians.
+    pub tilt_angle: f32,
+    /// Direction of tilt around the Y axis in radians.
+    pub tilt_axis: f32,
     /// Hue shift in degrees to apply to the base color.
     pub hue_shift: f32,
     /// Saturation offset to apply to the base color.
     pub saturation_shift: f32,
     /// Brightness (value) offset to apply to the base color.
     pub brightness_shift: f32,
+    /// Seed for noise displacement (for downstream vertex displacement).
+    pub noise_seed: u32,
 }
 
 // ============================================================================
@@ -72,22 +94,22 @@ impl SimpleRng {
     /// Create a new RNG with the given seed. A seed of 0 is bumped to 1
     /// because xorshift32 requires a non-zero state.
     pub fn new(seed: u32) -> Self {
-        Self {
-            state: seed.max(1),
-        }
+        Self { state: seed.max(1) }
     }
 
     /// Advance the state and return the next pseudo-random `u32`.
     pub fn next_u32(&mut self) -> u32 {
-        self.state ^= self.state << 13;
-        self.state ^= self.state >> 17;
-        self.state ^= self.state << 5;
-        self.state
+        let mut x = self.state;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.state = x;
+        x
     }
 
     /// Return a pseudo-random `f32` in `[0.0, 1.0]`.
     pub fn next_f32(&mut self) -> f32 {
-        (self.next_u32() as f32) / (u32::MAX as f32)
+        self.next_u32() as f32 / u32::MAX as f32
     }
 
     /// Return a pseudo-random `f32` in `[min, max]`.
@@ -100,15 +122,23 @@ impl SimpleRng {
 // SEED GENERATION
 // ============================================================================
 
-/// Derive a deterministic seed from a world position. The same (x, z)
-/// coordinates always produce the same seed, ensuring assets placed at
-/// the same location look identical across sessions.
-pub fn seed_from_position(world_x: f32, world_z: f32) -> u32 {
-    let x_bits = world_x.to_bits();
-    let z_bits = world_z.to_bits();
-    let hash = x_bits.wrapping_mul(73_856_093) ^ z_bits.wrapping_mul(19_349_663);
+/// Derive a deterministic seed from a world position using FNV-1a hashing.
+/// The same (x, y, z) coordinates always produce the same seed, ensuring
+/// assets placed at the same location look identical across sessions.
+pub fn seed_from_position(x: f32, y: f32, z: f32) -> u32 {
+    let ix = (x * 1000.0) as i32;
+    let iy = (y * 1000.0) as i32;
+    let iz = (z * 1000.0) as i32;
+    // FNV-1a hash
+    let mut h: u32 = 2_166_136_261;
+    h ^= ix as u32;
+    h = h.wrapping_mul(16_777_619);
+    h ^= iy as u32;
+    h = h.wrapping_mul(16_777_619);
+    h ^= iz as u32;
+    h = h.wrapping_mul(16_777_619);
     // xorshift32 requires a non-zero seed
-    hash.max(1)
+    if h == 0 { 1 } else { h }
 }
 
 // ============================================================================
@@ -122,37 +152,52 @@ pub fn generate_variety(params: &VarietyParams, seed: u32) -> VarietyInstance {
     let mut rng = SimpleRng::new(seed);
 
     // Scale
-    let base_scale = rng.range(params.scale_min, params.scale_max);
-    let y_bias = rng.range(-params.scale_y_bias, params.scale_y_bias);
+    let scale_base = rng.range(params.scale_min, params.scale_max);
+    let scale_y = scale_base * (1.0 + rng.range(-params.scale_y_bias, params.scale_y_bias));
 
     // Rotation
-    let y_rotation = if params.random_y_rotation {
+    let rotation_y = if params.random_y_rotation {
         rng.range(0.0, std::f32::consts::TAU)
     } else {
         0.0
     };
 
-    // Tilt (convert degrees to radians)
-    let tilt_x = rng
-        .range(-params.tilt_max_degrees, params.tilt_max_degrees)
-        .to_radians();
-    let tilt_z = rng
-        .range(-params.tilt_max_degrees, params.tilt_max_degrees)
-        .to_radians();
+    // Tilt
+    let tilt_angle = rng.range(0.0, params.tilt_max_degrees.to_radians());
+    let tilt_axis = rng.range(0.0, std::f32::consts::TAU);
 
     // Color shifts
     let hue_shift = rng.range(-params.hue_shift_range, params.hue_shift_range);
     let saturation_shift = rng.range(-params.saturation_range, params.saturation_range);
     let brightness_shift = rng.range(-params.brightness_range, params.brightness_range);
 
+    // Noise seed for downstream vertex displacement
+    let noise_seed = rng.next_u32();
+
     VarietyInstance {
-        scale: [base_scale, base_scale + y_bias, base_scale],
-        y_rotation,
-        tilt: [tilt_x, tilt_z],
+        scale: Vec3::new(scale_base, scale_y, scale_base),
+        rotation_y,
+        tilt_angle,
+        tilt_axis,
         hue_shift,
         saturation_shift,
         brightness_shift,
+        noise_seed,
     }
+}
+
+// ============================================================================
+// TRANSFORM
+// ============================================================================
+
+/// Produce a `Mat4` combining scale, Y rotation, tilt, and translation
+/// from a `VarietyInstance` and a world position.
+pub fn variety_to_transform(instance: &VarietyInstance, position: Vec3) -> Mat4 {
+    let y_rot = Quat::from_rotation_y(instance.rotation_y);
+    let tilt_dir = Vec3::new(instance.tilt_axis.cos(), 0.0, instance.tilt_axis.sin());
+    let tilt_rot = Quat::from_axis_angle(tilt_dir, instance.tilt_angle);
+    let rotation = tilt_rot * y_rot;
+    Mat4::from_scale_rotation_translation(instance.scale, rotation, position)
 }
 
 // ============================================================================
@@ -231,48 +276,48 @@ impl VarietyParams {
     pub fn tree_preset() -> Self {
         Self {
             scale_min: 0.7,
-            scale_max: 1.3,
-            scale_y_bias: 0.15,
+            scale_max: 1.4,
+            scale_y_bias: 0.3,
             random_y_rotation: true,
             tilt_max_degrees: 8.0,
-            hue_shift_range: 15.0,
+            hue_shift_range: 20.0,
             saturation_range: 0.15,
-            brightness_range: 0.12,
-            noise_displacement: 0.03,
+            brightness_range: 0.2,
+            noise_displacement: 0.08,
             noise_frequency: 1.5,
         }
     }
 
-    /// Preset for grass: smaller scale range, full Y rotation, more tilt
-    /// (grass bends), and subtle color variation.
+    /// Preset for grass: wide scale range, full Y rotation, more tilt
+    /// (grass bends), and notable color variation.
     pub fn grass_preset() -> Self {
         Self {
-            scale_min: 0.8,
-            scale_max: 1.2,
-            scale_y_bias: 0.2,
+            scale_min: 0.5,
+            scale_max: 1.5,
+            scale_y_bias: 0.5,
             random_y_rotation: true,
             tilt_max_degrees: 15.0,
-            hue_shift_range: 10.0,
-            saturation_range: 0.1,
-            brightness_range: 0.08,
-            noise_displacement: 0.01,
-            noise_frequency: 2.0,
+            hue_shift_range: 25.0,
+            saturation_range: 0.2,
+            brightness_range: 0.25,
+            noise_displacement: 0.03,
+            noise_frequency: 3.0,
         }
     }
 
-    /// Preset for rocks: moderate scale variation, no Y rotation, minimal
-    /// tilt, and subtle color variation.
+    /// Preset for rocks: moderate scale variation, full Y rotation, significant
+    /// tilt, subtle color variation, and more noise displacement.
     pub fn rock_preset() -> Self {
         Self {
-            scale_min: 0.8,
-            scale_max: 1.3,
+            scale_min: 0.6,
+            scale_max: 1.6,
             scale_y_bias: 0.1,
-            random_y_rotation: false,
-            tilt_max_degrees: 3.0,
-            hue_shift_range: 5.0,
+            random_y_rotation: true,
+            tilt_max_degrees: 20.0,
+            hue_shift_range: 8.0,
             saturation_range: 0.05,
-            brightness_range: 0.08,
-            noise_displacement: 0.02,
+            brightness_range: 0.15,
+            noise_displacement: 0.12,
             noise_frequency: 1.0,
         }
     }
@@ -281,14 +326,14 @@ impl VarietyParams {
     /// and man-made objects should stay upright and consistent.
     pub fn structure_preset() -> Self {
         Self {
-            scale_min: 0.98,
-            scale_max: 1.02,
+            scale_min: 0.95,
+            scale_max: 1.05,
             scale_y_bias: 0.0,
             random_y_rotation: false,
             tilt_max_degrees: 0.0,
-            hue_shift_range: 0.0,
-            saturation_range: 0.0,
-            brightness_range: 0.0,
+            hue_shift_range: 5.0,
+            saturation_range: 0.05,
+            brightness_range: 0.1,
             noise_displacement: 0.0,
             noise_frequency: 0.0,
         }
@@ -331,16 +376,16 @@ mod tests {
 
     #[test]
     fn test_seed_from_position_deterministic() {
-        let s1 = seed_from_position(10.5, -3.2);
-        let s2 = seed_from_position(10.5, -3.2);
+        let s1 = seed_from_position(10.5, 0.0, -3.2);
+        let s2 = seed_from_position(10.5, 0.0, -3.2);
         assert_eq!(s1, s2);
     }
 
     #[test]
     fn test_seed_from_position_different_positions() {
-        let s1 = seed_from_position(0.0, 0.0);
-        let s2 = seed_from_position(1.0, 0.0);
-        let s3 = seed_from_position(0.0, 1.0);
+        let s1 = seed_from_position(0.0, 0.0, 0.0);
+        let s2 = seed_from_position(1.0, 0.0, 0.0);
+        let s3 = seed_from_position(0.0, 0.0, 1.0);
         // Different positions should almost certainly produce different seeds
         assert_ne!(s1, s2);
         assert_ne!(s1, s3);
@@ -348,8 +393,8 @@ mod tests {
 
     #[test]
     fn test_seed_from_position_nonzero() {
-        // Even (0,0) should produce a non-zero seed
-        let s = seed_from_position(0.0, 0.0);
+        // Even (0,0,0) should produce a non-zero seed
+        let s = seed_from_position(0.0, 0.0, 0.0);
         assert_ne!(s, 0);
     }
 
@@ -359,11 +404,29 @@ mod tests {
         let v1 = generate_variety(&params, 999);
         let v2 = generate_variety(&params, 999);
         assert_eq!(v1.scale, v2.scale);
-        assert_eq!(v1.y_rotation, v2.y_rotation);
-        assert_eq!(v1.tilt, v2.tilt);
+        assert_eq!(v1.rotation_y, v2.rotation_y);
+        assert_eq!(v1.tilt_angle, v2.tilt_angle);
+        assert_eq!(v1.tilt_axis, v2.tilt_axis);
         assert_eq!(v1.hue_shift, v2.hue_shift);
         assert_eq!(v1.saturation_shift, v2.saturation_shift);
         assert_eq!(v1.brightness_shift, v2.brightness_shift);
+        assert_eq!(v1.noise_seed, v2.noise_seed);
+    }
+
+    #[test]
+    fn test_generate_variety_different_seeds_differ() {
+        let params = VarietyParams::tree_preset();
+        let v1 = generate_variety(&params, 100);
+        let v2 = generate_variety(&params, 200);
+        // At least one field should differ
+        let differs = v1.scale != v2.scale
+            || v1.rotation_y != v2.rotation_y
+            || v1.tilt_angle != v2.tilt_angle
+            || v1.hue_shift != v2.hue_shift;
+        assert!(
+            differs,
+            "Different seeds should produce different instances"
+        );
     }
 
     #[test]
@@ -373,24 +436,36 @@ mod tests {
             let v = generate_variety(&params, seed);
             // Scale X and Z should be within [scale_min, scale_max]
             assert!(
-                v.scale[0] >= params.scale_min && v.scale[0] <= params.scale_max,
+                v.scale.x >= params.scale_min && v.scale.x <= params.scale_max,
                 "scale_x {} out of range",
-                v.scale[0]
+                v.scale.x
             );
             assert!(
-                v.scale[2] >= params.scale_min && v.scale[2] <= params.scale_max,
+                v.scale.z >= params.scale_min && v.scale.z <= params.scale_max,
                 "scale_z {} out of range",
-                v.scale[2]
+                v.scale.z
             );
             // Scale Y includes bias
-            let y_min = params.scale_min - params.scale_y_bias;
-            let y_max = params.scale_max + params.scale_y_bias;
+            let y_min = params.scale_min * (1.0 - params.scale_y_bias);
+            let y_max = params.scale_max * (1.0 + params.scale_y_bias);
             assert!(
-                v.scale[1] >= y_min && v.scale[1] <= y_max,
+                v.scale.y >= y_min && v.scale.y <= y_max,
                 "scale_y {} out of range [{}, {}]",
-                v.scale[1],
+                v.scale.y,
                 y_min,
                 y_max
+            );
+            // Tilt angle should be within [0, tilt_max_degrees in radians]
+            assert!(
+                v.tilt_angle >= 0.0 && v.tilt_angle <= params.tilt_max_degrees.to_radians(),
+                "tilt_angle {} out of range",
+                v.tilt_angle
+            );
+            // Hue shift
+            assert!(
+                v.hue_shift >= -params.hue_shift_range && v.hue_shift <= params.hue_shift_range,
+                "hue_shift {} out of range",
+                v.hue_shift
             );
         }
     }
@@ -399,19 +474,86 @@ mod tests {
     fn test_generate_variety_no_rotation_when_disabled() {
         let params = VarietyParams::structure_preset();
         let v = generate_variety(&params, 42);
-        assert_eq!(v.y_rotation, 0.0);
+        assert_eq!(v.rotation_y, 0.0);
+    }
+
+    #[test]
+    fn test_variety_to_transform_identity_like() {
+        let instance = VarietyInstance {
+            scale: Vec3::ONE,
+            rotation_y: 0.0,
+            tilt_angle: 0.0,
+            tilt_axis: 0.0,
+            hue_shift: 0.0,
+            saturation_shift: 0.0,
+            brightness_shift: 0.0,
+            noise_seed: 0,
+        };
+        let mat = variety_to_transform(&instance, Vec3::ZERO);
+        // Should be close to identity
+        let diff = mat - Mat4::IDENTITY;
+        for col in 0..4 {
+            for row in 0..4 {
+                assert!(
+                    diff.col(col)[row].abs() < 1e-5,
+                    "transform should be near identity"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_variety_to_transform_with_position() {
+        let instance = VarietyInstance {
+            scale: Vec3::ONE,
+            rotation_y: 0.0,
+            tilt_angle: 0.0,
+            tilt_axis: 0.0,
+            hue_shift: 0.0,
+            saturation_shift: 0.0,
+            brightness_shift: 0.0,
+            noise_seed: 0,
+        };
+        let pos = Vec3::new(5.0, 10.0, -3.0);
+        let mat = variety_to_transform(&instance, pos);
+        // Translation column should contain the position
+        let col3 = mat.col(3);
+        assert!((col3[0] - 5.0).abs() < 1e-5);
+        assert!((col3[1] - 10.0).abs() < 1e-5);
+        assert!((col3[2] - (-3.0)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_variety_to_transform_with_scale() {
+        let instance = VarietyInstance {
+            scale: Vec3::new(2.0, 3.0, 2.0),
+            rotation_y: 0.0,
+            tilt_angle: 0.0,
+            tilt_axis: 0.0,
+            hue_shift: 0.0,
+            saturation_shift: 0.0,
+            brightness_shift: 0.0,
+            noise_seed: 0,
+        };
+        let mat = variety_to_transform(&instance, Vec3::ZERO);
+        // Diagonal should reflect scale
+        assert!((mat.col(0)[0] - 2.0).abs() < 1e-5);
+        assert!((mat.col(1)[1] - 3.0).abs() < 1e-5);
+        assert!((mat.col(2)[2] - 2.0).abs() < 1e-5);
     }
 
     #[test]
     fn test_apply_color_variety_identity() {
         // Zero shifts should return the same color (modulo float precision)
         let instance = VarietyInstance {
-            scale: [1.0, 1.0, 1.0],
-            y_rotation: 0.0,
-            tilt: [0.0, 0.0],
+            scale: Vec3::ONE,
+            rotation_y: 0.0,
+            tilt_angle: 0.0,
+            tilt_axis: 0.0,
             hue_shift: 0.0,
             saturation_shift: 0.0,
             brightness_shift: 0.0,
+            noise_seed: 0,
         };
         let color = [0.8, 0.2, 0.3, 1.0];
         let result = apply_color_variety(color, &instance);
@@ -424,12 +566,14 @@ mod tests {
     #[test]
     fn test_apply_color_variety_preserves_alpha() {
         let instance = VarietyInstance {
-            scale: [1.0, 1.0, 1.0],
-            y_rotation: 0.0,
-            tilt: [0.0, 0.0],
+            scale: Vec3::ONE,
+            rotation_y: 0.0,
+            tilt_angle: 0.0,
+            tilt_axis: 0.0,
             hue_shift: 30.0,
             saturation_shift: 0.1,
             brightness_shift: -0.05,
+            noise_seed: 0,
         };
         let color = [0.5, 0.3, 0.7, 0.5];
         let result = apply_color_variety(color, &instance);
@@ -456,6 +600,16 @@ mod tests {
     }
 
     #[test]
+    fn test_default_variety_params() {
+        let params = VarietyParams::default();
+        assert_eq!(params.scale_min, 0.8);
+        assert_eq!(params.scale_max, 1.2);
+        assert_eq!(params.scale_y_bias, 0.0);
+        assert!(params.random_y_rotation);
+        assert_eq!(params.tilt_max_degrees, 5.0);
+    }
+
+    #[test]
     fn test_presets_exist() {
         let _tree = VarietyParams::tree_preset();
         let _grass = VarietyParams::grass_preset();
@@ -474,8 +628,6 @@ mod tests {
         let params = VarietyParams::structure_preset();
         assert!(!params.random_y_rotation);
         assert_eq!(params.tilt_max_degrees, 0.0);
-        assert_eq!(params.hue_shift_range, 0.0);
-        assert_eq!(params.saturation_range, 0.0);
-        assert_eq!(params.brightness_range, 0.0);
+        assert_eq!(params.noise_displacement, 0.0);
     }
 }

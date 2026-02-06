@@ -238,6 +238,33 @@ impl BattleEditorApp {
             return;
         }
 
+        // Extrude-stage keys (Stage 2)
+        if self.editor.stage == EditorStage::Extrude {
+            match key {
+                KeyCode::KeyP => {
+                    self.editor.cycle_pump_profile();
+                    return;
+                }
+                KeyCode::ArrowUp => {
+                    self.editor.adjust_inflation(0.05);
+                    return;
+                }
+                KeyCode::ArrowDown => {
+                    self.editor.adjust_inflation(-0.05);
+                    return;
+                }
+                KeyCode::ArrowRight => {
+                    self.editor.adjust_thickness(0.1);
+                    return;
+                }
+                KeyCode::ArrowLeft => {
+                    self.editor.adjust_thickness(-0.1);
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         // Canvas-specific keys when in Draw2D stage
         if self.editor.stage == EditorStage::Draw2D {
             match key {

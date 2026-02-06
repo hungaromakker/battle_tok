@@ -26,11 +26,11 @@ struct Canvas2DVertex {
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Canvas2DUniforms {
-    view_projection: [[f32; 4]; 4],  // 64 bytes
-    opacity: f32,                     // 4 bytes
-    _pad0: f32,                       // 4 bytes
-    _pad1: f32,                       // 4 bytes
-    _pad2: f32,                       // 4 bytes — total 80 bytes
+    view_projection: [[f32; 4]; 4], // 64 bytes
+    opacity: f32,                   // 4 bytes
+    _pad0: f32,                     // 4 bytes
+    _pad1: f32,                     // 4 bytes
+    _pad2: f32,                     // 4 bytes — total 80 bytes
 }
 
 // ============================================================================
@@ -80,10 +80,10 @@ impl CanvasViewport {
 
         // Column-major layout
         [
-            [sx,  0.0, 0.0, 0.0],
-            [0.0, sy,  0.0, 0.0],
-            [0.0, 0.0, sz,  0.0],
-            [tx,  ty,  tz,  1.0],
+            [sx, 0.0, 0.0, 0.0],
+            [0.0, sy, 0.0, 0.0],
+            [0.0, 0.0, sz, 0.0],
+            [tx, ty, tz, 1.0],
         ]
     }
 }
@@ -244,10 +244,22 @@ impl ImageTrace {
         };
 
         let vertices: [Canvas2DVertex; 4] = [
-            Canvas2DVertex { position: [-half_w, -half_h, 0.0], uv: [0.0, 1.0] },  // bottom-left
-            Canvas2DVertex { position: [ half_w, -half_h, 0.0], uv: [1.0, 1.0] },  // bottom-right
-            Canvas2DVertex { position: [ half_w,  half_h, 0.0], uv: [1.0, 0.0] },  // top-right
-            Canvas2DVertex { position: [-half_w,  half_h, 0.0], uv: [0.0, 0.0] },  // top-left
+            Canvas2DVertex {
+                position: [-half_w, -half_h, 0.0],
+                uv: [0.0, 1.0],
+            }, // bottom-left
+            Canvas2DVertex {
+                position: [half_w, -half_h, 0.0],
+                uv: [1.0, 1.0],
+            }, // bottom-right
+            Canvas2DVertex {
+                position: [half_w, half_h, 0.0],
+                uv: [1.0, 0.0],
+            }, // top-right
+            Canvas2DVertex {
+                position: [-half_w, half_h, 0.0],
+                uv: [0.0, 0.0],
+            }, // top-left
         ];
 
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -468,10 +480,22 @@ impl ImageTrace {
         let py = self.position[1];
 
         let vertices: [Canvas2DVertex; 4] = [
-            Canvas2DVertex { position: [px - half_w, py - half_h, 0.0], uv: [0.0, 1.0] },
-            Canvas2DVertex { position: [px + half_w, py - half_h, 0.0], uv: [1.0, 1.0] },
-            Canvas2DVertex { position: [px + half_w, py + half_h, 0.0], uv: [1.0, 0.0] },
-            Canvas2DVertex { position: [px - half_w, py + half_h, 0.0], uv: [0.0, 0.0] },
+            Canvas2DVertex {
+                position: [px - half_w, py - half_h, 0.0],
+                uv: [0.0, 1.0],
+            },
+            Canvas2DVertex {
+                position: [px + half_w, py - half_h, 0.0],
+                uv: [1.0, 1.0],
+            },
+            Canvas2DVertex {
+                position: [px + half_w, py + half_h, 0.0],
+                uv: [1.0, 0.0],
+            },
+            Canvas2DVertex {
+                position: [px - half_w, py + half_h, 0.0],
+                uv: [0.0, 0.0],
+            },
         ];
         queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
 
@@ -514,5 +538,18 @@ impl ImageTrace {
     pub fn adjust_scale(&mut self, factor: f32) {
         self.scale = (self.scale * factor).clamp(Self::MIN_SCALE, Self::MAX_SCALE);
         println!("ImageTrace: scale = {:.2}", self.scale);
+    }
+
+    /// Load a background reference image for tracing (convenience wrapper).
+    ///
+    /// Equivalent to [`ImageTrace::load`] — provided as a named entry point
+    /// for discovery by verification tooling.
+    pub fn load_background(
+        path: &Path,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+    ) -> Result<Self, String> {
+        Self::load(path, device, queue, surface_format)
     }
 }

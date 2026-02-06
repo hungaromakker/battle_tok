@@ -184,12 +184,7 @@ impl ToolPalette {
     /// Draws a vertical stack of tool buttons on the left side of the screen.
     /// Each button shows a large icon letter and a smaller shortcut hint.
     /// The selected tool is highlighted with a blue background.
-    pub fn render(
-        &self,
-        stage: &EditorStage,
-        screen_width: f32,
-        screen_height: f32,
-    ) -> Mesh {
+    pub fn render(&self, stage: &EditorStage, screen_width: f32, screen_height: f32) -> Mesh {
         let mut vertices: Vec<Vertex> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
 
@@ -211,8 +206,8 @@ impl ToolPalette {
         };
 
         // Panel background
-        let panel_h = tools.len() as f32 * (self.button_size + self.button_spacing)
-            + self.button_spacing;
+        let panel_h =
+            tools.len() as f32 * (self.button_size + self.button_spacing) + self.button_spacing;
         let bg_color = [0.10, 0.10, 0.13, 1.0];
         add_quad(
             &mut vertices,
@@ -242,8 +237,7 @@ impl ToolPalette {
 
         // Draw each tool button
         for (i, tool) in tools.iter().enumerate() {
-            let btn_y =
-                self.panel_y + i as f32 * (self.button_size + self.button_spacing);
+            let btn_y = self.panel_y + i as f32 * (self.button_size + self.button_spacing);
 
             // Button background: highlighted if selected
             let btn_color = if i == self.selected_tool {
@@ -257,10 +251,7 @@ impl ToolPalette {
                 &mut indices,
                 to_ndc(self.panel_x, btn_y),
                 to_ndc(self.panel_x + self.button_size, btn_y),
-                to_ndc(
-                    self.panel_x + self.button_size,
-                    btn_y + self.button_size,
-                ),
+                to_ndc(self.panel_x + self.button_size, btn_y + self.button_size),
                 to_ndc(self.panel_x, btn_y + self.button_size),
                 btn_color,
             );
@@ -282,8 +273,7 @@ impl ToolPalette {
 
             // Shortcut hint (small, bottom-right)
             let shortcut_buf = [tool.shortcut as u8; 1];
-            let shortcut_text =
-                std::str::from_utf8(&shortcut_buf).unwrap_or("?");
+            let shortcut_text = std::str::from_utf8(&shortcut_buf).unwrap_or("?");
             draw_text(
                 &mut vertices,
                 &mut indices,
@@ -313,8 +303,7 @@ impl ToolPalette {
 
         let tools = tools_for_stage(stage);
         for (i, _tool) in tools.iter().enumerate() {
-            let btn_y =
-                self.panel_y + i as f32 * (self.button_size + self.button_spacing);
+            let btn_y = self.panel_y + i as f32 * (self.button_size + self.button_spacing);
 
             if mouse_x >= self.panel_x
                 && mouse_x <= self.panel_x + self.button_size
@@ -547,19 +536,14 @@ impl PropertyPanel {
         };
 
         // Panel background
-        let total_h = 40.0
-            + self.sliders.len() as f32 * 50.0
-            + 20.0;
+        let total_h = 40.0 + self.sliders.len() as f32 * 50.0 + 20.0;
         let bg_color = [0.10, 0.10, 0.13, 1.0];
         add_quad(
             &mut vertices,
             &mut indices,
             to_ndc(self.panel_x, self.panel_y - 4.0),
             to_ndc(self.panel_x + self.panel_width, self.panel_y - 4.0),
-            to_ndc(
-                self.panel_x + self.panel_width,
-                self.panel_y + total_h,
-            ),
+            to_ndc(self.panel_x + self.panel_width, self.panel_y + total_h),
             to_ndc(self.panel_x, self.panel_y + total_h),
             bg_color,
         );
@@ -911,18 +895,14 @@ impl HsvColorPicker {
                 &mut indices,
                 to_ndc(self.hue_bar_x, bar_y),
                 to_ndc(self.hue_bar_x + self.hue_bar_width, bar_y),
-                to_ndc(
-                    self.hue_bar_x + self.hue_bar_width,
-                    bar_y + hue_step_h,
-                ),
+                to_ndc(self.hue_bar_x + self.hue_bar_width, bar_y + hue_step_h),
                 to_ndc(self.hue_bar_x, bar_y + hue_step_h),
                 color,
             );
         }
 
         // Hue bar cursor (horizontal line at current hue)
-        let hue_cursor_y =
-            self.sv_box_y + (self.hue / 360.0) * self.sv_box_size;
+        let hue_cursor_y = self.sv_box_y + (self.hue / 360.0) * self.sv_box_size;
         add_quad(
             &mut vertices,
             &mut indices,
@@ -987,8 +967,7 @@ impl HsvColorPicker {
         );
 
         for (i, color) in self.recent_colors.iter().enumerate() {
-            let sx = self.sv_box_x
-                + i as f32 * (swatch_size + swatch_spacing);
+            let sx = self.sv_box_x + i as f32 * (swatch_size + swatch_spacing);
             let sy = swatches_y + 12.0;
 
             add_quad(
@@ -1011,12 +990,7 @@ impl HsvColorPicker {
     /// - `pressed`: whether the mouse button is currently pressed
     ///
     /// Returns `Some(color)` if the selected color changed, `None` otherwise.
-    pub fn handle_mouse(
-        &mut self,
-        mouse_x: f32,
-        mouse_y: f32,
-        pressed: bool,
-    ) -> Option<[f32; 4]> {
+    pub fn handle_mouse(&mut self, mouse_x: f32, mouse_y: f32, pressed: bool) -> Option<[f32; 4]> {
         if !self.visible {
             return None;
         }
@@ -1041,11 +1015,8 @@ impl HsvColorPicker {
         {
             self.dragging_sv = true;
             self.dragging_hue = false;
-            self.saturation = ((mouse_x - self.sv_box_x) / self.sv_box_size)
-                .clamp(0.0, 1.0);
-            self.value = (1.0
-                - (mouse_y - self.sv_box_y) / self.sv_box_size)
-                .clamp(0.0, 1.0);
+            self.saturation = ((mouse_x - self.sv_box_x) / self.sv_box_size).clamp(0.0, 1.0);
+            self.value = (1.0 - (mouse_y - self.sv_box_y) / self.sv_box_size).clamp(0.0, 1.0);
             return Some(self.current_color());
         }
 
@@ -1058,26 +1029,17 @@ impl HsvColorPicker {
         {
             self.dragging_hue = true;
             self.dragging_sv = false;
-            self.hue = (((mouse_y - self.sv_box_y) / self.sv_box_size)
-                .clamp(0.0, 1.0))
-                * 360.0;
+            self.hue = (((mouse_y - self.sv_box_y) / self.sv_box_size).clamp(0.0, 1.0)) * 360.0;
             return Some(self.current_color());
         }
 
         // Check if click is on a recent color swatch
-        let swatches_y = self.sv_box_y
-            + self.sv_box_size
-            + 10.0
-            + 12.0
-            + 32.0
-            + 10.0
-            + 12.0;
+        let swatches_y = self.sv_box_y + self.sv_box_size + 10.0 + 12.0 + 32.0 + 10.0 + 12.0;
         let swatch_size = 16.0;
         let swatch_spacing = 2.0;
 
         for (i, color) in self.recent_colors.iter().enumerate() {
-            let sx =
-                self.sv_box_x + i as f32 * (swatch_size + swatch_spacing);
+            let sx = self.sv_box_x + i as f32 * (swatch_size + swatch_spacing);
             let sy = swatches_y;
 
             if mouse_x >= sx
@@ -1211,11 +1173,7 @@ mod tests {
 
         // Click on the second button
         let btn_y = palette.panel_y + palette.button_size + palette.button_spacing + 20.0;
-        let result = palette.handle_click(
-            palette.panel_x + 20.0,
-            btn_y,
-            &EditorStage::Draw2D,
-        );
+        let result = palette.handle_click(palette.panel_x + 20.0, btn_y, &EditorStage::Draw2D);
         assert_eq!(result, Some(1));
         assert_eq!(palette.selected_tool, 1);
     }

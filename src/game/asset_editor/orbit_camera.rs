@@ -210,11 +210,15 @@ impl OrbitCamera {
 
         if self.is_orbiting {
             self.azimuth += dx * ORBIT_SENSITIVITY;
-            self.elevation = (self.elevation - dy * ORBIT_SENSITIVITY).clamp(MIN_ELEVATION, MAX_ELEVATION);
+            self.elevation =
+                (self.elevation - dy * ORBIT_SENSITIVITY).clamp(MIN_ELEVATION, MAX_ELEVATION);
         }
 
         if self.is_panning {
-            self.handle_pan(-dx * PAN_SENSITIVITY * self.distance, dy * PAN_SENSITIVITY * self.distance);
+            self.handle_pan(
+                -dx * PAN_SENSITIVITY * self.distance,
+                dy * PAN_SENSITIVITY * self.distance,
+            );
         }
 
         self.last_mouse = [x, y];
@@ -314,7 +318,11 @@ mod tests {
         let cam = OrbitCamera::new(1.0);
         let view = cam.view_matrix();
         // The view matrix should not be all zeros
-        let sum: f32 = view.iter().flat_map(|row| row.iter()).map(|v| v.abs()).sum();
+        let sum: f32 = view
+            .iter()
+            .flat_map(|row| row.iter())
+            .map(|v| v.abs())
+            .sum();
         assert!(sum > 0.0, "View matrix should not be all zeros");
     }
 
@@ -365,7 +373,10 @@ mod tests {
         let mut cam = OrbitCamera::new(1.0);
         let initial_dist = cam.distance;
         cam.handle_scroll(1.0); // Positive = zoom in
-        assert!(cam.distance < initial_dist, "Scroll in should decrease distance");
+        assert!(
+            cam.distance < initial_dist,
+            "Scroll in should decrease distance"
+        );
     }
 
     #[test]
@@ -373,7 +384,10 @@ mod tests {
         let mut cam = OrbitCamera::new(1.0);
         let initial_dist = cam.distance;
         cam.handle_scroll(-1.0); // Negative = zoom out
-        assert!(cam.distance > initial_dist, "Scroll out should increase distance");
+        assert!(
+            cam.distance > initial_dist,
+            "Scroll out should increase distance"
+        );
     }
 
     #[test]
@@ -384,7 +398,10 @@ mod tests {
         for _ in 0..100 {
             cam.handle_scroll(2.0);
         }
-        assert!(cam.distance >= MIN_DISTANCE, "Distance should not go below MIN_DISTANCE");
+        assert!(
+            cam.distance >= MIN_DISTANCE,
+            "Distance should not go below MIN_DISTANCE"
+        );
     }
 
     #[test]
@@ -395,7 +412,10 @@ mod tests {
         for _ in 0..100 {
             cam.handle_scroll(-2.0);
         }
-        assert!(cam.distance <= MAX_DISTANCE, "Distance should not exceed MAX_DISTANCE");
+        assert!(
+            cam.distance <= MAX_DISTANCE,
+            "Distance should not exceed MAX_DISTANCE"
+        );
     }
 
     #[test]
