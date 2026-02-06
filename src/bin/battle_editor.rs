@@ -157,10 +157,10 @@ impl BattleEditorApp {
 
         // Auto-load saved placements if the file exists
         let placements_path = placements_path();
-        if placements_path.exists() {
-            if let Err(e) = editor.placement.load(&placements_path) {
-                eprintln!("Failed to load placements: {e}");
-            }
+        if placements_path.exists()
+            && let Err(e) = editor.placement.load(&placements_path)
+        {
+            eprintln!("Failed to load placements: {e}");
         }
 
         Self {
