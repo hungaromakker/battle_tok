@@ -1,6 +1,7 @@
 //! Arena Cannon Module
 //!
 //! Cannon state for aiming and firing in the Battle Arena.
+//! Supports camera-based aiming and grab-to-move interaction.
 
 use crate::physics::ballistics::Projectile;
 use glam::Vec3;
@@ -8,18 +9,23 @@ use glam::Vec3;
 use super::terrain::terrain_height_at;
 use super::types::{Mesh, generate_box, generate_oriented_box};
 
-/// Smoothing factor for cannon movement (higher = faster response)
-pub const CANNON_SMOOTHING: f32 = 0.15;
-/// Cannon rotation speed in radians per second
-pub const CANNON_ROTATION_SPEED: f32 = 1.0; // ~57 degrees per second
+/// Distance in front of the player the cannon is placed when grabbed
+pub const CANNON_GRAB_OFFSET: f32 = 3.0;
+/// How close the player must be to grab the cannon
+pub const CANNON_GRAB_RANGE: f32 = 6.0;
+/// Height offset above terrain when placed
+pub const CANNON_TERRAIN_OFFSET: f32 = 0.5;
 
-/// Cannon state for aiming and firing (US-017: Cannon aiming controls)
+/// Cannon state for aiming and firing.
+///
+/// The cannon aims based on an externally-provided look direction (from the
+/// camera). It can be grabbed by the player and repositioned by walking.
 pub struct ArenaCannon {
     pub position: Vec3,
-    pub barrel_elevation: f32, // Current elevation in radians (-10 to 45 degrees)
-    pub barrel_azimuth: f32,   // Current azimuth in radians (-45 to 45 degrees)
-    pub target_elevation: f32, // Target elevation for smooth interpolation
-    pub target_azimuth: f32,   // Target azimuth for smooth interpolation
+    /// Current look direction (set from camera each frame)
+    pub look_direction: Vec3,
+    /// Whether the cannon is currently grabbed/carried by the player
+    pub grabbed: bool,
     pub barrel_length: f32,
     pub muzzle_velocity: f32,
     pub projectile_mass: f32,
@@ -27,17 +33,14 @@ pub struct ArenaCannon {
 
 impl Default for ArenaCannon {
     fn default() -> Self {
-        let default_elevation = 30.0_f32.to_radians(); // 30 degrees up
-        // Position cannon on the attacker platform - sample terrain height at that location
+        // Position cannon on the attacker platform
         let cannon_x = 0.0;
         let cannon_z = 25.0;
-        let cannon_y = terrain_height_at(cannon_x, cannon_z, 0.0) + 0.5; // Slightly above terrain
+        let cannon_y = terrain_height_at(cannon_x, cannon_z, 0.0) + CANNON_TERRAIN_OFFSET;
         Self {
             position: Vec3::new(cannon_x, cannon_y, cannon_z),
-            barrel_elevation: default_elevation,
-            barrel_azimuth: 0.0,
-            target_elevation: default_elevation,
-            target_azimuth: 0.0,
+            look_direction: Vec3::new(0.0, 0.0, -1.0),
+            grabbed: false,
             barrel_length: 4.0,
             muzzle_velocity: 50.0, // m/s
             projectile_mass: 5.0,  // kg
@@ -46,34 +49,30 @@ impl Default for ArenaCannon {
 }
 
 impl ArenaCannon {
-    /// Get the direction the barrel is pointing
+    /// Get the direction the barrel is pointing (camera look direction,
+    /// clamped so the barrel doesn't aim below -10 degrees).
     pub fn get_barrel_direction(&self) -> Vec3 {
-        // Start with forward direction (-Z in our coordinate system)
-        let base_dir = Vec3::new(0.0, 0.0, -1.0);
-
-        // Apply elevation (rotation around X)
-        let cos_elev = self.barrel_elevation.cos();
-        let sin_elev = self.barrel_elevation.sin();
-        let elevated = Vec3::new(
-            base_dir.x,
-            base_dir.y * cos_elev - base_dir.z * sin_elev,
-            base_dir.y * sin_elev + base_dir.z * cos_elev,
-        );
-
-        // Apply azimuth (rotation around Y)
-        let cos_az = self.barrel_azimuth.cos();
-        let sin_az = self.barrel_azimuth.sin();
-        Vec3::new(
-            elevated.x * cos_az + elevated.z * sin_az,
-            elevated.y,
-            -elevated.x * sin_az + elevated.z * cos_az,
-        )
-        .normalize()
+        let dir = self.look_direction.normalize_or_zero();
+        if dir == Vec3::ZERO {
+            return Vec3::new(0.0, 0.0, -1.0);
+        }
+        // Clamp vertical aim so cannon doesn't shoot straight down
+        let min_pitch = -10.0_f32.to_radians();
+        let horizontal = (dir.x * dir.x + dir.z * dir.z).sqrt();
+        let current_pitch = dir.y.atan2(horizontal);
+        if current_pitch < min_pitch {
+            let cos_p = min_pitch.cos();
+            let sin_p = min_pitch.sin();
+            let h_norm = Vec3::new(dir.x, 0.0, dir.z).normalize_or_zero();
+            Vec3::new(h_norm.x * cos_p, sin_p, h_norm.z * cos_p).normalize()
+        } else {
+            dir
+        }
     }
 
     /// Get the position of the barrel tip (muzzle)
     pub fn get_muzzle_position(&self) -> Vec3 {
-        self.position + self.get_barrel_direction() * self.barrel_length
+        self.position + Vec3::Y * 0.5 + self.get_barrel_direction() * self.barrel_length
     }
 
     /// Spawn a projectile from the cannon
@@ -88,34 +87,41 @@ impl ArenaCannon {
         )
     }
 
-    /// Adjust target elevation (smooth movement toward this target)
-    pub fn adjust_elevation(&mut self, delta: f32) {
-        self.target_elevation += delta;
-        let min_elev = -10.0_f32.to_radians();
-        let max_elev = 45.0_f32.to_radians();
-        self.target_elevation = self.target_elevation.clamp(min_elev, max_elev);
+    /// Set look direction from camera forward vector
+    pub fn set_look_direction(&mut self, direction: Vec3) {
+        self.look_direction = direction;
     }
 
-    /// Adjust target azimuth (smooth movement toward this target)
-    pub fn adjust_azimuth(&mut self, delta: f32) {
-        self.target_azimuth += delta;
-        let max_az = 45.0_f32.to_radians();
-        self.target_azimuth = self.target_azimuth.clamp(-max_az, max_az);
+    /// Update cannon position when grabbed: follow the player
+    pub fn follow_player(&mut self, player_pos: Vec3, camera_yaw: f32) {
+        // Place cannon a bit in front of the player (on the ground)
+        let forward = Vec3::new(camera_yaw.sin(), 0.0, -camera_yaw.cos());
+        let target = player_pos + forward * CANNON_GRAB_OFFSET;
+        let ground_y = terrain_height_at(target.x, target.z, 0.0) + CANNON_TERRAIN_OFFSET;
+        // Keep cannon on the ground but allow player-height variation
+        self.position = Vec3::new(target.x, ground_y.max(player_pos.y - 1.0), target.z);
     }
 
-    /// Update cannon for smooth movement interpolation (call each frame)
-    pub fn update(&mut self, delta_time: f32) {
-        // Exponential smoothing toward target angles
-        let smoothing = 1.0 - (1.0 - CANNON_SMOOTHING).powf(delta_time * 60.0);
-        self.barrel_elevation += (self.target_elevation - self.barrel_elevation) * smoothing;
-        self.barrel_azimuth += (self.target_azimuth - self.barrel_azimuth) * smoothing;
+    /// Try to grab the cannon (checks distance)
+    pub fn try_grab(&mut self, player_pos: Vec3) -> bool {
+        let dist = (self.position - player_pos).length();
+        if dist <= CANNON_GRAB_RANGE {
+            self.grabbed = true;
+            true
+        } else {
+            false
+        }
     }
 
-    /// Check if cannon is currently moving toward target
-    pub fn is_aiming(&self) -> bool {
-        let elev_diff = (self.target_elevation - self.barrel_elevation).abs();
-        let az_diff = (self.target_azimuth - self.barrel_azimuth).abs();
-        elev_diff > 0.001 || az_diff > 0.001
+    /// Release the cannon at current position
+    pub fn release(&mut self) {
+        self.grabbed = false;
+    }
+
+    /// Check if player is close enough to fire the cannon
+    pub fn in_fire_range(&self, player_pos: Vec3) -> bool {
+        let dist = (self.position - player_pos).length();
+        dist <= CANNON_GRAB_RANGE
     }
 }
 
@@ -124,20 +130,32 @@ pub fn generate_cannon_mesh(cannon: &ArenaCannon) -> Mesh {
     let mut mesh = Mesh::new();
     let pos = cannon.position;
     let dir = cannon.get_barrel_direction();
-    let color = [0.3, 0.3, 0.3, 1.0]; // Gray metal
+
+    // Base/body color — brighter when grabbed
+    let body_color = if cannon.grabbed {
+        [0.5, 0.4, 0.2, 1.0] // Golden highlight when grabbed
+    } else {
+        [0.3, 0.3, 0.3, 1.0] // Gray metal
+    };
 
     // Cannon body (box)
     let body_size = Vec3::new(1.0, 0.5, 1.5);
-    let body_mesh = generate_box(pos, body_size, color);
+    let body_mesh = generate_box(pos, body_size, body_color);
     mesh.merge(&body_mesh);
 
-    // Barrel (elongated box for simplicity)
-    let barrel_center = pos + dir * (cannon.barrel_length / 2.0);
+    // Wheels (small boxes on sides)
+    let wheel_color = [0.2, 0.15, 0.1, 1.0];
+    let wheel_size = Vec3::new(0.15, 0.4, 0.4);
+    let wheel_l = generate_box(pos + Vec3::new(-0.7, -0.1, 0.0), wheel_size, wheel_color);
+    let wheel_r = generate_box(pos + Vec3::new(0.7, -0.1, 0.0), wheel_size, wheel_color);
+    mesh.merge(&wheel_l);
+    mesh.merge(&wheel_r);
+
+    // Barrel (elongated box)
+    let barrel_center = pos + Vec3::Y * 0.5 + dir * (cannon.barrel_length / 2.0);
     let barrel_up = Vec3::Y;
-    let _barrel_right = dir.cross(barrel_up).normalize();
     let barrel_size = Vec3::new(0.3, 0.3, cannon.barrel_length);
 
-    // Generate rotated barrel
     let barrel_mesh = generate_oriented_box(
         barrel_center,
         barrel_size,

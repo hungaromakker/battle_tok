@@ -5,11 +5,11 @@
 //! Controls:
 //! - WASD: Move (first-person or camera)
 //! - Mouse right-drag: Look around (FPS style)
-//! - Space: Jump (first-person mode) / Fire (free camera mode)
+//! - Space: Jump (first-person mode) / Fire cannon (free camera)
+//! - F: Fire cannon (aims where you look)
+//! - G: Grab/release cannon (walk to reposition)
 //! - Shift: Sprint when moving
 //! - V: Toggle first-person / free camera mode
-//! - Arrow Up/Down: Adjust barrel elevation
-//! - Arrow Left/Right: Adjust barrel azimuth
 //! - R: Reset camera
 //! - C: Clear all projectiles
 //! - B: Toggle builder mode
@@ -45,7 +45,7 @@ use battle_tok_engine::render::{BuildingBlock, MergedMesh};
 // Import game module types
 use battle_tok_engine::game::config::{ArenaConfig, VisualConfig};
 use battle_tok_engine::game::{
-    AimingKeys, BattleScene, BridgeConfig, BuilderMode, Camera, FloatingIslandConfig, LavaParams,
+    BattleScene, BridgeConfig, BuilderMode, Camera, FloatingIslandConfig, LavaParams,
     Mesh, MovementKeys, PLAYER_EYE_HEIGHT, SHADER_SOURCE, SdfCannonData, SdfCannonUniforms,
     SelectedFace, StartOverlay, TerrainEditorUI, TerrainParams, Uniforms, Vertex,
     generate_all_trees_mesh, generate_bridge, generate_floating_island, generate_lava_ocean,
@@ -53,7 +53,7 @@ use battle_tok_engine::game::{
 };
 use battle_tok_engine::render::hex_prism::DEFAULT_HEX_HEIGHT;
 
-use battle_tok_engine::game::{AimingState, MovementState};
+use battle_tok_engine::game::MovementState;
 
 // Buffer init helper
 use wgpu::util::DeviceExt;
@@ -225,7 +225,6 @@ struct BattleArenaApp {
     // Camera and input (stays here — winit types)
     camera: Camera,
     movement: MovementKeys,
-    aiming: AimingKeys,
     mouse_pressed: bool,
     left_mouse_pressed: bool,
     _last_mouse_pos: Option<(f32, f32)>,
@@ -261,7 +260,6 @@ impl BattleArenaApp {
             fog_post: None,
             camera: Camera::default(),
             movement: MovementKeys::default(),
-            aiming: AimingKeys::default(),
             mouse_pressed: false,
             left_mouse_pressed: false,
             _last_mouse_pos: None,
@@ -1147,18 +1145,13 @@ impl BattleArenaApp {
             down: self.movement.down,
             sprint: self.movement.sprint,
         };
-        let aiming = AimingState {
-            aim_up: self.aiming.aim_up,
-            aim_down: self.aiming.aim_down,
-            aim_left: self.aiming.aim_left,
-            aim_right: self.aiming.aim_right,
-        };
+        let camera_forward = self.camera.get_forward();
 
         // Scene update: delegate all game logic
         {
             let scene = self.scene.as_mut().unwrap();
             scene.camera_yaw = self.camera.yaw;
-            scene.update(delta_time, &movement, &aiming);
+            scene.update(delta_time, &movement, camera_forward);
 
             if scene.first_person_mode {
                 self.camera.position = scene.player.get_eye_position();
@@ -2159,29 +2152,38 @@ impl BattleArenaApp {
             );
 
             let cannon = scene.cannon.cannon();
-            let (sin_az, cos_az) = (cannon.barrel_azimuth * 0.5).sin_cos();
-            let (sin_elev, cos_elev) = (cannon.barrel_elevation * 0.5).sin_cos();
-            let quat_x = [sin_elev, 0.0, 0.0, cos_elev];
-            let quat_y = [0.0, sin_az, 0.0, cos_az];
-            let barrel_rotation = [
-                quat_y[3] * quat_x[0] + quat_y[0] * quat_x[3] + quat_y[1] * quat_x[2]
-                    - quat_y[2] * quat_x[1],
-                quat_y[3] * quat_x[1] - quat_y[0] * quat_x[2]
-                    + quat_y[1] * quat_x[3]
-                    + quat_y[2] * quat_x[0],
-                quat_y[3] * quat_x[2] + quat_y[0] * quat_x[1] - quat_y[1] * quat_x[0]
-                    + quat_y[2] * quat_x[3],
-                quat_y[3] * quat_x[3]
-                    - quat_y[0] * quat_x[0]
-                    - quat_y[1] * quat_x[1]
-                    - quat_y[2] * quat_x[2],
-            ];
+            // Compute barrel rotation quaternion from look direction.
+            // The barrel points along -Z by default, so we need the rotation
+            // from -Z to the current barrel direction.
+            let barrel_dir = cannon.get_barrel_direction();
+            let default_dir = Vec3::new(0.0, 0.0, -1.0);
+            // Quaternion from default_dir to barrel_dir
+            let barrel_rotation = {
+                let dot = default_dir.dot(barrel_dir);
+                if dot > 0.9999 {
+                    [0.0_f32, 0.0, 0.0, 1.0] // identity
+                } else if dot < -0.9999 {
+                    [0.0_f32, 1.0, 0.0, 0.0] // 180° around Y
+                } else {
+                    let cross = default_dir.cross(barrel_dir);
+                    let w = 1.0 + dot;
+                    let len = (cross.x * cross.x + cross.y * cross.y + cross.z * cross.z + w * w).sqrt();
+                    [cross.x / len, cross.y / len, cross.z / len, w / len]
+                }
+            };
+
+            // Color: golden highlight when grabbed, bronze otherwise
+            let color = if cannon.grabbed {
+                [0.6, 0.5, 0.2]
+            } else {
+                [0.4, 0.35, 0.3]
+            };
 
             let sdf_cannon_data = SdfCannonData {
                 world_pos: cannon.position.to_array(),
                 _pad0: 0.0,
                 barrel_rotation,
-                color: [0.4, 0.35, 0.3],
+                color,
                 _pad1: 0.0,
             };
             queue.write_buffer(
@@ -2703,12 +2705,31 @@ impl BattleArenaApp {
             KeyCode::Space => {
                 if pressed {
                     if scene.first_person_mode {
+                        // In first-person mode: jump first, but also fire if near cannon
                         scene.player.request_jump();
                     } else if !self.builder_mode.enabled {
                         scene.fire_cannon();
                     }
                 }
                 self.movement.up = pressed;
+            }
+            KeyCode::KeyF if pressed => {
+                // F key: Fire cannon (works in any mode if close enough)
+                scene.fire_cannon();
+            }
+            KeyCode::KeyG if pressed => {
+                // G key: Grab/release cannon
+                let changed = scene.toggle_cannon_grab();
+                if changed {
+                    let grabbed = scene.cannon.is_grabbed();
+                    println!(
+                        "[Cannon] {}",
+                        if grabbed { "Grabbed! Walk to move it, F to fire, G to release" }
+                        else { "Released at current position" }
+                    );
+                } else {
+                    println!("[Cannon] Too far away to grab (walk closer)");
+                }
             }
             KeyCode::ShiftLeft | KeyCode::ShiftRight => {
                 self.movement.sprint = pressed;
@@ -2892,10 +2913,9 @@ impl BattleArenaApp {
                 scene.clear_projectiles();
             }
 
-            KeyCode::ArrowUp => self.aiming.aim_up = pressed,
-            KeyCode::ArrowDown => self.aiming.aim_down = pressed,
-            KeyCode::ArrowLeft => self.aiming.aim_left = pressed,
-            KeyCode::ArrowRight => self.aiming.aim_right = pressed,
+            // Arrow keys: no longer used for cannon aiming (cannon now aims with camera)
+            // Kept for builder toolbar navigation above
+            KeyCode::ArrowUp | KeyCode::ArrowDown | KeyCode::ArrowLeft | KeyCode::ArrowRight => {}
             _ => {}
         }
     }
@@ -3072,7 +3092,8 @@ fn main() {
     println!();
     println!("*** Click anywhere to start ***");
     println!();
-    println!("Controls: WASD Move, Space Jump/Fire, V Toggle FPS/Free");
+    println!("Controls: WASD Move, Space Jump, V Toggle FPS/Free");
+    println!("G: Grab/Release Cannon, F: Fire Cannon");
     println!("B: Builder, T: Terrain Editor, F11: Fullscreen, ESC: Exit");
     println!();
 

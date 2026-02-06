@@ -1,0 +1,12 @@
+{
+    "id": "phase_4_battle_tök",
+    "project_id": "battle_tök",
+    "phase_number": 4,
+    "title": "Asset Editor - In-Engine Drawing & 3D Pipeline",
+    "description": "In-engine asset creation tool: 2D drawing canvas with image tracing, extrude/pump to 3D via SDF, sculpting, vertex coloring, asset library with variety system. Zero external tools required.",
+    "status": "decomposed",
+    "chat_id": "battle_tök_phase_4",
+    "spec_path": "phases/phase_4/phase_spec.md",
+    "created_at": "2026-02-06T12:00:00Z",
+    "updated_at": "2026-02-06T14:30:00Z"
+}

@@ -1,0 +1,51 @@
+{
+    "story_id": "US-P4-005",
+    "title": "Background Image Loading for Tracing",
+    "status": "pending",
+    "focus": "",
+    "complexity": "moderate",
+    "min_iterations": 2,
+    "criteria": [
+        {"text": "image_trace.rs exists with ImageTrace struct", "done": false, "notes": ""},
+        {"text": "Loading a PNG file creates a GPU texture displayed as canvas background", "done": false, "notes": ""},
+        {"text": "Background image opacity is adjustable (0.0-1.0 range)", "done": false, "notes": ""},
+        {"text": "Background image scale is adjustable (zoom in/out on reference)", "done": false, "notes": ""},
+        {"text": "Background renders underneath the drawing layer (outlines draw on top)", "done": false, "notes": ""},
+        {"text": "canvas_2d.wgsl shader exists with proper alpha blending", "done": false, "notes": ""},
+        {"text": "Image position can be offset to align with drawing", "done": false, "notes": ""},
+        {"text": "battle_arena.rs is NOT modified", "done": false, "notes": ""},
+        {"text": "cargo check passes for all binaries", "done": false, "notes": ""}
+    ],
+    "verification_commands": [
+        {"cmd": "test -f /home/hungaromakker/battle_tok/src/game/asset_editor/image_trace.rs && echo EXISTS", "expect_contains": "EXISTS", "description": "image_trace.rs exists"},
+        {"cmd": "test -f /home/hungaromakker/battle_tok/src/shaders/canvas_2d.wgsl && echo EXISTS", "expect_contains": "EXISTS", "description": "canvas_2d.wgsl shader exists"},
+        {"cmd": "grep -c 'ImageTrace\\|load_png\\|opacity\\|texture' /home/hungaromakker/battle_tok/src/game/asset_editor/image_trace.rs", "expect_gt": 0, "description": "ImageTrace struct and methods exist"},
+        {"cmd": "grep -c 'image_trace' /home/hungaromakker/battle_tok/src/game/asset_editor/mod.rs", "expect_gt": 0, "description": "image_trace module declared"},
+        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "Project compiles"}
+    ],
+    "checklist": [
+        {"item": "Read spec.md and understand image tracing requirements", "done": false},
+        {"item": "Create src/game/asset_editor/image_trace.rs with ImageTrace struct", "done": false},
+        {"item": "Implement load_png() using image crate for texture creation", "done": false},
+        {"item": "Create src/shaders/canvas_2d.wgsl with alpha-blended texture rendering", "done": false},
+        {"item": "Implement opacity and scale controls", "done": false},
+        {"item": "Implement offset/position adjustment", "done": false},
+        {"item": "Create render pipeline with alpha blending", "done": false},
+        {"item": "Integrate into Canvas2D render order (background first)", "done": false},
+        {"item": "Add pub mod image_trace to asset_editor/mod.rs", "done": false},
+        {"item": "Wire up key bindings (I load, O opacity, [ ] scale)", "done": false},
+        {"item": "Run cargo check for all binaries", "done": false},
+        {"item": "Commit changes", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": ["US-P4-003"],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "verification_rejections": 0,
+    "created_at": "2026-02-06T18:00:00Z"
+}

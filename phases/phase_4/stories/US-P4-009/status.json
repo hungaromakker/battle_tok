@@ -1,0 +1,51 @@
+{
+    "story_id": "US-P4-009",
+    "title": "Vertex Color Painting",
+    "status": "pending",
+    "focus": "",
+    "complexity": "normal",
+    "min_iterations": 1,
+    "criteria": [
+        {"text": "paint.rs exists with PaintSystem, BrushParams, ColorPalette, PaintTool types", "done": false, "notes": ""},
+        {"text": "Brush tool paints vertex colors with radius, opacity, and hardness falloff", "done": false, "notes": ""},
+        {"text": "Flood fill uses BFS on triangle adjacency to fill connected same-color regions", "done": false, "notes": ""},
+        {"text": "Gradient tool applies linear color blend between two click points", "done": false, "notes": ""},
+        {"text": "Eyedropper samples vertex color and sets it as primary", "done": false, "notes": ""},
+        {"text": "HSV-to-RGB and RGB-to-HSV conversion functions are implemented", "done": false, "notes": ""},
+        {"text": "Color palette includes presets for Trees, Rock, and Wood", "done": false, "notes": ""},
+        {"text": "Recent colors list tracks last 8 used colors", "done": false, "notes": ""},
+        {"text": "All painting writes to Vertex.color field (not a separate texture)", "done": false, "notes": ""},
+        {"text": "cargo check passes with 0 errors", "done": false, "notes": ""}
+    ],
+    "verification_commands": [
+        {"cmd": "test -f /home/hungaromakker/battle_tok/src/game/asset_editor/paint.rs && echo EXISTS", "expect_contains": "EXISTS", "description": "Paint module exists"},
+        {"cmd": "grep -c 'PaintSystem\\|BrushParams\\|ColorPalette\\|PaintTool' /home/hungaromakker/battle_tok/src/game/asset_editor/paint.rs", "expect_gt": 0, "description": "Paint types defined"},
+        {"cmd": "grep -c 'flood_fill\\|gradient\\|eyedropper\\|hsv_to_rgba' /home/hungaromakker/battle_tok/src/game/asset_editor/paint.rs", "expect_gt": 0, "description": "Paint tools implemented"},
+        {"cmd": "grep -c 'pub mod paint' /home/hungaromakker/battle_tok/src/game/asset_editor/mod.rs", "expect_gt": 0, "description": "Paint module declared"},
+        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "Project compiles"}
+    ],
+    "checklist": [
+        {"item": "Read spec.md for implementation details", "done": false},
+        {"item": "Create src/game/asset_editor/paint.rs with core types", "done": false},
+        {"item": "Implement brush painting with falloff", "done": false},
+        {"item": "Implement flood fill via BFS", "done": false},
+        {"item": "Implement gradient tool", "done": false},
+        {"item": "Implement eyedropper", "done": false},
+        {"item": "Implement HSV conversion", "done": false},
+        {"item": "Add color palette presets", "done": false},
+        {"item": "Wire into mod.rs for Stage 4", "done": false},
+        {"item": "Run cargo check", "done": false},
+        {"item": "Commit changes", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": ["US-P4-006"],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "verification_rejections": 0,
+    "created_at": "2026-02-06T18:00:00Z"
+}

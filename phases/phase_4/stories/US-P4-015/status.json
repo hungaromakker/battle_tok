@@ -1,0 +1,44 @@
+{
+    "story_id": "US-P4-015",
+    "title": "Editor UI Panels (Tool Palette + Color Picker)",
+    "status": "pending",
+    "focus": "",
+    "complexity": "complex",
+    "min_iterations": 2,
+    "criteria": [
+        {"text": "ui_panels.rs exists with EditorUI struct and rendering functions", "done": false, "notes": ""},
+        {"text": "Tool palette renders on left side with correct tools per stage", "done": false, "notes": ""},
+        {"text": "Active tool is highlighted in the palette", "done": false, "notes": ""},
+        {"text": "Property panel shows context-sensitive sliders per stage", "done": false, "notes": ""},
+        {"text": "HSV color picker allows intuitive color selection", "done": false, "notes": ""},
+        {"text": "Click handling identifies which UI element was clicked", "done": false, "notes": ""},
+        {"text": "cargo check passes with 0 errors", "done": false, "notes": ""}
+    ],
+    "verification_commands": [
+        {"cmd": "test -f /home/hungaromakker/battle_tok/src/game/asset_editor/ui_panels.rs && echo EXISTS", "expect_contains": "EXISTS", "description": "UI panels module exists"},
+        {"cmd": "grep -c 'EditorUI\\|generate_tool_palette\\|generate_color_picker' /home/hungaromakker/battle_tok/src/game/asset_editor/ui_panels.rs", "expect_gt": 0, "description": "UI rendering functions defined"},
+        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "Project compiles"}
+    ],
+    "checklist": [
+        {"item": "Read spec.md", "done": false},
+        {"item": "Create ui_panels.rs with EditorUI struct", "done": false},
+        {"item": "Implement tool palette rendering per stage", "done": false},
+        {"item": "Implement property panel with sliders", "done": false},
+        {"item": "Implement HSV color picker", "done": false},
+        {"item": "Implement click handling for UI elements", "done": false},
+        {"item": "Add recent colors tracking", "done": false},
+        {"item": "Run cargo check", "done": false},
+        {"item": "Commit changes", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": ["US-P4-001"],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "verification_rejections": 0,
+    "created_at": "2026-02-06T14:00:00Z"
+}

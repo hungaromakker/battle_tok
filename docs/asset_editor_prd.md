@@ -4,7 +4,7 @@
 
 The **Asset Editor** is an in-engine tool for creating game assets through a 2D-to-3D pipeline. Artists and developers draw 2D outlines, extrude/inflate them into 3D shapes, sculpt details, apply colors and materials, then save them as reusable world assets.
 
-This tool lives *inside* the Battle Tok engine — it uses the same SDF pipeline, rendering, and mesh systems as the game itself. Assets created here are directly usable in the world without any export/import step.
+This tool is a **separate binary** (`cargo run --bin battle_editor`) that shares the same engine library as the game. It uses the same SDF pipeline, rendering, and mesh systems. Assets created here are saved as `.btasset` files and directly usable in the game world without any export/import step.
 
 ### Goals
 
@@ -38,7 +38,7 @@ The asset creation flow moves through five stages. Each stage has a dedicated UI
 
 **Purpose**: Capture the asset's silhouette / profile shape.
 
-**Entry**: Press `F9` or select "Asset Editor" from menu. The viewport switches to an orthographic front view with a grid background.
+**Entry**: Launch with `cargo run --bin battle_editor`. The editor opens its own window with an orthographic front view and grid background.
 
 **Drawing tools**:
 
@@ -345,25 +345,28 @@ Common variety presets:
 | `src/game/asset_editor/variety.rs` | Variety parameter system, seed-based variation |
 | `src/game/asset_editor/ui.rs` | Editor-specific UI panels (tool palette, property panel, color picker) |
 
-### Editor Mode Integration
+### Separate Binary Architecture
 
-The asset editor is a separate mode from gameplay, similar to how `TerrainEditorUI` and `BuilderMode` work:
+The asset editor runs as a **separate binary** (`src/bin/battle_editor.rs`), not as a mode inside `battle_arena.rs`. This avoids bloating the game binary and keeps concerns separated.
 
-```rust
-enum GameMode {
-    Playing,          // Normal gameplay
-    Building,         // Block placement (existing)
-    TerrainEditor,    // Terrain sliders (existing)
-    AssetEditor,      // NEW: Asset creation tool
-}
-```
+**`battle_editor.rs` responsibilities:**
+- Own winit window + event loop (window title: "Battle Tök — Asset Editor")
+- Own wgpu device/surface initialization
+- Route keyboard/mouse input to `AssetEditor` state machine
+- Render editor stages (2D canvas, 3D preview, UI panels)
+- No game logic (no economy, population, combat, terrain)
 
-When `AssetEditor` mode is active:
-- Normal player movement is disabled
-- Camera switches to orbit mode (around the asset being edited)
+**Shared code** (via engine library + `src/game/asset_editor/` module):
+- `AssetEditor` struct holds all editor state
+- All 5 pipeline stages as sub-modules
+- SDF operations, Marching Cubes, sculpting, instancing from engine
+- UI primitives (`UISlider`, `draw_text`, `add_quad`) from game module
+
+When the editor is running:
+- Camera is always in orbit mode (around the asset being edited)
 - The tool palette UI is shown
 - The asset preview renders in the center of the viewport
-- Keyboard shortcuts switch between pipeline stages
+- Keyboard shortcuts switch between pipeline stages (1-5)
 
 ---
 
@@ -490,7 +493,7 @@ A JSON file at `assets/world/library.json` indexes all assets for fast browsing:
 
 | Key | Action |
 |-----|--------|
-| `F9` | Toggle Asset Editor mode |
+| `Esc` | Close editor / go back |
 | `F10` | Toggle Asset Library panel |
 | `1-5` | Switch pipeline stage (Draw / Extrude / Sculpt / Color / Save) |
 | `D` | Freehand draw tool |
@@ -514,7 +517,7 @@ A JSON file at `assets/world/library.json` indexes all assets for fast browsing:
 ## 8. Implementation Phases
 
 ### Phase 1: Foundation (1-2 days)
-- Editor mode toggle (F9) with orbit camera
+- `battle_editor` binary with own window + orbit camera
 - 2D canvas with freehand drawing and line tools
 - Basic outline storage and display
 - Simple pump/inflate to 3D using SDF

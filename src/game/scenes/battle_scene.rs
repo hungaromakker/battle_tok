@@ -11,7 +11,7 @@ use glam::Vec3;
 use crate::game::arena_player::{ArenaGround, BridgeDef, IslandDef, MovementKeys, Player};
 use crate::game::config::{ArenaConfig, VisualConfig};
 use crate::game::destruction::get_material_color;
-use crate::game::input::{AimingState, MovementState};
+use crate::game::input::MovementState;
 use crate::game::state::GameState;
 use crate::game::systems::{
     BuildingSystem, CannonSystem, CollisionSystem, DestructionSystem, MeteorSystem,
@@ -155,7 +155,7 @@ impl BattleScene {
     ///
     /// # Order of operations
     /// 1. Player movement
-    /// 2. Cannon aiming
+    /// 2. Cannon follow (if grabbed) + aim from camera
     /// 3. Projectile physics
     /// 4. Projectile-wall collision → destruction
     /// 5. Destruction physics (falling prisms, debris)
@@ -164,7 +164,7 @@ impl BattleScene {
     /// 8. Player-hex collision (via render grid iteration)
     /// 9. Building structural physics
     /// 10. Economy / day-cycle tick
-    pub fn update(&mut self, delta: f32, movement: &MovementState, aiming: &AimingState) {
+    pub fn update(&mut self, delta: f32, movement: &MovementState, camera_forward: Vec3) {
         // 1. Player movement (island-aware ground collision)
         let keys = MovementKeys {
             forward: movement.forward,
@@ -177,15 +177,14 @@ impl BattleScene {
         };
         self.player.update(&keys, self.camera_yaw, delta, &self.arena_ground);
 
-        // 2. Cannon aiming
-        self.cannon.aim(aiming, delta);
+        // 2. Cannon: aim where camera looks + follow player if grabbed
+        self.cannon.aim_at_camera(camera_forward);
+        self.cannon.update_grabbed(self.player.position, self.camera_yaw);
 
         // 3. Update projectiles (physics integration)
         let updates = self.projectiles.update(delta);
 
         // 4. Projectile-wall collisions → destruction
-        //    Uses the render grid's ray_cast directly (same AABB logic
-        //    as CollisionSystem::check_projectile_walls).
         let mut hits: Vec<(usize, (i32, i32, i32))> = Vec::new();
         for upd in &updates {
             let ray = upd.new_pos - upd.prev_pos;
@@ -219,8 +218,6 @@ impl BattleScene {
         CollisionSystem::check_player_blocks(&mut self.player, self.building.blocks(), delta);
 
         // 8. Player-hex collision
-        //    Iterates the render grid directly since CollisionSystem::check_player_hexes
-        //    expects the physics grid type. Uses the same capsule-hex logic.
         self.check_player_hex_collision();
 
         // 9. Building structural physics
@@ -242,12 +239,22 @@ impl BattleScene {
         });
     }
 
+    /// Toggle cannon grab state. Returns true if state changed.
+    pub fn toggle_cannon_grab(&mut self) -> bool {
+        self.cannon.toggle_grab(self.player.position)
+    }
+
     /// Fire the cannon, spawning a projectile from the barrel.
     ///
-    /// Returns `true` if the projectile was added (i.e. under the active limit).
+    /// Only fires if the player is close enough (or has the cannon grabbed).
+    /// Returns `true` if the projectile was added.
     pub fn fire_cannon(&mut self) -> bool {
-        let (muzzle_pos, direction, speed) = self.cannon.fire_params();
-        self.projectiles.fire(muzzle_pos, direction, speed)
+        if self.cannon.can_fire(self.player.position) {
+            let (muzzle_pos, direction, speed) = self.cannon.fire_params();
+            self.projectiles.fire(muzzle_pos, direction, speed)
+        } else {
+            false
+        }
     }
 
     /// Clear all active projectiles.
@@ -257,9 +264,6 @@ impl BattleScene {
 
     /// Generate a combined mesh for all dynamic objects (projectiles,
     /// falling prisms, debris, meteors).
-    ///
-    /// This is the data the renderer needs each frame to update the
-    /// dynamic-object vertex buffer.
     pub fn generate_dynamic_mesh(&self) -> Vec<Vertex> {
         let mut mesh = Mesh::new();
 
@@ -296,9 +300,6 @@ impl BattleScene {
     }
 
     /// Check player capsule against hex prisms in the render grid.
-    ///
-    /// Uses the same capsule-hex collision primitive as `CollisionSystem`
-    /// but iterates the render grid directly.
     fn check_player_hex_collision(&mut self) {
         use crate::game::arena_player::PLAYER_EYE_HEIGHT;
         use crate::game::physics::collision::check_capsule_hex_collision;

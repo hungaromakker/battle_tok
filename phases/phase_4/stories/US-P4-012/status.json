@@ -1,0 +1,43 @@
+{
+    "story_id": "US-P4-012",
+    "title": "Asset Library Panel",
+    "status": "pending",
+    "focus": "",
+    "complexity": "normal",
+    "min_iterations": 1,
+    "criteria": [
+        {"text": "library.rs exists with AssetLibrary and AssetEntry structs", "done": false, "notes": ""},
+        {"text": "F10 toggles library panel visibility", "done": false, "notes": ""},
+        {"text": "Panel displays saved assets in grid layout", "done": false, "notes": ""},
+        {"text": "Category tabs filter displayed assets", "done": false, "notes": ""},
+        {"text": "Click selects an asset entry", "done": false, "notes": ""},
+        {"text": "Library index loads from and saves to JSON", "done": false, "notes": ""},
+        {"text": "cargo check passes with 0 errors", "done": false, "notes": ""}
+    ],
+    "verification_commands": [
+        {"cmd": "test -f /home/hungaromakker/battle_tok/src/game/asset_editor/library.rs && echo EXISTS", "expect_contains": "EXISTS", "description": "Library module exists"},
+        {"cmd": "grep -c 'AssetLibrary\\|AssetEntry' /home/hungaromakker/battle_tok/src/game/asset_editor/library.rs", "expect_gt": 0, "description": "Library types defined"},
+        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "Project compiles"}
+    ],
+    "checklist": [
+        {"item": "Read spec.md", "done": false},
+        {"item": "Create library.rs with types", "done": false},
+        {"item": "Implement load/save library index", "done": false},
+        {"item": "Implement category filtering", "done": false},
+        {"item": "Implement grid panel rendering", "done": false},
+        {"item": "Wire F10 toggle", "done": false},
+        {"item": "Run cargo check", "done": false},
+        {"item": "Commit changes", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": ["US-P4-011"],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "verification_rejections": 0,
+    "created_at": "2026-02-06T14:00:00Z"
+}

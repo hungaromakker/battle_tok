@@ -1,0 +1,53 @@
+{
+    "story_id": "US-P4-003",
+    "title": "2D Canvas Drawing: Freehand + Line Tools",
+    "status": "pending",
+    "focus": "",
+    "complexity": "complex",
+    "min_iterations": 2,
+    "criteria": [
+        {"text": "canvas_2d.rs exists with Canvas2D and Outline2D structs", "done": false, "notes": ""},
+        {"text": "Freehand tool draws smooth strokes that are RDP-simplified on mouse release", "done": false, "notes": ""},
+        {"text": "Line tool creates straight line segments between two clicks", "done": false, "notes": ""},
+        {"text": "Grid renders as a subtle overlay with configurable cell size", "done": false, "notes": ""},
+        {"text": "Snap-to-grid quantizes drawing points to grid intersections", "done": false, "notes": ""},
+        {"text": "Scroll zoom works centered on canvas", "done": false, "notes": ""},
+        {"text": "Right-mouse drag pans the canvas", "done": false, "notes": ""},
+        {"text": "Undo removes the last drawn outline", "done": false, "notes": ""},
+        {"text": "battle_arena.rs is NOT modified", "done": false, "notes": ""},
+        {"text": "cargo check passes for all binaries", "done": false, "notes": ""}
+    ],
+    "verification_commands": [
+        {"cmd": "test -f /home/hungaromakker/battle_tok/src/game/asset_editor/canvas_2d.rs && echo EXISTS", "expect_contains": "EXISTS", "description": "canvas_2d.rs exists"},
+        {"cmd": "grep -c 'Canvas2D\\|Outline2D\\|simplify_rdp' /home/hungaromakker/battle_tok/src/game/asset_editor/canvas_2d.rs", "expect_gt": 0, "description": "Core structs and RDP function exist"},
+        {"cmd": "grep -c 'canvas_2d' /home/hungaromakker/battle_tok/src/game/asset_editor/mod.rs", "expect_gt": 0, "description": "canvas_2d module declared"},
+        {"cmd": "grep -c 'DrawTool\\|Freehand\\|Line' /home/hungaromakker/battle_tok/src/game/asset_editor/canvas_2d.rs", "expect_gt": 0, "description": "Drawing tools defined"},
+        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "Project compiles"}
+    ],
+    "checklist": [
+        {"item": "Read spec.md and understand 2D canvas architecture", "done": false},
+        {"item": "Create src/game/asset_editor/canvas_2d.rs with Canvas2D and Outline2D", "done": false},
+        {"item": "Implement freehand drawing with mouse down/move/up lifecycle", "done": false},
+        {"item": "Implement RDP simplification algorithm", "done": false},
+        {"item": "Implement straight line tool", "done": false},
+        {"item": "Implement grid rendering with configurable cell size", "done": false},
+        {"item": "Implement snap-to-grid for drawing points", "done": false},
+        {"item": "Implement zoom (scroll) and pan (right-drag)", "done": false},
+        {"item": "Implement undo functionality", "done": false},
+        {"item": "Add pub mod canvas_2d to asset_editor/mod.rs", "done": false},
+        {"item": "Integrate canvas into Stage 1 rendering in battle_editor.rs", "done": false},
+        {"item": "Run cargo check for all binaries", "done": false},
+        {"item": "Commit changes", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": ["US-P4-001"],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "verification_rejections": 0,
+    "created_at": "2026-02-06T18:00:00Z"
+}

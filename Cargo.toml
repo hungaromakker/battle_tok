@@ -16,6 +16,10 @@ path = "src/bin/hex_planet.rs"
 name = "battle_arena"
 path = "src/bin/battle_arena.rs"
 
+[[bin]]
+name = "battle_editor"
+path = "src/bin/battle_editor.rs"
+
 [dependencies]
 # Graphics
 wgpu = "27"

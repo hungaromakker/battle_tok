@@ -1,0 +1,44 @@
+{
+    "story_id": "US-P4-013",
+    "title": "Variety System",
+    "status": "pending",
+    "focus": "",
+    "complexity": "normal",
+    "min_iterations": 1,
+    "criteria": [
+        {"text": "variety.rs exists with VarietyParams, VarietyInstance, SimpleRng", "done": false, "notes": ""},
+        {"text": "Same seed always produces identical variety instance (deterministic)", "done": false, "notes": ""},
+        {"text": "Different seeds produce visibly different instances", "done": false, "notes": ""},
+        {"text": "All parameter ranges are respected", "done": false, "notes": ""},
+        {"text": "seed_from_position produces consistent seeds", "done": false, "notes": ""},
+        {"text": "Preset profiles have appropriate values", "done": false, "notes": ""},
+        {"text": "variety_to_transform produces valid Mat4", "done": false, "notes": ""},
+        {"text": "cargo check passes with 0 errors", "done": false, "notes": ""}
+    ],
+    "verification_commands": [
+        {"cmd": "test -f /home/hungaromakker/battle_tok/src/game/asset_editor/variety.rs && echo EXISTS", "expect_contains": "EXISTS", "description": "Variety module exists"},
+        {"cmd": "grep -c 'VarietyParams\\|SimpleRng\\|generate_variety' /home/hungaromakker/battle_tok/src/game/asset_editor/variety.rs", "expect_gt": 0, "description": "Variety types defined"},
+        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "Project compiles"}
+    ],
+    "checklist": [
+        {"item": "Read spec.md", "done": false},
+        {"item": "Create variety.rs with VarietyParams and SimpleRng", "done": false},
+        {"item": "Implement generate_variety", "done": false},
+        {"item": "Implement seed_from_position", "done": false},
+        {"item": "Implement variety_to_transform", "done": false},
+        {"item": "Add preset profiles", "done": false},
+        {"item": "Run cargo check", "done": false},
+        {"item": "Commit changes", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": ["US-P4-001"],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "verification_rejections": 0,
+    "created_at": "2026-02-06T14:00:00Z"
+}

@@ -1,0 +1,46 @@
+{
+    "story_id": "US-P4-004",
+    "title": "2D Canvas: Arc Tool, Eraser, Mirror Symmetry",
+    "status": "pending",
+    "focus": "",
+    "complexity": "moderate",
+    "min_iterations": 1,
+    "criteria": [
+        {"text": "Arc tool draws smooth curves through 3 clicked points", "done": false, "notes": ""},
+        {"text": "Arc preview shows placed points and curve preview during placement", "done": false, "notes": ""},
+        {"text": "Eraser removes outlines near the cursor with visual radius indicator", "done": false, "notes": ""},
+        {"text": "Mirror symmetry duplicates strokes across the Y-axis when enabled", "done": false, "notes": ""},
+        {"text": "Mirror line is visible as a vertical line at x=0 when mirror mode is on", "done": false, "notes": ""},
+        {"text": "Key bindings A, E, M work correctly in Stage 1", "done": false, "notes": ""},
+        {"text": "All existing tools (freehand, line) still work correctly", "done": false, "notes": ""},
+        {"text": "battle_arena.rs is NOT modified", "done": false, "notes": ""},
+        {"text": "cargo check passes for all binaries", "done": false, "notes": ""}
+    ],
+    "verification_commands": [
+        {"cmd": "grep -c 'Arc\\|Eraser' /home/hungaromakker/battle_tok/src/game/asset_editor/canvas_2d.rs", "expect_gt": 0, "description": "Arc and Eraser tools defined"},
+        {"cmd": "grep -c 'mirror_x\\|mirror_outline' /home/hungaromakker/battle_tok/src/game/asset_editor/canvas_2d.rs", "expect_gt": 0, "description": "Mirror functionality defined"},
+        {"cmd": "grep -c 'sample_bezier\\|through_to_control\\|bezier' /home/hungaromakker/battle_tok/src/game/asset_editor/canvas_2d.rs", "expect_gt": 0, "description": "Bezier arc functions defined"},
+        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "Project compiles"}
+    ],
+    "checklist": [
+        {"item": "Read spec.md for implementation details", "done": false},
+        {"item": "Add Arc and Eraser to DrawTool enum", "done": false},
+        {"item": "Implement 3-point arc tool with Bezier interpolation", "done": false},
+        {"item": "Implement eraser tool with hit-testing", "done": false},
+        {"item": "Implement X-axis mirror symmetry", "done": false},
+        {"item": "Add key bindings A, E, M", "done": false},
+        {"item": "Run cargo check", "done": false},
+        {"item": "Commit changes", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": ["US-P4-003"],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "verification_rejections": 0,
+    "created_at": "2026-02-06T18:00:00Z"
+}

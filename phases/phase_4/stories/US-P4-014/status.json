@@ -1,0 +1,46 @@
+{
+    "story_id": "US-P4-014",
+    "title": "World Placement System",
+    "status": "pending",
+    "focus": "",
+    "complexity": "complex",
+    "min_iterations": 2,
+    "criteria": [
+        {"text": "placement.rs exists with PlacementSystem and PlacedAsset structs", "done": false, "notes": ""},
+        {"text": "Ghost preview follows cursor position on terrain", "done": false, "notes": ""},
+        {"text": "Click places asset with variety seed from position", "done": false, "notes": ""},
+        {"text": "R rotates preview, [ / ] scales preview", "done": false, "notes": ""},
+        {"text": "Scatter brush places multiple instances via Poisson disk", "done": false, "notes": ""},
+        {"text": "Ground conforming snaps assets to terrain height", "done": false, "notes": ""},
+        {"text": "generate_instances produces valid CreatureInstance data", "done": false, "notes": ""},
+        {"text": "cargo check passes with 0 errors", "done": false, "notes": ""}
+    ],
+    "verification_commands": [
+        {"cmd": "test -f /home/hungaromakker/battle_tok/src/game/asset_editor/placement.rs && echo EXISTS", "expect_contains": "EXISTS", "description": "Placement module exists"},
+        {"cmd": "grep -c 'PlacementSystem\\|PlacedAsset\\|poisson' /home/hungaromakker/battle_tok/src/game/asset_editor/placement.rs", "expect_gt": 0, "description": "Placement types and Poisson sampling defined"},
+        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "Project compiles"}
+    ],
+    "checklist": [
+        {"item": "Read spec.md", "done": false},
+        {"item": "Create placement.rs with types", "done": false},
+        {"item": "Implement ghost preview update", "done": false},
+        {"item": "Implement single placement", "done": false},
+        {"item": "Implement Poisson disk scatter", "done": false},
+        {"item": "Implement ground conforming", "done": false},
+        {"item": "Implement instance generation for GPU", "done": false},
+        {"item": "Add input handling (R, [, ])", "done": false},
+        {"item": "Run cargo check", "done": false},
+        {"item": "Commit changes", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": ["US-P4-012", "US-P4-013"],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "verification_rejections": 0,
+    "created_at": "2026-02-06T14:00:00Z"
+}

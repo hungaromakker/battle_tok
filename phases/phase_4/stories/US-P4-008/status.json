@@ -1,0 +1,51 @@
+{
+    "story_id": "US-P4-008",
+    "title": "Sculpting Bridge",
+    "status": "pending",
+    "focus": "",
+    "complexity": "normal",
+    "min_iterations": 1,
+    "criteria": [
+        {"text": "sculpt_bridge.rs exists with SculptBridge struct and SculptTool enum", "done": false, "notes": ""},
+        {"text": "SculptTool enum has FaceExtrude, VertexPull, EdgePull, Smooth, AddSphere, SubtractSphere variants", "done": false, "notes": ""},
+        {"text": "Face extrusion from SculptingManager is accessible through the bridge", "done": false, "notes": ""},
+        {"text": "AddSphere uses SDF smooth_union at cursor position + MarchingCubes remesh", "done": false, "notes": ""},
+        {"text": "SubtractSphere uses SDF smooth_subtraction + MarchingCubes remesh", "done": false, "notes": ""},
+        {"text": "Smooth brush finds vertices within radius and averages with neighbor positions using distance falloff", "done": false, "notes": ""},
+        {"text": "Vertex adjacency is built from triangle indices", "done": false, "notes": ""},
+        {"text": "SculptBridge is wired into mod.rs for Stage 3 input routing", "done": false, "notes": ""},
+        {"text": "cargo check passes with 0 errors", "done": false, "notes": ""}
+    ],
+    "verification_commands": [
+        {"cmd": "test -f /home/hungaromakker/battle_tok/src/game/asset_editor/sculpt_bridge.rs && echo EXISTS", "expect_contains": "EXISTS", "description": "sculpt_bridge.rs exists"},
+        {"cmd": "grep -c 'SculptBridge\\|SculptTool' /home/hungaromakker/battle_tok/src/game/asset_editor/sculpt_bridge.rs", "expect_contains": "> 0", "description": "Core sculpt types defined"},
+        {"cmd": "grep -c 'AddSphere\\|SubtractSphere\\|Smooth\\|FaceExtrude' /home/hungaromakker/battle_tok/src/game/asset_editor/sculpt_bridge.rs", "expect_contains": "> 0", "description": "All sculpt tool variants present"},
+        {"cmd": "grep -c 'smooth_union\\|smooth_subtraction\\|marching_cubes\\|build_vertex_adjacency' /home/hungaromakker/battle_tok/src/game/asset_editor/sculpt_bridge.rs", "expect_contains": "> 0", "description": "SDF operations and adjacency builder present"},
+        {"cmd": "grep -c 'pub mod sculpt_bridge' /home/hungaromakker/battle_tok/src/game/asset_editor/mod.rs", "expect_contains": "> 0", "description": "Module registered in mod.rs"},
+        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "Project compiles"}
+    ],
+    "checklist": [
+        {"item": "Read spec.md and understand sculpt bridge requirements", "done": false},
+        {"item": "Create src/game/asset_editor/sculpt_bridge.rs with SculptTool enum", "done": false},
+        {"item": "Implement SculptBridge struct with active_tool, brush_radius, smooth_factor", "done": false},
+        {"item": "Build vertex adjacency helper from triangle indices", "done": false},
+        {"item": "Implement smooth brush with distance falloff and neighbor averaging", "done": false},
+        {"item": "Implement AddSphere using smooth_union + MarchingCubes", "done": false},
+        {"item": "Implement SubtractSphere using smooth_subtraction + MarchingCubes", "done": false},
+        {"item": "Delegate FaceExtrude/VertexPull/EdgePull to SculptingManager", "done": false},
+        {"item": "Wire sculpt_bridge module into mod.rs for Stage 3", "done": false},
+        {"item": "Run cargo check", "done": false},
+        {"item": "Commit changes", "done": false}
+    ],
+    "worker_notes": "",
+    "notes_history": [],
+    "iteration": 0,
+    "failed_reasons": [],
+    "dependencies": ["US-P4-006"],
+    "commit_hash": "",
+    "files_modified": [],
+    "iteration_history": [],
+    "learnings": [],
+    "verification_rejections": 0,
+    "created_at": "2026-02-06T14:00:00Z"
+}

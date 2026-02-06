@@ -1,23 +1,20 @@
-//! Cannon aiming and fire coordination system.
+//! Cannon interaction and fire coordination system.
 //!
-//! Wraps [`ArenaCannon`] with a high-level aim/fire interface and tracks
-//! when the cannon mesh needs regeneration due to direction changes.
+//! Wraps [`ArenaCannon`] with a grab/move/fire interface. The cannon aims
+//! where the camera looks (no arrow-key aiming). The player can grab the
+//! cannon with G, walk to reposition it, and fire with Space/F.
 
 use glam::Vec3;
 
-use crate::game::arena_cannon::{ArenaCannon, CANNON_ROTATION_SPEED};
-use crate::game::input::AimingState;
+use crate::game::arena_cannon::ArenaCannon;
 
-/// Manages cannon state, aiming, and fire coordination.
-///
-/// Encapsulates the aiming math (elevation/azimuth from keyboard input),
-/// smooth interpolation, and mesh-dirty tracking so the main game loop
-/// only needs one-liner calls.
+/// Manages cannon state: grab, move, aim (camera-based), and fire.
 pub struct CannonSystem {
     cannon: ArenaCannon,
-    rotation_speed: f32,
     /// Cached direction for mesh-dirty detection.
     last_direction: Vec3,
+    /// Cached position for mesh-dirty detection.
+    last_position: Vec3,
     mesh_dirty: bool,
 }
 
@@ -26,36 +23,20 @@ impl CannonSystem {
     pub fn new() -> Self {
         let cannon = ArenaCannon::default();
         let dir = cannon.get_barrel_direction();
+        let pos = cannon.position;
         Self {
             cannon,
-            rotation_speed: CANNON_ROTATION_SPEED,
             last_direction: dir,
+            last_position: pos,
             mesh_dirty: true, // Dirty on first frame so mesh gets generated
         }
     }
 
-    /// Update cannon aim based on input.
+    /// Update cannon aim from camera look direction.
     ///
-    /// Reads the aiming state (up/down/left/right), applies rotation scaled
-    /// by `delta`, and runs smooth interpolation toward the target angles.
-    pub fn aim(&mut self, aiming: &AimingState, delta: f32) {
-        let aim_delta = self.rotation_speed * delta;
-
-        if aiming.aim_up {
-            self.cannon.adjust_elevation(aim_delta);
-        }
-        if aiming.aim_down {
-            self.cannon.adjust_elevation(-aim_delta);
-        }
-        if aiming.aim_left {
-            self.cannon.adjust_azimuth(-aim_delta);
-        }
-        if aiming.aim_right {
-            self.cannon.adjust_azimuth(aim_delta);
-        }
-
-        // Smooth interpolation toward target angles
-        self.cannon.update(delta);
+    /// Call each frame with the camera's forward vector.
+    pub fn aim_at_camera(&mut self, camera_forward: Vec3) {
+        self.cannon.set_look_direction(camera_forward);
 
         // Check if direction changed enough to warrant mesh regeneration
         let new_dir = self.cannon.get_barrel_direction();
@@ -65,6 +46,41 @@ impl CannonSystem {
         }
     }
 
+    /// Update cannon position when grabbed — call each frame.
+    pub fn update_grabbed(&mut self, player_pos: Vec3, camera_yaw: f32) {
+        if self.cannon.grabbed {
+            self.cannon.follow_player(player_pos, camera_yaw);
+
+            // Check if position changed
+            if (self.cannon.position - self.last_position).length_squared() > 1e-4 {
+                self.mesh_dirty = true;
+                self.last_position = self.cannon.position;
+            }
+        }
+    }
+
+    /// Try to grab the cannon (toggle grab/release).
+    ///
+    /// Returns `true` if the state changed.
+    pub fn toggle_grab(&mut self, player_pos: Vec3) -> bool {
+        if self.cannon.grabbed {
+            self.cannon.release();
+            self.mesh_dirty = true;
+            true
+        } else {
+            let grabbed = self.cannon.try_grab(player_pos);
+            if grabbed {
+                self.mesh_dirty = true;
+            }
+            grabbed
+        }
+    }
+
+    /// Whether the cannon is currently grabbed.
+    pub fn is_grabbed(&self) -> bool {
+        self.cannon.grabbed
+    }
+
     /// Get fire parameters: (muzzle position, barrel direction, muzzle velocity).
     pub fn fire_params(&self) -> (Vec3, Vec3, f32) {
         (
@@ -72,6 +88,11 @@ impl CannonSystem {
             self.cannon.get_barrel_direction(),
             self.cannon.muzzle_velocity,
         )
+    }
+
+    /// Check if the player is close enough to fire.
+    pub fn can_fire(&self, player_pos: Vec3) -> bool {
+        self.cannon.grabbed || self.cannon.in_fire_range(player_pos)
     }
 
     /// Check if the cannon mesh needs regeneration.
@@ -92,10 +113,5 @@ impl CannonSystem {
     /// Mutable access to the underlying cannon (e.g. repositioning).
     pub fn cannon_mut(&mut self) -> &mut ArenaCannon {
         &mut self.cannon
-    }
-
-    /// Check if the cannon is currently interpolating toward its target.
-    pub fn is_aiming(&self) -> bool {
-        self.cannon.is_aiming()
     }
 }
