@@ -142,9 +142,10 @@ impl Extruder {
 
     /// Generate a 3D preview mesh from the given outlines.
     ///
-    /// Uses the first outline with >= 3 points as the polygon for extrusion.
-    /// Evaluates the pump SDF across a Marching Cubes grid, and stores the
-    /// resulting mesh in `mesh_vertices` / `mesh_indices`.
+    /// Dispatches to the appropriate extrusion method based on `params.method`:
+    /// - `Pump`: SDF-based inflation with profile curves (primary)
+    /// - `Linear`: SDF-based extrusion along Z with optional taper
+    /// - `Lathe`: Direct mesh generation by revolving profile around Y axis
     ///
     /// Returns `true` if the mesh contains at least one triangle.
     pub fn generate_preview(&mut self, outlines: &[Outline2D]) -> bool {
@@ -153,7 +154,6 @@ impl Extruder {
         self.dirty = false;
 
         // Find the first outline with enough points for a valid polygon.
-        // Each outline is treated as a separate closed polygon boundary.
         let first_valid = outlines.iter().find(|o| o.points.len() >= 3);
         let polygon_points: &[[f32; 2]] = match first_valid {
             Some(outline) => &outline.points,
@@ -164,46 +164,85 @@ impl Extruder {
             return false;
         }
 
-        // Convert to Vec2 polygon
+        let color = [0.6, 0.6, 0.6, 1.0];
+
+        match self.params.method {
+            ExtrudeMethod::Pump => self.generate_pump(polygon_points, color),
+            ExtrudeMethod::Linear => self.generate_linear(polygon_points, color),
+            ExtrudeMethod::Lathe => self.generate_lathe(polygon_points, color),
+        }
+
+        !self.mesh_indices.is_empty()
+    }
+
+    /// Generate mesh using the pump/inflate SDF method.
+    fn generate_pump(&mut self, polygon_points: &[[f32; 2]], color: [f32; 4]) {
         let polygon: Vec<Vec2> = polygon_points
             .iter()
             .map(|p| Vec2::new(p[0], p[1]))
             .collect();
 
-        // Compute bounding box and max inradius
-        let (bb_min, bb_max) = outline_bounding_box(&polygon_points);
-        let max_inradius = compute_max_inradius(&polygon_points);
+        let (bb_min, bb_max) = outline_bounding_box(polygon_points);
+        let max_inradius = compute_max_inradius(polygon_points);
 
         if max_inradius < 1e-6 {
-            return false;
+            return;
         }
 
-        // Determine the maximum Z extent for the bounding volume
         let max_z = self.params.thickness * self.params.inflation;
-        let margin = 0.5; // Extra margin around bounds
+        let margin = 0.5;
 
         let mc_min = Vec3::new(bb_min.x - margin, bb_min.y - margin, -max_z - margin);
         let mc_max = Vec3::new(bb_max.x + margin, bb_max.y + margin, max_z + margin);
 
-        // Create MarchingCubes instance with configured resolution
         let mc = MarchingCubes::new(self.params.mc_resolution);
-
-        // Capture params and polygon for the SDF closure
         let params = &self.params;
         let poly = &polygon;
         let inradius = max_inradius;
 
         let sdf = |p: Vec3| -> f32 { sdf_pumped(p, poly, params, inradius) };
-
-        // Default color: neutral gray
-        let color = [0.6, 0.6, 0.6, 1.0];
-
         let (vertices, indices) = mc.generate_mesh(sdf, mc_min, mc_max, color);
 
         self.mesh_vertices = vertices;
         self.mesh_indices = indices;
+    }
 
-        !self.mesh_indices.is_empty()
+    /// Generate mesh using the linear extrusion SDF method.
+    fn generate_linear(&mut self, polygon_points: &[[f32; 2]], color: [f32; 4]) {
+        let polygon: Vec<Vec2> = polygon_points
+            .iter()
+            .map(|p| Vec2::new(p[0], p[1]))
+            .collect();
+
+        let (bb_min, bb_max) = outline_bounding_box(polygon_points);
+        let margin = 0.5;
+        let depth = self.params.depth;
+
+        let mc_min = Vec3::new(bb_min.x - margin, bb_min.y - margin, -margin);
+        let mc_max = Vec3::new(bb_max.x + margin, bb_max.y + margin, depth + margin);
+
+        let mc = MarchingCubes::new(self.params.mc_resolution);
+        let taper = self.params.taper;
+
+        let sdf = |p: Vec3| -> f32 { sdf_linear_extrude(p, &polygon, depth, taper) };
+        let (vertices, indices) = mc.generate_mesh(sdf, mc_min, mc_max, color);
+
+        self.mesh_vertices = vertices;
+        self.mesh_indices = indices;
+    }
+
+    /// Generate mesh using the lathe/revolve method.
+    fn generate_lathe(&mut self, polygon_points: &[[f32; 2]], color: [f32; 4]) {
+        let (mut vertices, indices) = lathe_mesh(
+            polygon_points,
+            self.params.segments,
+            self.params.sweep_degrees,
+            color,
+        );
+        recompute_lathe_normals(&mut vertices, &indices);
+
+        self.mesh_vertices = vertices;
+        self.mesh_indices = indices;
     }
 
     /// Upload the current mesh data to GPU buffers.
@@ -394,7 +433,6 @@ pub fn outline_bounding_box(points: &[[f32; 2]]) -> (Vec2, Vec2) {
 ///
 /// Returns negative values for points inside the polygon, positive
 /// for points outside. The magnitude is the distance to the nearest edge.
-#[allow(dead_code)] // Used by sdf_linear_extrude (US-P4-007)
 fn sdf_2d_polygon(p: Vec2, polygon: &[Vec2]) -> f32 {
     let dist = min_distance_to_polygon(p, polygon);
     if point_in_polygon(p, polygon) {
@@ -489,7 +527,6 @@ fn sdf_pumped(p: Vec3, polygon: &[Vec2], params: &ExtrudeParams, max_inradius: f
 /// The SDF is the intersection of:
 /// - The (possibly tapered) 2D polygon boundary in XY
 /// - A Z-slab from 0 to depth
-#[allow(dead_code)] // US-P4-007: Linear extrusion
 fn sdf_linear_extrude(p: Vec3, polygon: &[Vec2], depth: f32, taper: f32) -> f32 {
     if polygon.len() < 3 || depth < 1e-6 {
         return f32::MAX;
@@ -538,7 +575,6 @@ fn sdf_linear_extrude(p: Vec3, polygon: &[Vec2], depth: f32, taper: f32) -> f32 
 /// divided into `segments` angular steps.
 ///
 /// Returns `(vertices, indices)` as `BlockVertex` data.
-#[allow(dead_code)] // US-P4-007: Lathe revolution
 fn lathe_mesh(
     profile: &[[f32; 2]],
     segments: u32,
@@ -648,7 +684,6 @@ fn lathe_mesh(
 /// segments exceeds a threshold).
 ///
 /// This function operates in-place on the given vertex/index data.
-#[allow(dead_code)] // US-P4-007: Lathe normal smoothing
 fn recompute_lathe_normals(vertices: &mut [BlockVertex], indices: &[u32]) {
     if vertices.is_empty() || indices.len() < 3 {
         return;
