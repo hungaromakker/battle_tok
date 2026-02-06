@@ -1,14 +1,14 @@
 {
     "story_id": "US-P4-013",
     "title": "Variety System",
-    "status": "pending",
+    "status": "completed",
     "focus": "",
     "complexity": "normal",
     "min_iterations": 1,
     "criteria": [
-        {"text": "Same seed produces identical output every time", "done": false, "notes": ""},
-        {"text": "Different seeds produce visually different variations", "done": false, "notes": ""},
-        {"text": "All variety parameters are respected in generation", "done": false, "notes": ""}
+        {"text": "Same seed produces identical output every time", "done": true, "notes": "test_generate_variety_deterministic and test_simple_rng_deterministic confirm determinism"},
+        {"text": "Different seeds produce visually different variations", "done": true, "notes": "test_generate_variety_different_seeds_differ confirms different seeds produce different output"},
+        {"text": "All variety parameters are respected in generation", "done": true, "notes": "test_generate_variety_respects_ranges checks all 200 seeds stay within param bounds"}
     ],
     "verification_commands": [
         {"cmd": "grep -r 'VarietyParams' src/game/asset_editor/", "expect_contains": "VarietyParams", "description": "VarietyParams struct exists"},
@@ -16,24 +16,31 @@
         {"cmd": "cargo check --bin battle_editor 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_editor compiles"}
     ],
     "checklist": [
-        {"item": "Read spec.md for implementation details", "done": false},
-        {"item": "Create VarietyParams struct with seed and parameters", "done": false},
-        {"item": "Implement generate_variety for deterministic variation", "done": false},
-        {"item": "Ensure same seed always produces identical output", "done": false},
-        {"item": "Ensure different seeds produce different variations", "done": false},
-        {"item": "Run cargo check", "done": false},
-        {"item": "Verify with measurable checks", "done": false},
-        {"item": "Commit changes", "done": false}
+        {"item": "Read spec.md for implementation details", "done": true},
+        {"item": "Create VarietyParams struct with seed and parameters", "done": true},
+        {"item": "Implement generate_variety for deterministic variation", "done": true},
+        {"item": "Ensure same seed always produces identical output", "done": true},
+        {"item": "Ensure different seeds produce different variations", "done": true},
+        {"item": "Run cargo check", "done": true},
+        {"item": "Verify with measurable checks", "done": true},
+        {"item": "Commit changes", "done": true}
     ],
-    "worker_notes": "",
+    "worker_notes": "Implemented complete variety system in variety.rs with all spec requirements: VarietyParams (10 fields, Default, Serialize/Deserialize), VarietyInstance (with noise_seed), SimpleRng (xorshift32), seed_from_position (FNV-1a, 3 args), generate_variety, apply_color_variety (HSV manipulation), variety_to_transform (Mat4 via Quat), and 4 preset profiles (Tree, Grass, Rock, Structure). All 20 tests pass, cargo check passes.",
     "notes_history": [],
-    "iteration": 0,
+    "iteration": 1,
     "failed_reasons": [],
     "dependencies": [],
     "commit_hash": "",
-    "files_modified": [],
-    "iteration_history": [],
-    "learnings": [],
+    "files_modified": [
+        "src/game/asset_editor/variety.rs"
+    ],
+    "iteration_history": [
+        {"iteration": 1, "action": "Implemented full variety system per spec. Added Default impl, variety_to_transform(), 3-arg seed_from_position with FNV-1a, noise_seed field, and updated preset values to match spec exactly. All 20 tests pass, cargo check passes."}
+    ],
+    "learnings": [
+        "variety.rs already partially existed from a prior partial implementation, needed updates to match spec fully",
+        "mod.rs already had pub mod variety declared, and regenerate_extrude_mesh was already implemented"
+    ],
     "verification_rejections": 0,
     "created_at": "2026-02-06T16:00:00Z"
 }
