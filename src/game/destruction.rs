@@ -207,8 +207,8 @@ impl Meteor {
         let color = [brightness, brightness * 0.28, brightness * 0.06, 1.0];
 
         // Tumbling rotation - random angular velocity for visual interest
-        let ang_x = ((seed * 3.14159).sin() * 43758.5453).fract() * 4.0 - 2.0;
-        let ang_y = ((seed * 2.71828).cos() * 43758.5453).fract() * 3.0 - 1.5;
+        let ang_x = ((seed * std::f32::consts::PI).sin() * 43758.5453).fract() * 4.0 - 2.0;
+        let ang_y = ((seed * std::f32::consts::E).cos() * 43758.5453).fract() * 3.0 - 1.5;
         let ang_z = ((seed * 1.61803).sin() * 43758.5453).fract() * 5.0 - 2.5;
 
         Self {

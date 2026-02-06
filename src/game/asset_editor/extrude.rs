@@ -142,8 +142,8 @@ impl Extruder {
 
     /// Generate a 3D preview mesh from the given outlines.
     ///
-    /// Converts the first valid (closed or 3+ point) outline into a polygon,
-    /// evaluates the pump SDF across a Marching Cubes grid, and stores the
+    /// Uses the first outline with >= 3 points as the polygon for extrusion.
+    /// Evaluates the pump SDF across a Marching Cubes grid, and stores the
     /// resulting mesh in `mesh_vertices` / `mesh_indices`.
     ///
     /// Returns `true` if the mesh contains at least one triangle.
@@ -152,13 +152,13 @@ impl Extruder {
         self.mesh_indices.clear();
         self.dirty = false;
 
-        // Collect all outline points into a single polygon.
-        // Use the first outline with enough points.
-        let polygon_points: Vec<[f32; 2]> = outlines
-            .iter()
-            .filter(|o| o.points.len() >= 3)
-            .flat_map(|o| o.points.iter().copied())
-            .collect();
+        // Find the first outline with enough points for a valid polygon.
+        // Each outline is treated as a separate closed polygon boundary.
+        let first_valid = outlines.iter().find(|o| o.points.len() >= 3);
+        let polygon_points: &[[f32; 2]] = match first_valid {
+            Some(outline) => &outline.points,
+            None => return false,
+        };
 
         if polygon_points.len() < 3 {
             return false;
