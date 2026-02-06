@@ -394,6 +394,7 @@ pub fn outline_bounding_box(points: &[[f32; 2]]) -> (Vec2, Vec2) {
 ///
 /// Returns negative values for points inside the polygon, positive
 /// for points outside. The magnitude is the distance to the nearest edge.
+#[allow(dead_code)] // Used by sdf_linear_extrude (US-P4-007)
 fn sdf_2d_polygon(p: Vec2, polygon: &[Vec2]) -> f32 {
     let dist = min_distance_to_polygon(p, polygon);
     if point_in_polygon(p, polygon) {
@@ -488,6 +489,7 @@ fn sdf_pumped(p: Vec3, polygon: &[Vec2], params: &ExtrudeParams, max_inradius: f
 /// The SDF is the intersection of:
 /// - The (possibly tapered) 2D polygon boundary in XY
 /// - A Z-slab from 0 to depth
+#[allow(dead_code)] // US-P4-007: Linear extrusion
 fn sdf_linear_extrude(p: Vec3, polygon: &[Vec2], depth: f32, taper: f32) -> f32 {
     if polygon.len() < 3 || depth < 1e-6 {
         return f32::MAX;
@@ -536,6 +538,7 @@ fn sdf_linear_extrude(p: Vec3, polygon: &[Vec2], depth: f32, taper: f32) -> f32 
 /// divided into `segments` angular steps.
 ///
 /// Returns `(vertices, indices)` as `BlockVertex` data.
+#[allow(dead_code)] // US-P4-007: Lathe revolution
 fn lathe_mesh(
     profile: &[[f32; 2]],
     segments: u32,
@@ -645,6 +648,7 @@ fn lathe_mesh(
 /// segments exceeds a threshold).
 ///
 /// This function operates in-place on the given vertex/index data.
+#[allow(dead_code)] // US-P4-007: Lathe normal smoothing
 fn recompute_lathe_normals(vertices: &mut [BlockVertex], indices: &[u32]) {
     if vertices.is_empty() || indices.len() < 3 {
         return;
