@@ -67,7 +67,7 @@
         {"item": "Verify with measurable checks", "done": true},
         {"item": "Commit changes", "done": true}
     ],
-    "worker_notes": "Iteration 2: Thorough verification + clippy fix. Fixed clippy errors in destruction.rs (approximate PI/E -> std::f32::consts). Both binaries compile EXIT:0. All 106 asset_editor tests pass. All verification commands confirmed. battle_arena.rs unmodified.",
+    "worker_notes": "Iteration 2 (final): Full verification pass complete. cargo check both binaries EXIT:0. cargo clippy EXIT:0. cargo fmt --check clean. 106/106 asset_editor tests pass. EditorStage enum verified (Draw2D/Extrude/Sculpt/Color/Save). Keys 1-5 switching via from_key+set_stage_by_key confirmed. Window title 'Battle Tök — Asset Editor' confirmed. Dark background 0.12/0.12/0.14 confirmed. Zero diff on battle_arena.rs. All acceptance criteria met.",
     "notes_history": [
         {
             "iteration": 1,
@@ -83,7 +83,7 @@
     "iteration": 2,
     "failed_reasons": [],
     "dependencies": [],
-    "commit_hash": "83da5e5cd0865f498cadd17c30b8a245db53f7dd",
+    "commit_hash": "2145c2e59968de382ffb51e3fbdf274d52aa853a",
     "files_modified": [
         "src/bin/battle_editor.rs",
         "src/game/asset_editor/mod.rs",
