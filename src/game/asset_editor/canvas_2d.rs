@@ -9,6 +9,7 @@
 //! - Orthographic canvas with grid, zoom, and pan
 //! - Undo support (Ctrl+Z removes last outline)
 
+use crate::game::asset_editor::image_trace::ImageTrace;
 use crate::game::types::Vertex;
 use crate::game::ui::add_quad;
 
@@ -23,6 +24,10 @@ pub enum DrawTool {
     Freehand,
     /// Line tool: click-click to create straight segments.
     Line,
+    /// Arc tool: 3-click arc creation via circumscribed circle computation.
+    Arc,
+    /// Eraser tool: circle cursor that removes points within radius.
+    Eraser,
 }
 
 impl std::fmt::Display for DrawTool {
@@ -30,6 +35,8 @@ impl std::fmt::Display for DrawTool {
         match self {
             DrawTool::Freehand => write!(f, "Freehand"),
             DrawTool::Line => write!(f, "Line"),
+            DrawTool::Arc => write!(f, "Arc"),
+            DrawTool::Eraser => write!(f, "Eraser"),
         }
     }
 }
@@ -116,6 +123,15 @@ pub struct Canvas2D {
     /// Whether snap-to-grid is enabled for drawing points.
     pub snap_to_grid: bool,
 
+    /// Whether X-axis mirror symmetry is enabled.
+    /// When active, a dashed vertical line is rendered at x=0 and all outlines
+    /// are mirrored across the Y axis during rendering.
+    pub mirror_x: bool,
+    /// Accumulated click points for the arc tool (up to 3).
+    pub arc_points: Vec<[f32; 2]>,
+    /// Eraser circle radius in canvas units.
+    pub eraser_radius: f32,
+
     // -- Internal state --
     /// Whether we are currently in a freehand drawing stroke.
     drawing: bool,
@@ -129,6 +145,9 @@ pub struct Canvas2D {
     last_mouse_screen: Option<[f32; 2]>,
     /// Viewport dimensions (width, height) in pixels. Updated each frame.
     viewport_size: [f32; 2],
+
+    /// Optional background reference image for tracing.
+    pub image_trace: Option<ImageTrace>,
 }
 
 impl Default for Canvas2D {
@@ -164,6 +183,30 @@ impl Canvas2D {
     const AXIS_COLOR: [f32; 4] = [0.5, 0.5, 0.5, 0.7];
     /// Color for line tool preview.
     const PREVIEW_COLOR: [f32; 4] = [0.5, 0.8, 1.0, 0.6];
+    /// Color for the mirror symmetry dashed line at x=0.
+    const MIRROR_LINE_COLOR: [f32; 4] = [1.0, 0.4, 0.4, 0.7];
+    /// Color for mirrored (reflected) outlines.
+    const MIRROR_OUTLINE_COLOR: [f32; 4] = [0.7, 0.7, 1.0, 0.5];
+    /// Color for the eraser cursor circle.
+    const ERASER_CURSOR_COLOR: [f32; 4] = [1.0, 0.3, 0.3, 0.6];
+    /// Color for arc tool click-point markers.
+    const ARC_POINT_COLOR: [f32; 4] = [1.0, 0.8, 0.2, 0.9];
+    /// Minimum eraser radius in canvas units.
+    const MIN_ERASER_RADIUS: f32 = 0.1;
+    /// Maximum eraser radius in canvas units.
+    const MAX_ERASER_RADIUS: f32 = 3.0;
+    /// Eraser radius step per bracket key press.
+    const ERASER_RADIUS_STEP: f32 = 0.1;
+    /// Default eraser radius in canvas units.
+    const DEFAULT_ERASER_RADIUS: f32 = 0.5;
+    /// Number of line segments used to approximate arc curves.
+    const ARC_SEGMENTS: usize = 32;
+    /// Dash length for the mirror symmetry line (in canvas units).
+    const MIRROR_DASH_LENGTH: f32 = 0.3;
+    /// Gap length for the mirror symmetry line (in canvas units).
+    const MIRROR_GAP_LENGTH: f32 = 0.15;
+    /// Number of line segments used to render the eraser cursor circle.
+    const ERASER_CURSOR_SEGMENTS: usize = 24;
 
     /// Create a new canvas with default settings.
     pub fn new() -> Self {
@@ -176,12 +219,16 @@ impl Canvas2D {
             show_grid: true,
             grid_size: 1.0,
             snap_to_grid: false,
+            mirror_x: false,
+            arc_points: Vec::new(),
+            eraser_radius: Self::DEFAULT_ERASER_RADIUS,
             drawing: false,
             line_start: None,
             current_mouse_canvas: None,
             middle_mouse_held: false,
             last_mouse_screen: None,
             viewport_size: [1280.0, 800.0],
+            image_trace: None,
         }
     }
 
@@ -259,8 +306,9 @@ impl Canvas2D {
     /// Switch to the freehand drawing tool.
     pub fn select_freehand(&mut self) {
         if self.tool != DrawTool::Freehand {
-            // Cancel any in-progress line tool state
+            // Cancel any in-progress state from other tools
             self.line_start = None;
+            self.arc_points.clear();
             self.tool = DrawTool::Freehand;
             println!("Canvas tool: Freehand");
         }
@@ -269,11 +317,59 @@ impl Canvas2D {
     /// Switch to the line drawing tool.
     pub fn select_line(&mut self) {
         if self.tool != DrawTool::Line {
-            // Cancel any in-progress freehand state
+            // Cancel any in-progress state from other tools
             self.finish_freehand_stroke();
+            self.arc_points.clear();
             self.tool = DrawTool::Line;
             println!("Canvas tool: Line");
         }
+    }
+
+    /// Switch to the arc drawing tool.
+    pub fn select_arc(&mut self) {
+        if self.tool != DrawTool::Arc {
+            // Cancel any in-progress state from other tools
+            self.finish_freehand_stroke();
+            self.line_start = None;
+            self.arc_points.clear();
+            self.tool = DrawTool::Arc;
+            println!("Canvas tool: Arc");
+        }
+    }
+
+    /// Switch to the eraser tool.
+    pub fn select_eraser(&mut self) {
+        if self.tool != DrawTool::Eraser {
+            // Cancel any in-progress state from other tools
+            self.finish_freehand_stroke();
+            self.line_start = None;
+            self.arc_points.clear();
+            self.tool = DrawTool::Eraser;
+            println!("Canvas tool: Eraser (radius: {:.1})", self.eraser_radius);
+        }
+    }
+
+    /// Toggle X-axis mirror symmetry.
+    pub fn toggle_mirror(&mut self) {
+        self.mirror_x = !self.mirror_x;
+        println!(
+            "Mirror X: {}",
+            if self.mirror_x { "on" } else { "off" }
+        );
+    }
+
+    /// Increase eraser radius by one step, clamped to maximum.
+    pub fn increase_eraser_radius(&mut self) {
+        self.eraser_radius =
+            (self.eraser_radius + Self::ERASER_RADIUS_STEP).min(Self::MAX_ERASER_RADIUS);
+        println!("Eraser radius: {:.1}", self.eraser_radius);
+    }
+
+    /// Decrease eraser radius by one step, clamped to minimum.
+    pub fn decrease_eraser_radius(&mut self) {
+        self.eraser_radius =
+            (self.eraser_radius - Self::ERASER_RADIUS_STEP).max(Self::MIN_ERASER_RADIUS);
+        println!("Eraser radius: {:.1}", self.eraser_radius);
     }
 
     /// Toggle grid visibility.
@@ -299,6 +395,13 @@ impl Canvas2D {
             DrawTool::Line => {
                 self.handle_line_click(canvas_pos);
             }
+            DrawTool::Arc => {
+                self.handle_arc_click(canvas_pos);
+            }
+            DrawTool::Eraser => {
+                self.drawing = true;
+                self.handle_eraser_at(canvas_pos);
+            }
         }
     }
 
@@ -306,6 +409,9 @@ impl Canvas2D {
     pub fn on_left_release(&mut self) {
         if self.tool == DrawTool::Freehand && self.drawing {
             self.finish_freehand_stroke();
+        }
+        if self.tool == DrawTool::Eraser && self.drawing {
+            self.drawing = false;
         }
     }
 
@@ -329,6 +435,11 @@ impl Canvas2D {
                     }
                 }
             }
+        }
+
+        // Eraser: erase while dragging with left mouse held
+        if self.tool == DrawTool::Eraser && self.drawing {
+            self.handle_eraser_at(canvas_pos);
         }
 
         // Middle-mouse pan
@@ -453,6 +564,66 @@ impl Canvas2D {
         }
     }
 
+    /// Handle a click for the arc tool.
+    /// Three clicks define the arc: first and third are endpoints, second is
+    /// a through-point. A circumscribed circle is computed and arc points are
+    /// generated along the shorter arc from point 1 to point 3 passing
+    /// through point 2.
+    fn handle_arc_click(&mut self, canvas_pos: [f32; 2]) {
+        self.arc_points.push(canvas_pos);
+        println!("Arc tool: point {} set", self.arc_points.len());
+
+        if self.arc_points.len() == 3 {
+            let p1 = self.arc_points[0];
+            let p2 = self.arc_points[1];
+            let p3 = self.arc_points[2];
+
+            if let Some((center, radius)) = circumscribed_circle(p1, p2, p3) {
+                // Compute angles from center to each point
+                let a1 = (p1[1] - center[1]).atan2(p1[0] - center[0]);
+                let a2 = (p2[1] - center[1]).atan2(p2[0] - center[0]);
+                let a3 = (p3[1] - center[1]).atan2(p3[0] - center[0]);
+
+                // Determine sweep direction: we want to go from a1 to a3
+                // passing through a2. Check both clockwise and counter-clockwise.
+                let arc_points = generate_arc_points(center, radius, a1, a2, a3, Self::ARC_SEGMENTS);
+
+                if arc_points.len() >= 2 {
+                    let outline = Outline2D {
+                        points: arc_points,
+                        closed: false,
+                    };
+                    self.outlines.push(outline);
+                    println!("Arc tool: arc created with {} points", self.outlines.last().map_or(0, |o| o.len()));
+                }
+            } else {
+                println!("Arc tool: collinear points, creating straight line instead");
+                let outline = Outline2D {
+                    points: vec![p1, p3],
+                    closed: false,
+                };
+                self.outlines.push(outline);
+            }
+
+            self.arc_points.clear();
+        }
+    }
+
+    /// Handle eraser action at the given canvas position.
+    /// Removes points within `eraser_radius` of the cursor and splits
+    /// outlines at the resulting gaps.
+    fn handle_eraser_at(&mut self, cursor: [f32; 2]) {
+        let radius = self.eraser_radius;
+        let mut new_outlines: Vec<Outline2D> = Vec::new();
+
+        for outline in self.outlines.drain(..) {
+            let result = erase_near(&outline, cursor, radius);
+            new_outlines.extend(result);
+        }
+
+        self.outlines = new_outlines;
+    }
+
     // ========================================================================
     // RENDERING
     // ========================================================================
@@ -467,17 +638,35 @@ impl Canvas2D {
             self.render_grid(vertices, indices);
         }
 
-        // 2. Completed outlines
+        // 2. Mirror symmetry dashed line at x=0
+        if self.mirror_x {
+            self.render_mirror_line(vertices, indices);
+        }
+
+        // 3. Completed outlines
         for outline in &self.outlines {
             self.render_outline(outline, Self::OUTLINE_COLOR, Self::LINE_HALF_WIDTH, vertices, indices);
         }
 
-        // 3. Active (in-progress) outline
-        if let Some(ref active) = self.active_outline {
-            self.render_outline(active, Self::ACTIVE_COLOR, Self::LINE_HALF_WIDTH, vertices, indices);
+        // 4. Mirror: render reflected copies of completed outlines
+        if self.mirror_x {
+            for outline in &self.outlines {
+                let mirrored = mirror_outline_x(outline);
+                self.render_outline(&mirrored, Self::MIRROR_OUTLINE_COLOR, Self::LINE_HALF_WIDTH, vertices, indices);
+            }
         }
 
-        // 4. Line tool preview
+        // 5. Active (in-progress) outline
+        if let Some(ref active) = self.active_outline {
+            self.render_outline(active, Self::ACTIVE_COLOR, Self::LINE_HALF_WIDTH, vertices, indices);
+            // Mirror the active outline too
+            if self.mirror_x {
+                let mirrored = mirror_outline_x(active);
+                self.render_outline(&mirrored, Self::MIRROR_OUTLINE_COLOR, Self::LINE_HALF_WIDTH, vertices, indices);
+            }
+        }
+
+        // 6. Line tool preview
         if self.tool == DrawTool::Line {
             if let (Some(start), Some(mouse)) = (self.line_start, self.current_mouse_canvas) {
                 self.render_segment(
@@ -488,6 +677,29 @@ impl Canvas2D {
                     vertices,
                     indices,
                 );
+                // Mirror the line preview too
+                if self.mirror_x {
+                    self.render_segment(
+                        [-start[0], start[1]],
+                        [-mouse[0], mouse[1]],
+                        Self::MIRROR_OUTLINE_COLOR,
+                        Self::LINE_HALF_WIDTH,
+                        vertices,
+                        indices,
+                    );
+                }
+            }
+        }
+
+        // 7. Arc tool: render click-point markers and preview
+        if self.tool == DrawTool::Arc {
+            self.render_arc_preview(vertices, indices);
+        }
+
+        // 8. Eraser tool: render cursor circle
+        if self.tool == DrawTool::Eraser {
+            if let Some(mouse) = self.current_mouse_canvas {
+                self.render_eraser_cursor(mouse, vertices, indices);
             }
         }
     }
@@ -619,6 +831,254 @@ impl Canvas2D {
         let bl = self.canvas_to_ndc(b[0] + px, b[1] + py);
 
         add_quad(vertices, indices, tl, tr, br, bl, color);
+    }
+
+    /// Render a dashed vertical line at x=0 to indicate mirror symmetry axis.
+    fn render_mirror_line(&self, vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>) {
+        let half_y = Self::DEFAULT_HALF_EXTENT / self.zoom;
+
+        let min_y = self.pan[1] - half_y;
+        let max_y = self.pan[1] + half_y;
+
+        // Scale dash/gap with zoom so they remain a consistent visual size
+        let dash = Self::MIRROR_DASH_LENGTH / self.zoom.sqrt();
+        let gap = Self::MIRROR_GAP_LENGTH / self.zoom.sqrt();
+        let hw = Self::LINE_HALF_WIDTH * 1.5;
+
+        let mut y = min_y;
+        while y < max_y {
+            let y_end = (y + dash).min(max_y);
+            self.render_segment(
+                [0.0, y],
+                [0.0, y_end],
+                Self::MIRROR_LINE_COLOR,
+                hw,
+                vertices,
+                indices,
+            );
+            y += dash + gap;
+        }
+    }
+
+    /// Render arc tool preview: small markers at each clicked point,
+    /// and a preview curve from existing points through the current mouse position.
+    fn render_arc_preview(&self, vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>) {
+        let marker_size = 0.08 / self.zoom.sqrt();
+
+        // Render markers at each accumulated arc point
+        for pt in &self.arc_points {
+            let tl = self.canvas_to_ndc(pt[0] - marker_size, pt[1] + marker_size);
+            let tr = self.canvas_to_ndc(pt[0] + marker_size, pt[1] + marker_size);
+            let br = self.canvas_to_ndc(pt[0] + marker_size, pt[1] - marker_size);
+            let bl = self.canvas_to_ndc(pt[0] - marker_size, pt[1] - marker_size);
+            add_quad(vertices, indices, tl, tr, br, bl, Self::ARC_POINT_COLOR);
+        }
+
+        // Preview the arc with current mouse as the next point
+        if let Some(mouse) = self.current_mouse_canvas {
+            match self.arc_points.len() {
+                1 => {
+                    // One point placed: show a line preview to mouse
+                    self.render_segment(
+                        self.arc_points[0],
+                        mouse,
+                        Self::PREVIEW_COLOR,
+                        Self::LINE_HALF_WIDTH,
+                        vertices,
+                        indices,
+                    );
+                }
+                2 => {
+                    // Two points placed: show arc preview through mouse
+                    let p1 = self.arc_points[0];
+                    let p2 = self.arc_points[1];
+                    let p3 = mouse;
+                    if let Some((center, radius)) = circumscribed_circle(p1, p2, p3) {
+                        let a1 = (p1[1] - center[1]).atan2(p1[0] - center[0]);
+                        let a2 = (p2[1] - center[1]).atan2(p2[0] - center[0]);
+                        let a3 = (p3[1] - center[1]).atan2(p3[0] - center[0]);
+                        let preview_points =
+                            generate_arc_points(center, radius, a1, a2, a3, Self::ARC_SEGMENTS);
+                        let preview_outline = Outline2D {
+                            points: preview_points,
+                            closed: false,
+                        };
+                        self.render_outline(
+                            &preview_outline,
+                            Self::PREVIEW_COLOR,
+                            Self::LINE_HALF_WIDTH,
+                            vertices,
+                            indices,
+                        );
+                    } else {
+                        // Collinear: just show a line
+                        self.render_segment(
+                            p1,
+                            p3,
+                            Self::PREVIEW_COLOR,
+                            Self::LINE_HALF_WIDTH,
+                            vertices,
+                            indices,
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Render the eraser cursor as a circle at the given canvas position.
+    fn render_eraser_cursor(
+        &self,
+        center: [f32; 2],
+        vertices: &mut Vec<Vertex>,
+        indices: &mut Vec<u32>,
+    ) {
+        let segments = Self::ERASER_CURSOR_SEGMENTS;
+        let r = self.eraser_radius;
+
+        for i in 0..segments {
+            let angle_a = (i as f32 / segments as f32) * std::f32::consts::TAU;
+            let angle_b = ((i + 1) as f32 / segments as f32) * std::f32::consts::TAU;
+
+            let ax = center[0] + r * angle_a.cos();
+            let ay = center[1] + r * angle_a.sin();
+            let bx = center[0] + r * angle_b.cos();
+            let by = center[1] + r * angle_b.sin();
+
+            self.render_segment(
+                [ax, ay],
+                [bx, by],
+                Self::ERASER_CURSOR_COLOR,
+                Self::LINE_HALF_WIDTH,
+                vertices,
+                indices,
+            );
+        }
+    }
+}
+
+// ============================================================================
+// CIRCUMSCRIBED CIRCLE & ARC GENERATION
+// ============================================================================
+
+/// Compute the circumscribed circle (circumcircle) of three points.
+/// Returns `Some((center, radius))` if the points are not collinear,
+/// `None` otherwise.
+fn circumscribed_circle(p1: [f32; 2], p2: [f32; 2], p3: [f32; 2]) -> Option<([f32; 2], f32)> {
+    let ax = p1[0];
+    let ay = p1[1];
+    let bx = p2[0];
+    let by = p2[1];
+    let cx = p3[0];
+    let cy = p3[1];
+
+    let d = 2.0 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+    if d.abs() < 1e-10 {
+        return None; // collinear
+    }
+
+    let ux = ((ax * ax + ay * ay) * (by - cy)
+        + (bx * bx + by * by) * (cy - ay)
+        + (cx * cx + cy * cy) * (ay - by))
+        / d;
+    let uy = ((ax * ax + ay * ay) * (cx - bx)
+        + (bx * bx + by * by) * (ax - cx)
+        + (cx * cx + cy * cy) * (bx - ax))
+        / d;
+
+    let r = ((ax - ux).powi(2) + (ay - uy).powi(2)).sqrt();
+    Some(([ux, uy], r))
+}
+
+/// Generate points along an arc from angle `a1` to angle `a3`, passing through
+/// the angle `a2`. The arc is on a circle with the given `center` and `radius`.
+///
+/// The direction (clockwise vs counter-clockwise) is chosen so that `a2` lies
+/// on the arc between `a1` and `a3`.
+fn generate_arc_points(
+    center: [f32; 2],
+    radius: f32,
+    a1: f32,
+    a2: f32,
+    a3: f32,
+    num_segments: usize,
+) -> Vec<[f32; 2]> {
+    use std::f32::consts::TAU;
+
+    // Normalize angle difference to [0, TAU)
+    let normalize = |a: f32| -> f32 { ((a % TAU) + TAU) % TAU };
+
+    let start = a1;
+
+    // Compute the CCW sweep from a1 to a3
+    let sweep_ccw = normalize(a3 - a1);
+    // And the CW sweep (going the other way)
+    let sweep_cw = TAU - sweep_ccw;
+
+    // Check if a2 falls within the CCW sweep from a1
+    let a2_offset = normalize(a2 - a1);
+
+    // If a2 is within the CCW arc from a1 to a3, use CCW direction; otherwise CW
+    let sweep = if a2_offset <= sweep_ccw {
+        sweep_ccw
+    } else {
+        -sweep_cw
+    };
+
+    let mut points = Vec::with_capacity(num_segments + 1);
+    for i in 0..=num_segments {
+        let t = i as f32 / num_segments as f32;
+        let angle = start + sweep * t;
+        let x = center[0] + radius * angle.cos();
+        let y = center[1] + radius * angle.sin();
+        points.push([x, y]);
+    }
+
+    points
+}
+
+// ============================================================================
+// ERASER LOGIC
+// ============================================================================
+
+/// Erase points within `radius` of `cursor` from an outline,
+/// splitting the outline at gaps where points were removed.
+/// Returns the remaining outline segments (each with at least 2 points).
+fn erase_near(outline: &Outline2D, cursor: [f32; 2], radius: f32) -> Vec<Outline2D> {
+    let mut segments: Vec<Vec<[f32; 2]>> = vec![vec![]];
+
+    for &pt in &outline.points {
+        let dx = pt[0] - cursor[0];
+        let dy = pt[1] - cursor[1];
+        let dist = (dx * dx + dy * dy).sqrt();
+
+        if dist > radius {
+            segments.last_mut().unwrap().push(pt);
+        } else if !segments.last().unwrap().is_empty() {
+            segments.push(vec![]);
+        }
+    }
+
+    segments
+        .into_iter()
+        .filter(|s| s.len() >= 2)
+        .map(|points| Outline2D {
+            points,
+            closed: false,
+        })
+        .collect()
+}
+
+// ============================================================================
+// MIRROR UTILITY
+// ============================================================================
+
+/// Create a mirrored copy of an outline across the Y axis (x negated).
+fn mirror_outline_x(outline: &Outline2D) -> Outline2D {
+    Outline2D {
+        points: outline.points.iter().map(|p| [-p[0], p[1]]).collect(),
+        closed: outline.closed,
     }
 }
 
@@ -862,5 +1322,201 @@ mod tests {
     fn test_draw_tool_display() {
         assert_eq!(format!("{}", DrawTool::Freehand), "Freehand");
         assert_eq!(format!("{}", DrawTool::Line), "Line");
+        assert_eq!(format!("{}", DrawTool::Arc), "Arc");
+        assert_eq!(format!("{}", DrawTool::Eraser), "Eraser");
+    }
+
+    // -- Arc tool tests --
+
+    #[test]
+    fn test_circumscribed_circle_known_triangle() {
+        // Right triangle at (0,0), (1,0), (0,1) -- circumcircle center at (0.5, 0.5)
+        let result = circumscribed_circle([0.0, 0.0], [1.0, 0.0], [0.0, 1.0]);
+        assert!(result.is_some());
+        let (center, radius) = result.unwrap();
+        assert!(
+            (center[0] - 0.5).abs() < 0.001,
+            "Center X should be ~0.5, got {}",
+            center[0]
+        );
+        assert!(
+            (center[1] - 0.5).abs() < 0.001,
+            "Center Y should be ~0.5, got {}",
+            center[1]
+        );
+        let expected_r = (0.5_f32 * 0.5 + 0.5 * 0.5).sqrt();
+        assert!(
+            (radius - expected_r).abs() < 0.001,
+            "Radius should be ~{}, got {}",
+            expected_r,
+            radius
+        );
+    }
+
+    #[test]
+    fn test_circumscribed_circle_collinear_returns_none() {
+        let result = circumscribed_circle([0.0, 0.0], [1.0, 1.0], [2.0, 2.0]);
+        assert!(result.is_none(), "Collinear points should return None");
+    }
+
+    #[test]
+    fn test_generate_arc_points_count() {
+        let points = generate_arc_points(
+            [0.0, 0.0],
+            1.0,
+            0.0,
+            std::f32::consts::FRAC_PI_2,
+            std::f32::consts::PI,
+            16,
+        );
+        assert_eq!(points.len(), 17, "Should have num_segments + 1 points");
+    }
+
+    #[test]
+    fn test_arc_tool_selection() {
+        let mut canvas = Canvas2D::new();
+        canvas.select_arc();
+        assert_eq!(canvas.tool, DrawTool::Arc);
+        assert!(canvas.arc_points.is_empty());
+    }
+
+    #[test]
+    fn test_arc_tool_clears_on_switch() {
+        let mut canvas = Canvas2D::new();
+        canvas.select_arc();
+        canvas.arc_points.push([1.0, 0.0]);
+        canvas.arc_points.push([0.0, 1.0]);
+        // Switch to freehand should clear arc points
+        canvas.select_freehand();
+        assert_eq!(canvas.tool, DrawTool::Freehand);
+        assert!(canvas.arc_points.is_empty());
+    }
+
+    // -- Eraser tests --
+
+    #[test]
+    fn test_erase_near_removes_points() {
+        let outline = Outline2D {
+            points: vec![
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+                [3.0, 0.0],
+                [4.0, 0.0],
+            ],
+            closed: false,
+        };
+        // Erase around x=2 with radius 0.5 -- should remove point [2.0, 0.0]
+        let result = erase_near(&outline, [2.0, 0.0], 0.5);
+        assert_eq!(result.len(), 2, "Should split into 2 segments");
+        assert_eq!(result[0].points.len(), 2); // [0,0], [1,0]
+        assert_eq!(result[1].points.len(), 2); // [3,0], [4,0]
+    }
+
+    #[test]
+    fn test_erase_near_no_match() {
+        let outline = Outline2D {
+            points: vec![[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]],
+            closed: false,
+        };
+        // Eraser far away -- should return the whole outline unchanged
+        let result = erase_near(&outline, [10.0, 10.0], 0.5);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].points.len(), 3);
+    }
+
+    #[test]
+    fn test_erase_near_all_removed() {
+        let outline = Outline2D {
+            points: vec![[0.0, 0.0], [0.1, 0.0]],
+            closed: false,
+        };
+        // Eraser covers all points
+        let result = erase_near(&outline, [0.0, 0.0], 5.0);
+        assert!(result.is_empty(), "All points erased, no segments remain");
+    }
+
+    #[test]
+    fn test_eraser_tool_selection() {
+        let mut canvas = Canvas2D::new();
+        canvas.select_eraser();
+        assert_eq!(canvas.tool, DrawTool::Eraser);
+    }
+
+    #[test]
+    fn test_eraser_radius_adjustment() {
+        let mut canvas = Canvas2D::new();
+        let initial = canvas.eraser_radius;
+
+        canvas.increase_eraser_radius();
+        assert!(canvas.eraser_radius > initial);
+
+        canvas.decrease_eraser_radius();
+        assert!((canvas.eraser_radius - initial).abs() < 0.001);
+
+        // Test clamping at minimum
+        for _ in 0..100 {
+            canvas.decrease_eraser_radius();
+        }
+        assert!(canvas.eraser_radius >= Canvas2D::MIN_ERASER_RADIUS);
+
+        // Test clamping at maximum
+        for _ in 0..100 {
+            canvas.increase_eraser_radius();
+        }
+        assert!(canvas.eraser_radius <= Canvas2D::MAX_ERASER_RADIUS);
+    }
+
+    // -- Mirror tests --
+
+    #[test]
+    fn test_mirror_toggle() {
+        let mut canvas = Canvas2D::new();
+        assert!(!canvas.mirror_x);
+        canvas.toggle_mirror();
+        assert!(canvas.mirror_x);
+        canvas.toggle_mirror();
+        assert!(!canvas.mirror_x);
+    }
+
+    #[test]
+    fn test_mirror_outline_x() {
+        let outline = Outline2D {
+            points: vec![[1.0, 2.0], [3.0, 4.0]],
+            closed: true,
+        };
+        let mirrored = mirror_outline_x(&outline);
+        assert_eq!(mirrored.points[0], [-1.0, 2.0]);
+        assert_eq!(mirrored.points[1], [-3.0, 4.0]);
+        assert!(mirrored.closed);
+    }
+
+    #[test]
+    fn test_mirror_render_produces_extra_vertices() {
+        let mut canvas = Canvas2D::new();
+        canvas.outlines.push(Outline2D {
+            points: vec![[1.0, 0.0], [2.0, 1.0], [3.0, 0.0]],
+            closed: false,
+        });
+
+        // Render without mirror
+        let mut v1 = Vec::new();
+        let mut i1 = Vec::new();
+        canvas.render(&mut v1, &mut i1);
+        let count_no_mirror = v1.len();
+
+        // Render with mirror
+        canvas.mirror_x = true;
+        let mut v2 = Vec::new();
+        let mut i2 = Vec::new();
+        canvas.render(&mut v2, &mut i2);
+        let count_with_mirror = v2.len();
+
+        assert!(
+            count_with_mirror > count_no_mirror,
+            "Mirror should produce additional vertices: {} vs {}",
+            count_with_mirror,
+            count_no_mirror
+        );
     }
 }

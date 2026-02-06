@@ -20,10 +20,14 @@
 //! - Middle mouse drag: Orbit camera (stages 2-5)
 //! - Right mouse drag: Pan camera (stages 2-5)
 //! - Scroll wheel: Zoom camera (stages 2-5)
+//! - Ctrl+I: Load reference image for tracing (stage 1)
+//! - Ctrl+H: Toggle reference image visibility (stage 1)
+//! - Ctrl+Scroll: Adjust reference image scale (stage 1)
 //! - Ctrl+Z: Undo
 //! - Ctrl+Y: Redo
 //! - ESC: Exit
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -34,6 +38,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowAttributes, WindowId};
 
+use battle_tok_engine::game::asset_editor::image_trace::{CanvasViewport, ImageTrace};
 use battle_tok_engine::game::asset_editor::orbit_camera::OrbitMouseButton;
 use battle_tok_engine::game::asset_editor::{AssetEditor, EditorStage};
 
@@ -209,6 +214,26 @@ impl BattleEditorApp {
             return;
         }
 
+        // Ctrl+I => Load reference image for tracing (Draw2D stage)
+        if key == KeyCode::KeyI && self.ctrl_held {
+            if self.editor.stage == EditorStage::Draw2D {
+                self.load_trace_image();
+            }
+            return;
+        }
+
+        // Ctrl+H => Toggle reference image visibility (Draw2D stage)
+        if key == KeyCode::KeyH && self.ctrl_held {
+            if self.editor.stage == EditorStage::Draw2D {
+                if let Some(ref mut trace) = self.editor.canvas.image_trace {
+                    trace.toggle_visible();
+                } else {
+                    println!("ImageTrace: no image loaded (use Ctrl+I first)");
+                }
+            }
+            return;
+        }
+
         // Canvas-specific keys when in Draw2D stage
         if self.editor.stage == EditorStage::Draw2D {
             match key {
@@ -243,6 +268,46 @@ impl BattleEditorApp {
                 if let Some(window) = &self.window {
                     window.set_title(&self.editor.window_title());
                 }
+            }
+        }
+    }
+
+    /// Load a reference image for tracing on the 2D canvas.
+    ///
+    /// Uses the `TRACE_IMAGE` environment variable if set, otherwise
+    /// prints instructions to stdout.
+    fn load_trace_image(&mut self) {
+        let gpu = match &self.gpu {
+            Some(gpu) => gpu,
+            None => {
+                eprintln!("ImageTrace: GPU not initialized yet");
+                return;
+            }
+        };
+
+        let path_str = std::env::var("TRACE_IMAGE").unwrap_or_default();
+        if path_str.is_empty() {
+            println!("ImageTrace: set TRACE_IMAGE env var to load a reference image");
+            println!("  Example: TRACE_IMAGE=reference.png cargo run --bin battle_editor");
+            return;
+        }
+
+        let path = Path::new(&path_str);
+        if !path.exists() {
+            eprintln!("ImageTrace: file not found: {}", path_str);
+            return;
+        }
+
+        match ImageTrace::load(path, &gpu.device, &gpu.queue, gpu.surface_config.format) {
+            Ok(trace) => {
+                println!(
+                    "ImageTrace: loaded {}x{} from {}",
+                    trace.image_width, trace.image_height, path_str
+                );
+                self.editor.canvas.image_trace = Some(trace);
+            }
+            Err(e) => {
+                eprintln!("ImageTrace: {}", e);
             }
         }
     }
@@ -304,6 +369,19 @@ impl BattleEditorApp {
                 occlusion_query_set: None,
             });
             // Render pass ends here (drop)
+        }
+
+        // Render reference image trace (if loaded and in Draw2D stage)
+        if self.editor.stage == EditorStage::Draw2D {
+            if let Some(ref trace) = self.editor.canvas.image_trace {
+                let canvas_vp = CanvasViewport {
+                    zoom: self.editor.canvas.zoom,
+                    pan: self.editor.canvas.pan,
+                    width: gpu.surface_config.width as f32,
+                    height: gpu.surface_config.height as f32,
+                };
+                trace.render(&mut encoder, &view, &gpu.queue, &canvas_vp);
+            }
         }
 
         gpu.queue.submit(std::iter::once(encoder.finish()));
@@ -402,7 +480,15 @@ impl ApplicationHandler for BattleEditorApp {
                 };
 
                 if self.editor.stage == EditorStage::Draw2D {
-                    self.editor.canvas.on_scroll(scroll);
+                    if self.ctrl_held {
+                        // Ctrl+Scroll: adjust reference image scale
+                        if let Some(ref mut trace) = self.editor.canvas.image_trace {
+                            let factor = if scroll > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                            trace.adjust_scale(factor);
+                        }
+                    } else {
+                        self.editor.canvas.on_scroll(scroll);
+                    }
                 } else {
                     self.editor.camera.handle_scroll(scroll);
                 }
@@ -475,6 +561,9 @@ fn main() {
     println!("  Middle mouse drag: Orbit (stages 2-5)");
     println!("  Right mouse drag: Pan (stages 2-5)");
     println!("  Scroll wheel: Zoom (stages 2-5)");
+    println!("  Ctrl+I: Load reference image (stage 1)");
+    println!("  Ctrl+H: Toggle reference image (stage 1)");
+    println!("  Ctrl+Scroll: Adjust image scale (stage 1)");
     println!("  Ctrl+Z: Undo");
     println!("  Ctrl+Y: Redo");
     println!("  ESC: Exit");
