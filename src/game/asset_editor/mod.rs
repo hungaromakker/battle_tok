@@ -8,6 +8,8 @@ pub mod canvas_2d;
 pub mod extrude;
 pub mod image_trace;
 pub mod orbit_camera;
+pub mod paint;
+pub mod sculpt_bridge;
 pub mod ui_panels;
 pub mod undo;
 pub mod variety;
@@ -18,6 +20,8 @@ use crate::game::types::Vertex;
 use canvas_2d::Canvas2D;
 use extrude::{Extruder, PumpProfile};
 use orbit_camera::OrbitCamera;
+use paint::PaintSystem;
+use sculpt_bridge::SculptBridge;
 use undo::UndoStack;
 
 // ============================================================================
@@ -187,6 +191,10 @@ pub struct AssetEditor {
     pub canvas: Canvas2D,
     /// Pump/inflate extruder for Stage 2 (Extrude)
     pub extruder: Extruder,
+    /// Sculpting bridge for Stage 3 (Sculpt)
+    pub sculpt: SculptBridge,
+    /// Vertex color painting for Stage 4 (Color)
+    pub paint: PaintSystem,
 }
 
 impl Default for AssetEditor {
@@ -206,6 +214,8 @@ impl AssetEditor {
             camera: OrbitCamera::new(1280.0 / 800.0),
             canvas: Canvas2D::new(),
             extruder: Extruder::new(),
+            sculpt: SculptBridge::new(),
+            paint: PaintSystem::new(),
         }
     }
 
@@ -338,6 +348,7 @@ impl AssetEditor {
         self.undo_stack.clear();
         self.camera.reset();
         self.canvas = Canvas2D::new();
+        self.sculpt = SculptBridge::new();
     }
 }
 
