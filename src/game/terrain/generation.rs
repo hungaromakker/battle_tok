@@ -73,27 +73,27 @@ pub fn terrain_color_at(height: f32, normal: Vec3, base_y: f32) -> [f32; 4] {
 
     let water_level = params.water * 2.0;
 
-    // Earth/ground palette - solid, natural-looking terrain
-    let grass_dark = [0.15, 0.18, 0.10, 1.0]; // Dark grass
-    let grass_mid = [0.22, 0.25, 0.14, 1.0]; // Mid grass
-    let grass_light = [0.28, 0.30, 0.18, 1.0]; // Lighter grass
-    let grass_dry = [0.30, 0.25, 0.16, 1.0]; // Dry grass
+    // Vibrant grass palette - lush greens with warm tones
+    let grass_dark = [0.18, 0.32, 0.10, 1.0]; // Rich dark green
+    let grass_mid = [0.28, 0.42, 0.15, 1.0]; // Vivid mid green
+    let grass_light = [0.38, 0.50, 0.18, 1.0]; // Bright spring green
+    let grass_dry = [0.45, 0.38, 0.18, 1.0]; // Golden dry grass
 
-    // Rock palette - solid earth tones
-    let rock_dark = [0.18, 0.15, 0.13, 1.0]; // Dark rock
-    let rock_mid = [0.32, 0.28, 0.24, 1.0]; // Mid rock
-    let rock_light = [0.42, 0.38, 0.34, 1.0]; // Lighter rock
-    let rock_moss = [0.20, 0.24, 0.16, 1.0]; // Moss on rock
+    // Rock palette - warm earthy with character
+    let rock_dark = [0.28, 0.22, 0.18, 1.0]; // Warm dark stone
+    let rock_mid = [0.45, 0.38, 0.30, 1.0]; // Sandy rock
+    let rock_light = [0.55, 0.48, 0.38, 1.0]; // Sun-bleached stone
+    let rock_moss = [0.22, 0.35, 0.18, 1.0]; // Bright moss on rock
 
-    // Dirt and earth palette
-    let sand_wet = [0.28, 0.22, 0.16, 1.0]; // Wet earth
-    let sand_dry = [0.40, 0.35, 0.28, 1.0]; // Dry earth
-    let dirt_base = [0.25, 0.20, 0.15, 1.0]; // Base earth (föld)
-    let mud_wet = [0.18, 0.14, 0.10, 1.0]; // Dark mud
+    // Dirt and earth palette - rich soil colors
+    let sand_wet = [0.38, 0.28, 0.18, 1.0]; // Rich wet earth
+    let sand_dry = [0.52, 0.42, 0.30, 1.0]; // Warm sandy earth
+    let dirt_base = [0.35, 0.26, 0.18, 1.0]; // Deep soil (föld)
+    let mud_wet = [0.22, 0.16, 0.10, 1.0]; // Dark rich mud
 
     // Lava pools (only visible if water param > 0)
-    let water_shallow = [1.8, 0.5, 0.1, 0.90]; // Bright lava surface (HDR)
-    let water_deep = [0.8, 0.2, 0.05, 0.95]; // Cooler lava crust
+    let water_shallow = [2.0, 0.6, 0.12, 0.90]; // Bright lava surface (HDR)
+    let water_deep = [1.0, 0.25, 0.06, 0.95]; // Hot lava crust
 
     let px = (height * 7.3 + relative_height * 13.7).sin() * 0.5 + 0.5;
     let py = (relative_height * 11.1 + slope * 17.3).cos() * 0.5 + 0.5;

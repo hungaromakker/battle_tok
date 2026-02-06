@@ -59,13 +59,13 @@ impl Default for FloatingIslandConfig {
     }
 }
 
-/// Colors for each layer - rich earth tones with visible layers (föld)
+/// Colors for each layer - vibrant earth tones with visible layers (föld)
 fn layer_color(layer: IslandLayer) -> [f32; 4] {
     match layer {
-        IslandLayer::Surface => [0.22, 0.25, 0.15, 1.0], // Grass/topsoil
-        IslandLayer::Earth => [0.35, 0.25, 0.18, 1.0],   // Brown earth (föld)
-        IslandLayer::Rock => [0.42, 0.38, 0.35, 1.0],    // Gray-brown rock (köves rész)
-        IslandLayer::Ore => [0.50, 0.42, 0.22, 1.0],     // Golden ore hints (ritka tárgyak)
+        IslandLayer::Surface => [0.28, 0.40, 0.18, 1.0], // Lush green topsoil
+        IslandLayer::Earth => [0.45, 0.32, 0.20, 1.0],   // Rich brown earth (föld)
+        IslandLayer::Rock => [0.52, 0.45, 0.38, 1.0],    // Warm sandstone rock (köves rész)
+        IslandLayer::Ore => [0.60, 0.50, 0.28, 1.0],     // Golden ore hints (ritka tárgyak)
         IslandLayer::MoltenCore => [2.5, 0.7, 0.12, 1.0], // Molten lava (láva)
     }
 }
@@ -150,15 +150,8 @@ pub fn generate_floating_island(center: Vec3, config: FloatingIslandConfig) -> M
         indices.push(idx + wall_vertex_offset);
     }
 
-    // ========================================
-    // BOTTOM (molten core visible)
-    // ========================================
-    let bottom_mesh = generate_island_bottom(center, config);
-    let bottom_vertex_offset = vertices.len() as u32;
-    vertices.extend(bottom_mesh.vertices);
-    for idx in bottom_mesh.indices {
-        indices.push(idx + bottom_vertex_offset);
-    }
+    // Bottom face removed — lava ocean sits at terrain level now,
+    // so the island underside is submerged and invisible.
 
     Mesh { vertices, indices }
 }
@@ -345,7 +338,9 @@ fn generate_island_walls(center: Vec3, config: FloatingIslandConfig) -> Mesh {
     Mesh { vertices, indices }
 }
 
-/// Generate the bottom of the island (molten core visible)
+/// Generate the bottom of the island (molten core visible).
+/// Currently unused since lava is at terrain level, but kept for potential future use.
+#[allow(dead_code)]
 fn generate_island_bottom(center: Vec3, config: FloatingIslandConfig) -> Mesh {
     let mut vertices = Vec::new();
     let mut indices = Vec::new();

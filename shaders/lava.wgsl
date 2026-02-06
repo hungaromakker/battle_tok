@@ -1,9 +1,9 @@
 // ============================================================================
-// Lava Shader (lava.wgsl)
+// Lava Shader (lava.wgsl) — OPTIMIZED
 // ============================================================================
-// Animated flowing lava with emissive cracks, crust, and Fresnel edge glow
-// Domain-warped FBM for sheet flow motion
-// HDR emissive output for bloom compatibility
+// Water-over-lava surface with visible glowing cracks underneath.
+// Uses cheap cellular noise instead of expensive voronoi for performance.
+// Target: 10000+ FPS on simple scenes.
 // ============================================================================
 
 struct Uniforms {
@@ -18,15 +18,14 @@ struct Uniforms {
 
 struct LavaParams {
     time: f32,
-    emissive_strength: f32,  // 0.8..2.5 (HDR)
-    scale: f32,              // 0.15..0.6 (noise scale)
-    speed: f32,              // 0.1..0.6 (flow speed)
-    crack_sharpness: f32,    // 0.78..0.95 (how defined cracks are)
-    normal_strength: f32,    // 0.3..1.0 (procedural bump)
-    // Colors
-    core_color: vec3<f32>,   // Bright molten (2.4, 0.65, 0.08) HDR
+    emissive_strength: f32,
+    scale: f32,
+    speed: f32,
+    crack_sharpness: f32,
+    normal_strength: f32,
+    core_color: vec3<f32>,
     _pad0: f32,
-    crust_color: vec3<f32>,  // Dark cooled crust (0.05, 0.01, 0.01)
+    crust_color: vec3<f32>,
     _pad1: f32,
 }
 
@@ -37,46 +36,67 @@ var<uniform> uniforms: Uniforms;
 var<uniform> lava: LavaParams;
 
 // ============================================================================
-// NOISE FUNCTIONS
+// CHEAP NOISE (fast, no loops)
 // ============================================================================
 
-fn hash(p: vec2<f32>) -> f32 {
+fn hash1(p: vec2<f32>) -> f32 {
     return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
 }
 
-fn noise(p: vec2<f32>) -> f32 {
+fn hash2(p: vec2<f32>) -> vec2<f32> {
+    let q = vec2<f32>(dot(p, vec2<f32>(127.1, 311.7)), dot(p, vec2<f32>(269.5, 183.3)));
+    return fract(sin(q) * 43758.5453);
+}
+
+fn noise2d(p: vec2<f32>) -> f32 {
     let i = floor(p);
     let f = fract(p);
     let u = f * f * (3.0 - 2.0 * f);
-    
-    let a = hash(i);
-    let b = hash(i + vec2<f32>(1.0, 0.0));
-    let c = hash(i + vec2<f32>(0.0, 1.0));
-    let d = hash(i + vec2<f32>(1.0, 1.0));
-    
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
-
-fn fbm(p: vec2<f32>, octaves: i32) -> f32 {
-    var value = 0.0;
-    var amplitude = 0.5;
-    var pos = p;
-    
-    for (var i = 0; i < octaves; i++) {
-        value += amplitude * noise(pos);
-        pos *= 2.0;
-        amplitude *= 0.5;
-    }
-    return value;
-}
-
-// Domain warping for more organic flow
-fn warp_domain(p: vec2<f32>, t: f32) -> vec2<f32> {
-    let offset = vec2<f32>(
-        fbm(p + vec2<f32>(t * 0.3, 0.0), 2),
-        fbm(p + vec2<f32>(0.0, t * 0.2), 2)
+    return mix(
+        mix(hash1(i), hash1(i + vec2<f32>(1.0, 0.0)), u.x),
+        mix(hash1(i + vec2<f32>(0.0, 1.0)), hash1(i + vec2<f32>(1.0, 1.0)), u.x),
+        u.y
     );
-    return p + offset * 0.5;
+}
+
+// Cheap 2-octave FBM (fast)
+fn fbm2(p: vec2<f32>) -> f32 {
+    return noise2d(p) * 0.6 + noise2d(p * 2.1 + vec2<f32>(17.0, 31.0)) * 0.4;
+}
+
+// ============================================================================
+// CHEAP CELLULAR / CRACK PATTERN (replaces expensive voronoi)
+// Uses grid-based nearest-point for crack-like edges — much faster
+// ============================================================================
+
+fn cellular_cracks(p: vec2<f32>, t: f32) -> f32 {
+    let pi = floor(p);
+    let pf = fract(p);
+
+    var d1 = 8.0;  // Nearest distance
+    var d2 = 8.0;  // Second nearest
+
+    // 3x3 search (9 iterations, not 25+9=34 like voronoi)
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let neighbor = vec2<f32>(f32(x), f32(y));
+            let point = hash2(pi + neighbor);
+            // Animate the cell centers slowly
+            let animated = 0.5 + 0.4 * sin(t * 0.3 + 6.283 * point);
+            let diff = neighbor + animated - pf;
+            let dist = dot(diff, diff);
+
+            if (dist < d1) {
+                d2 = d1;
+                d1 = dist;
+            } else if (dist < d2) {
+                d2 = dist;
+            }
+        }
+    }
+
+    // Edge = where d1 and d2 are close (crack between cells)
+    return sqrt(d2) - sqrt(d1);
 }
 
 // ============================================================================
@@ -113,97 +133,100 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let world_pos = in.world_position;
-    let normal = normalize(in.world_normal);
     let view_dir = normalize(uniforms.camera_pos - world_pos);
-
-    // ========================================
-    // ANIMATED LAVA FLOW - Enhanced for dramatic look
-    // ========================================
-    let uv = world_pos.xz * lava.scale;
     let t = lava.time * lava.speed;
 
-    // Domain-warped flow for organic motion - more turbulent
-    let flow1 = vec2<f32>(t * 0.5, t * 0.35);
-    let flow2 = vec2<f32>(-t * 0.4, t * 0.2);
-    let flow3 = vec2<f32>(t * 0.15, -t * 0.3);
+    // ========================================
+    // 1. LAVA CRACKS (cheap cellular noise)
+    // ========================================
+    let crack_scale = 0.18;  // ~5.5m cells
+    let cracks = cellular_cracks(world_pos.xz * crack_scale, t);
 
-    // Warp the domain for more interesting patterns
-    let warped_uv = warp_domain(uv, t);
+    // Crack mask: thin bright lines where cells meet
+    let crack_bright = 1.0 - smoothstep(0.0, 0.15, cracks);
 
-    // Multiple noise octaves at different scales - more detail
-    let n1 = fbm(warped_uv + flow1, 5);
-    let n2 = fbm(warped_uv * 2.5 - flow2, 4);
-    let n3 = fbm(warped_uv * 0.4 + flow3, 3);
-    let n4 = fbm(warped_uv * 4.0 + flow1 * 0.3, 2);  // Fine detail
+    // Flowing lava intensity in cracks (cheap 2-octave)
+    let flow = fbm2(world_pos.xz * 0.25 + vec2<f32>(t * 0.12, t * 0.08));
+    let pulse = 0.85 + 0.15 * sin(t * 1.2 + flow * 4.0);
+    let heat = flow * pulse * lava.emissive_strength;
 
-    // Combine noise layers - create river-like channels
-    var combined = n1 * 0.45 + n2 * 0.3 + n3 * 0.15 + n4 * 0.1;
+    // Lava color ramp (seen through cracks)
+    let c_dark = vec3<f32>(0.6, 0.04, 0.0);
+    let c_mid = vec3<f32>(1.0, 0.3, 0.0);
+    let c_bright = vec3<f32>(1.0, 0.7, 0.1);
+    var lava_col = mix(c_dark, c_mid, smoothstep(0.2, 0.5, heat));
+    lava_col = mix(lava_col, c_bright, smoothstep(0.5, 0.8, heat));
 
-    // Create lava river channels by enhancing bright areas
-    let river_pattern = smoothstep(0.35, 0.65, combined);
-    combined = combined * 0.5 + river_pattern * 0.5;
+    // Dark rock between cracks
+    let rock_n = noise2d(world_pos.xz * 0.6 + vec2<f32>(100.0, 100.0));
+    let rock = mix(vec3<f32>(0.08, 0.05, 0.03), vec3<f32>(0.18, 0.12, 0.08), rock_n);
+
+    // Combine: rock plates with hot lava in cracks
+    let lava_surface = mix(rock, lava_col, crack_bright);
+
+    // Edge glow around cracks
+    let edge_glow = (1.0 - smoothstep(0.0, 0.35, cracks));
+    let glow = vec3<f32>(0.8, 0.15, 0.0) * edge_glow * edge_glow * 0.5 * heat;
+
+    let lava_final = lava_surface + glow;
 
     // ========================================
-    // CRACK PATTERN (thin bright bands) - Enhanced
+    // 2. WATER LAYER (semi-transparent over lava)
     // ========================================
-    // Sharp transition creates crack-like bright lines
-    let crack = smoothstep(lava.crack_sharpness, 0.96, combined);
+    let rd = -view_dir;
+    let normal = normalize(in.world_normal);
 
-    // Secondary finer cracks
-    let fine_cracks = smoothstep(0.7, 0.85, n4) * 0.4;
+    // Water normal with gentle waves (cheap)
+    let w1 = sin(world_pos.x * 0.4 + lava.time * 1.2) * cos(world_pos.z * 0.35 + lava.time * 0.9) * 0.012;
+    let w2 = sin(world_pos.x * 0.8 - lava.time * 1.8 + world_pos.z * 0.6) * 0.006;
+    let water_n = normalize(vec3<f32>(-(w1 + w2) * 2.0, 1.0, -(w2) * 3.0));
 
-    // Heat value combines general flow with crack brightness
-    let heat = clamp(combined * 0.5 + crack * 0.7 + fine_cracks, 0.0, 1.0);
+    // Fresnel: more reflection at grazing, more lava visible looking down
+    let fresnel = pow(1.0 - max(dot(-rd, water_n), 0.0), 3.0);
+    let fres = mix(0.03, 0.8, fresnel);
 
-    // ========================================
-    // COLOR MIXING (HDR values for proper bloom) - MUCH brighter
-    // ========================================
-    // Very bright HDR core for intense glow matching reference
-    let hdr_core = vec3<f32>(4.5, 1.2, 0.15);     // Intense HDR orange-yellow
-    let hdr_mid = vec3<f32>(2.5, 0.5, 0.08);      // Mid-bright orange
-    let dark_crust = vec3<f32>(0.08, 0.02, 0.01); // Near-black crust
+    // Sky reflection
+    let ref_dir = reflect(rd, water_n);
+    let sky_up = max(ref_dir.y, 0.0);
+    var sky_refl = mix(vec3<f32>(0.45, 0.55, 0.65), vec3<f32>(0.2, 0.3, 0.55), sky_up);
+    let sun_dir = normalize(vec3<f32>(1.0, 0.5, 0.5));
+    sky_refl += vec3<f32>(1.0, 0.9, 0.7) * pow(max(dot(ref_dir, sun_dir), 0.0), 32.0) * 0.5;
 
-    // Three-way mix for more natural lava look
-    var color: vec3<f32>;
-    if (heat > 0.6) {
-        // Hot zones - brightest
-        color = mix(hdr_mid, hdr_core, (heat - 0.6) * 2.5);
-    } else {
-        // Cooler zones - dark crust to mid-bright
-        color = mix(dark_crust, hdr_mid, heat * 1.67);
-    }
+    // Lava visible through water (depth-attenuated but NOT fully hidden)
+    let water_depth = 0.4;
+    let depth_fade = exp(-water_depth * 2.5);
+    let under_lava = lava_final * depth_fade;
 
-    // ========================================
-    // FRESNEL EDGE GLOW - Enhanced
-    // ========================================
-    // Edges glow brighter (molten material visible at grazing angles)
-    let fresnel = pow(1.0 - max(dot(normal, view_dir), 0.0), 2.5);
-    let edge_glow = fresnel * 0.7;
+    // Blue-teal water tint
+    let water_tint = vec3<f32>(0.04, 0.14, 0.20);
 
-    // ========================================
-    // EMISSIVE OUTPUT (HDR with pulse animation) - More intense
-    // ========================================
-    // Subtle pulsing animation makes lava feel alive
-    let pulse = 0.95 + 0.05 * sin(lava.time * 2.5);
-    let slow_pulse = 0.9 + 0.1 * sin(lava.time * 0.8 + world_pos.x * 0.1);
-    let emissive = lava.emissive_strength * 3.0 * (heat + edge_glow) * pulse * slow_pulse;
-    color = color * emissive;
+    // Caustics
+    let caustic = noise2d(world_pos.xz * 0.6 + t * 0.4) * noise2d(world_pos.xz * 0.9 - t * 0.25);
+    let water_with_caustic = water_tint + vec3<f32>(0.04, 0.08, 0.10) * caustic;
 
-    // Add bright yellow-orange rim at edges
-    color += vec3<f32>(1.5, 0.5, 0.08) * fresnel * heat * lava.emissive_strength;
+    // Water base: lava underneath + tint, blended with sky via Fresnel
+    var color = mix(under_lava + water_with_caustic, sky_refl, fres);
 
-    // Add hot white core in brightest areas
-    if (heat > 0.8) {
-        let white_amount = (heat - 0.8) * 5.0;
-        color += vec3<f32>(2.0, 1.5, 0.8) * white_amount * pulse;
-    }
+    // Specular sun highlight on water
+    let spec = pow(max(dot(ref_dir, normalize(vec3<f32>(1.0, 0.8, 0.5))), 0.0), 48.0);
+    color += vec3<f32>(1.0, 0.95, 0.85) * spec * 0.5;
+
+    // Hot-spot glow where cracks are directly below water
+    color += vec3<f32>(0.8, 0.35, 0.1) * crack_bright * 0.25 * lava.emissive_strength;
 
     // ========================================
-    // REDUCED FOG (emissive cuts through)
+    // 3. STEAM WISPS at hot cracks (cheap)
+    // ========================================
+    let steam_n = noise2d(world_pos.xz * 0.3 + vec2<f32>(t * 0.6, -t * 0.4));
+    let steam = crack_bright * smoothstep(0.4, 0.7, steam_n) * 0.08;
+    color = mix(color, vec3<f32>(0.82, 0.80, 0.76), steam);
+
+    // ========================================
+    // 4. MINIMAL FOG
     // ========================================
     let distance = length(uniforms.camera_pos - world_pos);
-    let fog_amount = (1.0 - exp(-distance * uniforms.fog_density)) * 0.05;  // Less fog on lava
-    let final_color = mix(color, uniforms.fog_color * 0.3, fog_amount);
+    let fog_amount = (1.0 - exp(-distance * uniforms.fog_density)) * 0.06;
+    color = mix(color, uniforms.fog_color * 0.5, fog_amount);
 
-    return vec4<f32>(final_color, 1.0);
+    return vec4<f32>(color, 1.0);
 }

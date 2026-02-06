@@ -78,7 +78,7 @@ impl Default for ArenaConfig {
                 rail_height: 1.0,
             },
             lava_size: 200.0,
-            lava_y: -18.0,
+            lava_y: -0.5, // Lava at terrain level (just below island surface)
             meteor_spawn_interval: 5.0,
             meteor_spawn_radius: 60.0,
             physics_check_interval: 5.0,

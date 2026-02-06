@@ -55,14 +55,14 @@ impl Default for VisualConfig {
     /// - Lava: HDR orange-red glow
     fn default() -> Self {
         Self {
-            // Fog — warm dark, subtle
-            fog_density: 0.004,
-            fog_color: Vec3::new(0.15, 0.08, 0.05),
+            // Fog — minimal, let colors breathe
+            fog_density: 0.002,
+            fog_color: Vec3::new(0.20, 0.15, 0.12),
 
-            // Directional light — higher sun for better terrain visibility
-            sun_direction: Vec3::new(0.3, 0.25, -0.9),
-            sun_color: Vec3::new(1.4, 0.7, 0.35),
-            ambient_intensity: 0.30,
+            // Directional light — bright warm sun for vibrant terrain
+            sun_direction: Vec3::new(0.4, 0.6, -0.7),
+            sun_color: Vec3::new(1.6, 1.2, 0.8),
+            ambient_intensity: 0.45,
 
             // Torches
             torch_intensity: 1.0,

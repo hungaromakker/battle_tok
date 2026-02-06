@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>3D Lava & Water Shader</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; overflow: hidden; }
+  canvas { width: 100vw; height: 100vh; display: block; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+  .controls {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 14px; z-index: 10; background: rgba(0,0,0,0.75);
+    padding: 10px 18px; border-radius: 12px; backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,120,30,0.25);
+    flex-wrap: wrap; justify-content: center; max-width: 95vw;
+  }
+  .cg { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .cg label { color: #cc8855; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; font-family: monospace; }
+  .cg input[type="range"] {
+    -webkit-appearance: none; width: 100px; height: 3px; background: #333;
+    border-radius: 2px; outline: none;
+  }
+  .cg input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 12px; height: 12px; background: #ff6600;
+    border-radius: 50%; cursor: pointer; box-shadow: 0 0 6px rgba(255,100,0,0.5);
+  }
+  .title {
+    position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+    color: #dd9955; font-size: 12px; letter-spacing: 3px; text-transform: uppercase;
+    background: rgba(0,0,0,0.6); padding: 6px 16px; border-radius: 8px;
+    border: 1px solid rgba(255,100,0,0.15); z-index: 10; font-family: monospace;
+    white-space: nowrap;
+  }
+  .info {
+    position: fixed; top: 50px; left: 50%; transform: translateX(-50%);
+    color: #887766; font-size: 10px; letter-spacing: 1px;
+    z-index: 10; font-family: monospace; text-align: center;
+  }
+</style>
+</head>
+<body>
+<div class="title">3D Lava & Water Terrain</div>
+<div class="info">Click & drag to look around · Scroll to zoom</div>
+<canvas id="c"></canvas>
+<div class="controls">
+  <div class="cg"><label>Lava Heat</label><input type="range" id="uHeat" min="0" max="2" value="1.2" step="0.05"></div>
+  <div class="cg"><label>Water Level</label><input type="range" id="uWater" min="0" max="1.5" value="0.55" step="0.02"></div>
+  <div class="cg"><label>Flow Speed</label><input type="range" id="uSpeed" min="0" max="3" value="1.0" step="0.1"></div>
+  <div class="cg"><label>Crack Scale</label><input type="range" id="uScale" min="2" max="20" value="7" step="0.5"></div>
+  <div class="cg"><label>Steam</label><input type="range" id="uSteam" min="0" max="2" value="1.0" step="0.05"></div>
+  <div class="cg"><label>Water Clarity</label><input type="range" id="uClarity" min="0" max="1" value="0.6" step="0.02"></div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl2');
+if (!gl) { document.body.innerHTML = '<h1 style="color:red;text-align:center;margin-top:40vh">WebGL2 required</h1>'; }
+
+function resize() {
+  const dpr = Math.min(devicePixelRatio, 2);
+  canvas.width = window.innerWidth * dpr;
+  canvas.height = window.innerHeight * dpr;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Camera
+let camYaw = -0.3, camPitch = 0.45, camDist = 4.5;
+let dragging = false, lastX = 0, lastY = 0;
+canvas.addEventListener('mousedown', e => { dragging = true; lastX = e.clientX; lastY = e.clientY; });
+window.addEventListener('mouseup', () => dragging = false);
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  camYaw += (e.clientX - lastX) * 0.005;
+  camPitch = Math.max(0.1, Math.min(1.4, camPitch + (e.clientY - lastY) * 0.005));
+  lastX = e.clientX; lastY = e.clientY;
+});
+canvas.addEventListener('wheel', e => {
+  camDist = Math.max(2.0, Math.min(12.0, camDist + e.deltaY * 0.005));
+  e.preventDefault();
+}, { passive: false });
+// Touch
+canvas.addEventListener('touchstart', e => { dragging = true; lastX = e.touches[0].clientX; lastY = e.touches[0].clientY; e.preventDefault(); }, {passive:false});
+canvas.addEventListener('touchend', () => dragging = false);
+canvas.addEventListener('touchmove', e => {
+  if (!dragging) return;
+  camYaw += (e.touches[0].clientX - lastX) * 0.005;
+  camPitch = Math.max(0.1, Math.min(1.4, camPitch + (e.touches[0].clientY - lastY) * 0.005));
+  lastX = e.touches[0].clientX; lastY = e.touches[0].clientY;
+  e.preventDefault();
+}, {passive:false});
+
+const vs = `#version 300 es
+in vec2 a_pos;
+void main() { gl_Position = vec4(a_pos, 0, 1); }`;
+
+const fs = `#version 300 es
+precision highp float;
+out vec4 O;
+
+uniform vec2 R;
+uniform float T;
+uniform float uHeat, uWater, uSpeed, uScale, uSteam, uClarity;
+uniform vec3 uCamPos;
+uniform mat3 uCamMat;
+
+#define PI 3.14159265
+#define MAX_STEPS 120
+#define MAX_DIST 30.0
+#define SURF_DIST 0.002
+
+// ---- Noise / Hash ----
+vec2 h2(vec2 p) {
+    p = vec2(dot(p,vec2(127.1,311.7)), dot(p,vec2(269.5,183.3)));
+    return fract(sin(p)*43758.5453);
+}
+float h1(vec2 p) { return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float h1v(vec3 p) { return fract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5453); }
+
+float noise2(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f*f*(3.0-2.0*f);
+    return mix(mix(h1(i),h1(i+vec2(1,0)),f.x),
+               mix(h1(i+vec2(0,1)),h1(i+vec2(1,1)),f.x),f.y);
+}
+
+float noise3(vec3 p) {
+    vec3 i = floor(p), f = fract(p);
+    f = f*f*(3.0-2.0*f);
+    float a = h1v(i), b = h1v(i+vec3(1,0,0));
+    float c = h1v(i+vec3(0,1,0)), d = h1v(i+vec3(1,1,0));
+    float e = h1v(i+vec3(0,0,1)), f2 = h1v(i+vec3(1,0,1));
+    float g = h1v(i+vec3(0,1,1)), hh = h1v(i+vec3(1,1,1));
+    float x1 = mix(mix(a,b,f.x),mix(c,d,f.x),f.y);
+    float x2 = mix(mix(e,f2,f.x),mix(g,hh,f.x),f.y);
+    return mix(x1,x2,f.z);
+}
+
+float fbm(vec2 p, int oct) {
+    float v=0.0, a=0.5;
+    mat2 m = mat2(0.8,-0.6,0.6,0.8);
+    for(int i=0;i<6;i++) {
+        if(i>=oct) break;
+        v += a*noise2(p);
+        p = m*p*2.0+vec2(100);
+        a *= 0.5;
+    }
+    return v;
+}
+
+float fbm3(vec3 p, int oct) {
+    float v=0.0, a=0.5;
+    for(int i=0;i<5;i++) {
+        if(i>=oct) break;
+        v += a*noise3(p);
+        p = p*2.03+vec3(31.7,17.1,11.3);
+        a *= 0.5;
+    }
+    return v;
+}
+
+// ---- Voronoi cracks ----
+float voronoiEdge(vec2 x, float t) {
+    vec2 n = floor(x), f = fract(x);
+    float md = 8.0;
+    vec2 mr, mg;
+    for(int j=-1;j<=1;j++)
+    for(int i=-1;i<=1;i++) {
+        vec2 g = vec2(i,j);
+        vec2 o = h2(n+g);
+        o = 0.5+0.5*sin(t*0.25+6.2831*o);
+        vec2 r = g+o-f;
+        float d = dot(r,r);
+        if(d<md) { md=d; mr=r; mg=g; }
+    }
+    md = 8.0;
+    for(int j=-2;j<=2;j++)
+    for(int i=-2;i<=2;i++) {
+        vec2 g = mg+vec2(i,j);
+        vec2 o = h2(n+g);
+        o = 0.5+0.5*sin(t*0.25+6.2831*o);
+        vec2 r = g+o-f;
+        if(dot(mr-r,mr-r)>0.00001)
+            md = min(md, dot(0.5*(mr+r), normalize(r-mr)));
+    }
+    return md;
+}
+
+// ---- Terrain height ----
+float terrainH(vec2 p) {
+    float h = fbm(p*0.5, 5)*0.6;
+    // River channel carved through center
+    float river = smoothstep(0.8, 0.0, abs(p.x + sin(p.y*0.4)*0.8));
+    h -= river * 0.45;
+    // Some larger rock formations
+    h += fbm(p*0.15+50.0, 3)*0.3;
+    return h - 0.3;
+}
+
+// ---- SDF scene ----
+float mapTerrain(vec3 p) {
+    return p.y - terrainH(p.xz);
+}
+
+// Water plane (slightly wavy)
+float mapWater(vec3 p, float t) {
+    float wh = -0.15 + uWater*0.3;
+    wh += 0.008*sin(p.x*3.0+t*1.5)*sin(p.z*2.5+t*1.1);
+    wh += 0.005*sin(p.x*7.0-t*2.0+p.z*5.0);
+    return p.y - wh;
+}
+
+vec2 map(vec3 p, float t) {
+    float terra = mapTerrain(p);
+    float water = mapWater(p, t);
+    // Return (dist, material) — 0=terrain, 1=water
+    if(terra < water) return vec2(terra, 0.0);
+    return vec2(water, 1.0);
+}
+
+// ---- Ray march ----
+vec3 march(vec3 ro, vec3 rd, float t) {
+    float d = 0.0;
+    float mat = 0.0;
+    for(int i=0; i<MAX_STEPS; i++) {
+        vec3 p = ro + rd*d;
+        vec2 res = map(p, t);
+        if(abs(res.x) < SURF_DIST) { mat = res.y; break; }
+        if(d > MAX_DIST) { mat = -1.0; break; }
+        d += res.x * 0.7;
+    }
+    return vec3(d, mat, 0.0);
+}
+
+// ---- Normal ----
+vec3 getNormal(vec3 p, float mat, float t) {
+    vec2 e = vec2(0.005, 0.0);
+    if(mat < 0.5) {
+        return normalize(vec3(
+            mapTerrain(p+e.xyy)-mapTerrain(p-e.xyy),
+            mapTerrain(p+e.yxy)-mapTerrain(p-e.yxy),
+            mapTerrain(p+e.yyx)-mapTerrain(p-e.yyx)
+        ));
+    } else {
+        return normalize(vec3(
+            mapWater(p+e.xyy,t)-mapWater(p-e.xyy,t),
+            mapWater(p+e.yxy,t)-mapWater(p-e.yxy,t),
+            mapWater(p+e.yyx,t)-mapWater(p-e.yyx,t)
+        ));
+    }
+}
+
+// ---- Lava material ----
+vec3 lavaColor(vec2 p, float t) {
+    float cracks = voronoiEdge(p * uScale, t);
+    float crack2 = voronoiEdge(p * uScale * 2.3 + 5.0, t * 0.7);
+
+    float crackMask = 1.0 - smoothstep(0.0, 0.12, cracks);
+    float crackMask2 = 1.0 - smoothstep(0.0, 0.06, crack2);
+    float combined = max(crackMask, crackMask2 * 0.5);
+
+    float edgeGlow = 1.0 - smoothstep(0.0, 0.3, cracks);
+    edgeGlow *= edgeGlow;
+
+    // Flowing lava
+    float flow = fbm(p*3.0 + vec2(t*0.15, t*0.1), 5);
+    float flow2 = fbm(p*2.0 + vec2(-t*0.12, t*0.2), 4);
+    float lavaF = mix(flow, flow2, 0.5);
+    float pulse = 0.85 + 0.15*sin(t*1.2 + lavaF*5.0);
+    float intensity = lavaF * pulse * uHeat;
+
+    vec3 c1 = vec3(0.7,0.05,0.0);
+    vec3 c2 = vec3(1.0,0.3,0.0);
+    vec3 c3 = vec3(1.0,0.7,0.08);
+    vec3 c4 = vec3(1.0,0.92,0.55);
+
+    vec3 lava = mix(c1,c2,smoothstep(0.2,0.5,intensity));
+    lava = mix(lava,c3,smoothstep(0.5,0.75,intensity));
+    lava = mix(lava,c4,smoothstep(0.75,1.0,intensity));
+
+    // Rock surface
+    float rn = fbm(p*8.0+100.0, 4);
+    vec3 rock = mix(vec3(0.1,0.07,0.04), vec3(0.22,0.15,0.1), rn);
+
+    // Hex pattern
+    vec2 hr = vec2(1.0, 1.732);
+    vec2 ha = mod(p*uScale*1.1, hr) - hr*0.5;
+    vec2 hb = mod(p*uScale*1.1 - hr*0.5, hr) - hr*0.5;
+    vec2 hg = (length(ha)<length(hb)) ? ha : hb;
+    float hexE = 0.5 - max(abs(hg.x), dot(abs(hg), normalize(hr)));
+    float hexLine = 1.0-smoothstep(0.0, 0.03, hexE);
+    rock = mix(rock, rock*0.4, hexLine*0.5);
+
+    // Combine
+    vec3 color = mix(rock, lava, combined);
+    vec3 glow = mix(vec3(0.5,0.03,0.0), vec3(1.0,0.25,0.0), lavaF);
+    color += glow * edgeGlow * (1.0-combined) * 0.6 * uHeat;
+    color += vec3(1.0,0.45,0.08) * combined * intensity * 0.25;
+
+    return color;
+}
+
+// ---- Water material ----
+vec3 waterColor(vec3 p, vec3 rd, vec3 n, float t) {
+    // Reflection
+    vec3 ref = reflect(rd, n);
+    float sky = max(ref.y, 0.0);
+
+    // Sky color
+    vec3 skyCol = mix(vec3(0.4,0.5,0.65), vec3(0.15,0.25,0.5), sky);
+    skyCol += vec3(1.0,0.7,0.3)*pow(max(dot(ref,normalize(vec3(1,0.4,0.5))),0.0),32.0);
+
+    // Fresnel
+    float fresnel = pow(1.0-max(dot(-rd,n),0.0), 4.0);
+    fresnel = mix(0.04, 1.0, fresnel);
+
+    // Refracted depth — see lava underneath
+    float waterDepth = p.y - terrainH(p.xz);
+    float depthFade = exp(-waterDepth * 3.0 * (1.0+uClarity));
+
+    // Lava glow coming through water
+    vec3 underLava = lavaColor(p.xz, t) * depthFade;
+
+    // Water base tint
+    vec3 waterTint = mix(vec3(0.02,0.12,0.18), vec3(0.05,0.2,0.3), uClarity);
+
+    // Caustics
+    float caustic = noise2(p.xz*8.0 + t*0.5) * noise2(p.xz*12.0 - t*0.3);
+    waterTint += vec3(0.05,0.1,0.12) * caustic;
+
+    vec3 waterBase = mix(underLava + waterTint, skyCol, fresnel);
+
+    // Specular highlight
+    vec3 lightDir = normalize(vec3(1.0, 0.8, 0.5));
+    float spec = pow(max(dot(ref, lightDir), 0.0), 64.0);
+    waterBase += vec3(1.0,0.95,0.85) * spec * 0.6;
+
+    // Interaction zone: where water meets lava — the edge
+    float edge = smoothstep(0.05, 0.0, abs(waterDepth));
+    waterBase += vec3(1.0,0.5,0.2) * edge * uHeat * 0.5;
+
+    return waterBase;
+}
+
+// ---- Steam particles (volumetric-ish) ----
+float steamDensity(vec3 p, float t) {
+    // Steam rises where water meets hot lava
+    float waterH = -0.15 + uWater*0.3;
+    float terrH = terrainH(p.xz);
+    float contactZone = smoothstep(0.15, 0.0, abs(terrH - waterH));
+
+    // Check if lava is hot here
+    float cracks = voronoiEdge(p.xz * uScale, t * uSpeed);
+    float hot = 1.0 - smoothstep(0.0, 0.3, cracks);
+
+    float steamBase = contactZone * hot;
+    if(steamBase < 0.01) return 0.0;
+
+    // Rising wisps
+    float rise = p.y - waterH;
+    float riseFade = exp(-rise*2.5) * smoothstep(0.0, 0.1, rise);
+
+    float wisps = fbm3(p*3.0 + vec3(t*0.3, -t*0.8, t*0.2), 4);
+    wisps = smoothstep(0.3, 0.7, wisps);
+
+    return steamBase * riseFade * wisps * uSteam;
+}
+
+void main() {
+    vec2 uv = (gl_FragCoord.xy - 0.5*R) / R.y;
+    float t = T * uSpeed;
+
+    // Camera
+    vec3 ro = uCamPos;
+    vec3 rd = normalize(uCamMat * vec3(uv, 1.2));
+
+    // Ray march
+    vec3 hit = march(ro, rd, t);
+    float d = hit.x;
+    float mat = hit.y;
+
+    // Sky gradient
+    vec3 col = mix(vec3(0.35,0.45,0.6), vec3(0.12,0.18,0.35), max(rd.y,0.0));
+    // Sun
+    vec3 sunDir = normalize(vec3(1.0, 0.4, 0.5));
+    col += vec3(1.0,0.7,0.3) * pow(max(dot(rd,sunDir),0.0), 64.0);
+    col += vec3(0.5,0.3,0.1) * pow(max(dot(rd,sunDir),0.0), 8.0);
+    // Horizon haze
+    col = mix(col, vec3(0.6,0.55,0.5), pow(1.0-max(rd.y,0.0), 8.0));
+
+    if(d < MAX_DIST && mat >= 0.0) {
+        vec3 p = ro + rd*d;
+        vec3 n = getNormal(p, mat, t);
+
+        vec3 lightDir = normalize(vec3(1.0, 0.8, 0.5));
+        float diff = max(dot(n, lightDir), 0.0);
+
+        if(mat < 0.5) {
+            // TERRAIN with lava
+            vec3 lava = lavaColor(p.xz, t);
+
+            // Basic lighting on rock parts
+            float cracks = voronoiEdge(p.xz * uScale, t);
+            float isRock = smoothstep(0.0, 0.15, cracks);
+            vec3 lit = lava * mix(1.0, 0.3 + 0.7*diff, isRock);
+
+            // Ambient occlusion approx
+            float ao = 0.5 + 0.5*n.y;
+            lit *= mix(0.6, 1.0, ao);
+
+            col = lit;
+        } else {
+            // WATER
+            col = waterColor(p, rd, n, t);
+        }
+
+        // Distance fog
+        float fog = 1.0 - exp(-d*0.06);
+        vec3 fogCol = mix(vec3(0.5,0.45,0.4), vec3(0.35,0.3,0.28), rd.y);
+        col = mix(col, fogCol, fog);
+    }
+
+    // Steam pass (simple ray march through volume above water)
+    if(uSteam > 0.01) {
+        float steamAccum = 0.0;
+        float startD = max(d - 2.0, 0.5);
+        float endD = min(d, MAX_DIST);
+        float stepSize = 0.15;
+        for(float sd = startD; sd < endD; sd += stepSize) {
+            vec3 sp = ro + rd * sd;
+            if(sp.y < -0.5 || sp.y > 2.0) continue;
+            float density = steamDensity(sp, t);
+            steamAccum += density * stepSize;
+            if(steamAccum > 1.0) break;
+        }
+        steamAccum = min(steamAccum, 1.0);
+        vec3 steamCol = vec3(0.85, 0.82, 0.78);
+        // Lava-tinted steam
+        steamCol = mix(steamCol, vec3(1.0,0.7,0.4), 0.15 * uHeat);
+        col = mix(col, steamCol, steamAccum * 0.6);
+    }
+
+    // Tone map + gamma
+    col = col / (col + 0.8) * 1.2;
+    col = pow(col, vec3(0.85));
+
+    // Vignette
+    vec2 vuv = gl_FragCoord.xy / R;
+    col *= 1.0 - 0.3*length(vuv - 0.5);
+
+    O = vec4(col, 1.0);
+}
+`;
+
+function createShader(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    console.error(gl.getShaderInfoLog(s));
+    return null;
+  }
+  return s;
+}
+
+const vsh = createShader(gl.VERTEX_SHADER, vs);
+const fsh = createShader(gl.FRAGMENT_SHADER, fs);
+const prog = gl.createProgram();
+gl.attachShader(prog, vsh);
+gl.attachShader(prog, fsh);
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+  console.error('Link error:', gl.getProgramInfoLog(prog));
+}
+gl.useProgram(prog);
+
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+const aPos = gl.getAttribLocation(prog, 'a_pos');
+gl.enableVertexAttribArray(aPos);
+gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+const loc = n => gl.getUniformLocation(prog, n);
+const uR = loc('R'), uT = loc('T');
+const uHeatL = loc('uHeat'), uWaterL = loc('uWater'), uSpeedL = loc('uSpeed');
+const uScaleL = loc('uScale'), uSteamL = loc('uSteam'), uClarityL = loc('uClarity');
+const uCamPosL = loc('uCamPos'), uCamMatL = loc('uCamMat');
+
+const val = id => parseFloat(document.getElementById(id).value);
+
+function render(time) {
+  const t = time * 0.001;
+
+  // Camera orbit
+  const cx = camDist * Math.sin(camPitch) * Math.sin(camYaw);
+  const cy = camDist * Math.cos(camPitch);
+  const cz = camDist * Math.sin(camPitch) * Math.cos(camYaw);
+
+  const eye = [cx, cy + 0.5, cz];
+  const target = [0, -0.1, 0];
+
+  // lookAt
+  const fwd = [target[0]-eye[0], target[1]-eye[1], target[2]-eye[2]];
+  const fl = Math.sqrt(fwd[0]*fwd[0]+fwd[1]*fwd[1]+fwd[2]*fwd[2]);
+  fwd[0]/=fl; fwd[1]/=fl; fwd[2]/=fl;
+
+  const up = [0,1,0];
+  const right = [
+    fwd[1]*up[2]-fwd[2]*up[1],
+    fwd[2]*up[0]-fwd[0]*up[2],
+    fwd[0]*up[1]-fwd[1]*up[0]
+  ];
+  const rl = Math.sqrt(right[0]*right[0]+right[1]*right[1]+right[2]*right[2]);
+  right[0]/=rl; right[1]/=rl; right[2]/=rl;
+
+  const cup = [
+    right[1]*fwd[2]-right[2]*fwd[1],
+    right[2]*fwd[0]-right[0]*fwd[2],
+    right[0]*fwd[1]-right[1]*fwd[0]
+  ];
+
+  gl.uniform2f(uR, canvas.width, canvas.height);
+  gl.uniform1f(uT, t);
+  gl.uniform1f(uHeatL, val('uHeat'));
+  gl.uniform1f(uWaterL, val('uWater'));
+  gl.uniform1f(uSpeedL, val('uSpeed'));
+  gl.uniform1f(uScaleL, val('uScale'));
+  gl.uniform1f(uSteamL, val('uSteam'));
+  gl.uniform1f(uClarityL, val('uClarity'));
+  gl.uniform3f(uCamPosL, eye[0], eye[1], eye[2]);
+  gl.uniformMatrix3fv(uCamMatL, false, [
+    right[0], cup[0], fwd[0],
+    right[1], cup[1], fwd[1],
+    right[2], cup[2], fwd[2]
+  ]);
+
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+</script>
+</body>
+</html>

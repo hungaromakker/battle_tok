@@ -22,6 +22,7 @@ pub mod ui_pass;
 pub mod adaptive_step;
 pub mod apocalyptic_sky;
 pub mod bake_queue;
+pub mod cubemap_skybox;
 pub mod binding_validator;
 pub mod bridge_materials;
 pub mod building_blocks;
@@ -86,12 +87,13 @@ pub use entities::{
 
 // Re-export sky rendering types
 pub use apocalyptic_sky::{ApocalypticSky, ApocalypticSkyConfig};
+pub use cubemap_skybox::CubemapSkybox;
 pub use sky::{CLOUD_TEXTURE_SIZE, CloudTexture};
 pub use sky_cubemap::SkyCubemap;
 pub use stormy_sky::{StormySky, StormySkyConfig};
 
 // Re-export fog post-pass types (Phase 2: Depth-Based Fog Post-Pass)
-pub use fog_post::{FogPostConfig, FogPostPass};
+pub use fog_post::{FogPostConfig, FogPostPass, LavaSteamConfig};
 
 // Re-export castle material types (Phase 2: Castle Stone Shader)
 pub use castle_material::{CastleMaterial, CastleMaterialConfig};

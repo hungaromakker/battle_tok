@@ -23,6 +23,9 @@ glam = { version = "0.31", features = ["serde"] }
 bytemuck = { version = "1.14", features = ["derive"] }
 winit = "0.30"
 
+# Image loading (PNG skybox cubemaps)
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 # Async runtime (for wgpu)
 pollster = "0.4"
 

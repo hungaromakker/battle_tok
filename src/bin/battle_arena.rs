@@ -30,12 +30,13 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Fullscreen, Window, WindowAttributes, WindowId};
 
-// Import apocalyptic skybox
-use battle_tok_engine::render::{ApocalypticSky, ApocalypticSkyConfig};
+// Import skybox
+use battle_tok_engine::render::CubemapSkybox;
 
 // Import Phase 2 visual upgrade systems
 use battle_tok_engine::render::{
-    FogPostConfig, FogPostPass, MaterialSystem, ParticleSystem, PointLightManager, SceneConfig,
+    FogPostConfig, FogPostPass, LavaSteamConfig, MaterialSystem, ParticleSystem,
+    PointLightManager, SceneConfig,
 };
 
 // Import building block types for GPU operations
@@ -44,11 +45,11 @@ use battle_tok_engine::render::{BuildingBlock, MergedMesh};
 // Import game module types
 use battle_tok_engine::game::config::{ArenaConfig, VisualConfig};
 use battle_tok_engine::game::{
-    AimingKeys, BattleScene, BridgeConfig, BuilderMode, Camera, FloatingIslandConfig, Mesh,
-    MovementKeys, PLAYER_EYE_HEIGHT, SHADER_SOURCE, SdfCannonData, SdfCannonUniforms, SelectedFace,
-    StartOverlay, TerrainEditorUI, TerrainParams, Uniforms, Vertex, generate_all_trees_mesh,
-    generate_bridge, generate_floating_island, generate_lava_ocean, generate_trees_on_terrain,
-    get_material_color, set_terrain_params, terrain_height_at,
+    AimingKeys, BattleScene, BridgeConfig, BuilderMode, Camera, FloatingIslandConfig, LavaParams,
+    Mesh, MovementKeys, PLAYER_EYE_HEIGHT, SHADER_SOURCE, SdfCannonData, SdfCannonUniforms,
+    SelectedFace, StartOverlay, TerrainEditorUI, TerrainParams, Uniforms, Vertex,
+    generate_all_trees_mesh, generate_bridge, generate_floating_island, generate_lava_ocean,
+    generate_trees_on_terrain, get_material_color, set_terrain_params, terrain_height_at,
 };
 use battle_tok_engine::render::hex_prism::DEFAULT_HEX_HEIGHT;
 
@@ -64,6 +65,20 @@ struct MergedMeshBuffers {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
+}
+
+/// Scene uniforms for the lava shader (matches lava.wgsl Uniforms struct).
+/// Subset of the main Uniforms — only what the lava shader needs.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct LavaSceneUniforms {
+    view_proj: [[f32; 4]; 4], // 64 bytes
+    camera_pos: [f32; 3],     // 12 bytes
+    time: f32,                // 4 bytes  (total 80)
+    sun_dir: [f32; 3],        // 12 bytes
+    fog_density: f32,         // 4 bytes  (total 96)
+    fog_color: [f32; 3],      // 12 bytes
+    ambient: f32,             // 4 bytes  (total 112)
 }
 
 // ============================================================================
@@ -127,6 +142,19 @@ struct GpuResources {
     tree_vertex_buffer: wgpu::Buffer,
     tree_index_buffer: wgpu::Buffer,
     tree_index_count: u32,
+
+    // Offscreen scene color texture (for fog post-process)
+    scene_color_texture: wgpu::Texture,
+    scene_color_view: wgpu::TextureView,
+
+    // Lava ocean (rendered with animated lava.wgsl shader)
+    lava_pipeline: wgpu::RenderPipeline,
+    lava_bind_group: wgpu::BindGroup,
+    lava_scene_uniform_buffer: wgpu::Buffer,
+    lava_params_buffer: wgpu::Buffer,
+    lava_vertex_buffer: wgpu::Buffer,
+    lava_index_buffer: wgpu::Buffer,
+    lava_index_count: u32,
 }
 
 impl GpuResources {
@@ -150,6 +178,25 @@ impl GpuResources {
         });
         self.depth_texture = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
         self.depth_texture_raw = depth_texture;
+
+        // Recreate offscreen scene color texture for fog post-process
+        let scene_color_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Scene Color Texture"),
+            size: wgpu::Extent3d {
+                width: self.surface_config.width,
+                height: self.surface_config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.surface_config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        self.scene_color_view =
+            scene_color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.scene_color_texture = scene_color_texture;
     }
 }
 
@@ -166,9 +213,8 @@ struct BattleArenaApp {
     // GPU resources (replaces ~25 individual fields)
     gpu: Option<GpuResources>,
 
-    // Apocalyptic skybox with volumetric clouds
-    apocalyptic_sky: Option<ApocalypticSky>,
-    lightning_timer: f32,
+    // Cubemap skybox with day/night crossfade
+    cubemap_skybox: Option<CubemapSkybox>,
 
     // Phase 2 Visual Systems
     point_lights: Option<PointLightManager>,
@@ -208,8 +254,7 @@ impl BattleArenaApp {
             window: None,
             scene: None,
             gpu: None,
-            apocalyptic_sky: None,
-            lightning_timer: 3.0,
+            cubemap_skybox: None,
             point_lights: None,
             particle_system: None,
             material_system: None,
@@ -569,6 +614,24 @@ impl BattleArenaApp {
         });
         let depth_texture_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+        // Offscreen scene color texture (for fog post-process to read from)
+        let scene_color_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Scene Color Texture"),
+            size: wgpu::Extent3d {
+                width: size.width.max(1),
+                height: size.height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: surface_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let scene_color_view =
+            scene_color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         let sdf_cannon_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("SDF Cannon Pipeline"),
             layout: Some(&sdf_cannon_pipeline_layout),
@@ -612,6 +675,141 @@ impl BattleArenaApp {
         println!("[US-013] SDF cannon pipeline initialized");
 
         // ============================================
+        // LAVA OCEAN PIPELINE (animated lava.wgsl shader)
+        // ============================================
+        let lava_shader_source = std::fs::read_to_string("shaders/lava.wgsl")
+            .expect("Failed to load lava.wgsl shader");
+        let lava_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Lava Ocean Shader"),
+            source: wgpu::ShaderSource::Wgsl(lava_shader_source.into()),
+        });
+
+        let lava_scene_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Lava Scene Uniform Buffer"),
+            size: std::mem::size_of::<LavaSceneUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let lava_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Lava Params Buffer"),
+            size: std::mem::size_of::<LavaParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let lava_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Lava Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let lava_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Lava Bind Group"),
+            layout: &lava_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: lava_scene_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: lava_params_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let lava_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Lava Pipeline Layout"),
+                bind_group_layouts: &[&lava_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        let lava_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Lava Ocean Pipeline"),
+            layout: Some(&lava_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &lava_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: 0,
+                            shader_location: 0,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: 12,
+                            shader_location: 1,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x4,
+                            offset: 24,
+                            shader_location: 2,
+                        },
+                    ],
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &lava_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None, // No culling — lava visible from below too
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        println!("[Lava] Animated lava ocean pipeline initialized");
+
+        // ============================================
         // CREATE BATTLE SCENE (all game state)
         // ============================================
         let mut scene = BattleScene::new(ArenaConfig::default(), VisualConfig::default());
@@ -623,7 +821,8 @@ impl BattleArenaApp {
         let attacker_center = config.island_attacker.position;
         let defender_center = config.island_defender.position;
         let island_radius = config.island_attacker.radius;
-        let lava_ocean_level = config.lava_y;
+        // Lava at terrain level (slightly below island surface) — NOT deep underground
+        let lava_ocean_level = -0.5;
 
         let mut static_mesh = Mesh::new();
 
@@ -642,11 +841,12 @@ impl BattleArenaApp {
         let defender_platform = generate_floating_island(defender_center, island_config);
         static_mesh.merge(&defender_platform);
 
+        // Lava ocean generated separately — rendered with animated lava shader
         let lava_ocean = generate_lava_ocean(config.lava_size, lava_ocean_level);
-        static_mesh.merge(&lava_ocean);
 
         println!(
-            "[Floating Islands] Generated 2 islands with layered crust floating above lava ocean"
+            "[Floating Islands] Generated 2 islands + lava ocean at y={:.1} (terrain level)",
+            lava_ocean_level,
         );
 
         // Generate bridge connecting the two floating islands
@@ -747,6 +947,24 @@ impl BattleArenaApp {
             usage: wgpu::BufferUsages::INDEX,
         });
 
+        // Lava ocean GPU buffers (separate from static for animated shader)
+        let lava_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Lava Vertex Buffer"),
+            contents: bytemuck::cast_slice(&lava_ocean.vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let lava_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Lava Index Buffer"),
+            contents: bytemuck::cast_slice(&lava_ocean.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let lava_index_count = lava_ocean.indices.len() as u32;
+        println!(
+            "[Lava] Ocean mesh: {} verts, {} indices",
+            lava_ocean.vertices.len(),
+            lava_ocean.indices.len()
+        );
+
         // Dynamic buffers
         let dynamic_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Dynamic Vertex Buffer"),
@@ -804,11 +1022,13 @@ impl BattleArenaApp {
             );
         }
 
-        // Apocalyptic skybox
-        let apocalyptic_sky = ApocalypticSky::with_config(
+        // Cubemap skybox with day/night crossfade
+        let cubemap_skybox = CubemapSkybox::new(
             &device,
+            &queue,
             surface_format,
-            ApocalypticSkyConfig::battle_arena(),
+            "Assets/Skybox/sky_26_2k/sky_26_cubemap_2k",  // day sky
+            "Assets/Skybox/sky_16_2k/sky_16_cubemap_2k",  // night sky
         );
 
         // Phase 2 Visual Systems (torch params from VisualConfig)
@@ -846,8 +1066,16 @@ impl BattleArenaApp {
         let mut material_system = MaterialSystem::new(&device);
         material_system.set_scene_config(SceneConfig::battle_arena());
 
-        let fog_post =
-            FogPostPass::with_config(&device, surface_format, FogPostConfig::battle_arena());
+        let mut fog_post =
+            FogPostPass::with_config(&device, &queue, surface_format, FogPostConfig::battle_arena());
+
+        // Configure lava steam boundary wall around islands
+        fog_post.set_steam_config(LavaSteamConfig::battle_arena(
+            attacker_center,
+            defender_center,
+            island_radius,
+            lava_ocean_level,
+        ));
 
         // Store everything
         self.window = Some(window);
@@ -875,6 +1103,8 @@ impl BattleArenaApp {
             sdf_cannon_bind_group,
             depth_texture: depth_texture_view,
             depth_texture_raw: depth_texture,
+            scene_color_texture,
+            scene_color_view,
             ui_uniform_buffer,
             ui_bind_group,
             block_vertex_buffer: None,
@@ -884,8 +1114,16 @@ impl BattleArenaApp {
             tree_vertex_buffer,
             tree_index_buffer,
             tree_index_count,
+            // Lava ocean
+            lava_pipeline,
+            lava_bind_group,
+            lava_scene_uniform_buffer,
+            lava_params_buffer,
+            lava_vertex_buffer,
+            lava_index_buffer,
+            lava_index_count,
         });
-        self.apocalyptic_sky = Some(apocalyptic_sky);
+        self.cubemap_skybox = Some(cubemap_skybox);
         self.point_lights = Some(point_lights);
         self.particle_system = Some(particle_system);
         self.material_system = Some(material_system);
@@ -937,17 +1175,6 @@ impl BattleArenaApp {
                 - if self.movement.down { 1.0 } else { 0.0 };
             self.camera
                 .update_movement(forward, right, up, delta_time, self.movement.sprint);
-        }
-
-        // Update lightning timer
-        self.lightning_timer -= delta_time;
-        if self.lightning_timer <= 0.0 {
-            if let Some(ref mut apocalyptic_sky) = self.apocalyptic_sky {
-                apocalyptic_sky.trigger_lightning();
-            }
-            let time = self.start_time.elapsed().as_secs_f32();
-            let rand_val = ((time * 12.9898).sin() * 43758.547).fract();
-            self.lightning_timer = 3.0 + rand_val * 5.0;
         }
 
         // Update Phase 2 visual systems
@@ -1136,8 +1363,25 @@ impl BattleArenaApp {
         static_mesh.merge(&attacker_platform);
         let defender_platform = generate_floating_island(defender_center, island_cfg);
         static_mesh.merge(&defender_platform);
-        let lava_ocean = generate_lava_ocean(config.lava_size, config.lava_y);
-        static_mesh.merge(&lava_ocean);
+        // Lava ocean NOT merged — rendered separately with animated lava shader
+        let lava_ocean = generate_lava_ocean(config.lava_size, -0.5);
+
+        // Rebuild lava GPU buffers
+        gpu.lava_vertex_buffer =
+            gpu.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Lava Vertex Buffer"),
+                    contents: bytemuck::cast_slice(&lava_ocean.vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+        gpu.lava_index_buffer =
+            gpu.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Lava Index Buffer"),
+                    contents: bytemuck::cast_slice(&lava_ocean.indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
+        gpu.lava_index_count = lava_ocean.indices.len() as u32;
 
         // Bridge
         let surface_min_y = attacker_center.y;
@@ -1792,10 +2036,29 @@ impl BattleArenaApp {
             },
         );
 
-        self.render_sky(&mut encoder, &view);
-        self.render_meshes(&mut encoder, &view, dynamic_index_count);
-        self.render_sdf_cannon(&mut encoder, &view);
-        self.render_particles(&mut encoder, &view);
+        // Phase 1: Render scene to offscreen texture (for fog post-process)
+        let gpu = self.gpu.as_ref().unwrap();
+        let scene_view = &gpu.scene_color_view;
+
+        self.render_sky(&mut encoder, scene_view);
+        self.render_meshes(&mut encoder, scene_view, dynamic_index_count);
+        self.render_lava(&mut encoder, scene_view);
+        self.render_sdf_cannon(&mut encoder, scene_view);
+        self.render_particles(&mut encoder, scene_view);
+
+        // Phase 2: Fog post-process (reads scene color + depth → writes to swapchain)
+        if let Some(ref fog_post) = self.fog_post {
+            let gpu = self.gpu.as_ref().unwrap();
+            fog_post.render_to_view(
+                &gpu.device,
+                &mut encoder,
+                &gpu.scene_color_view,
+                &gpu.depth_texture,
+                &view,
+            );
+        }
+
+        // Phase 3: UI on top (no fog applied to UI)
         self.render_ui(&mut encoder, &view);
 
         self.gpu
@@ -1808,7 +2071,7 @@ impl BattleArenaApp {
 
     /// Prepare all GPU buffer data for the current frame: dynamic meshes, uniforms,
     /// SDF cannon data, and visual system updates. Returns the dynamic index count.
-    fn prepare_frame_data(&mut self, time: f32, delta_time: f32) -> u32 {
+    fn prepare_frame_data(&mut self, time: f32, _delta_time: f32) -> u32 {
         // Build dynamic mesh from scene data (needs &self.scene, then &self for ghost/grid)
         let mut dynamic_mesh = self.scene.as_ref().unwrap().generate_dynamic_mesh();
         let mut dynamic_indices: Vec<u32> = (0..dynamic_mesh.len() as u32).collect();
@@ -1928,22 +2191,62 @@ impl BattleArenaApp {
             );
         }
 
-        // Update visual systems
-        if let Some(ref mut apocalyptic_sky) = self.apocalyptic_sky {
-            apocalyptic_sky.update(
-                queue,
-                view_proj,
-                self.camera.position,
+        // Lava ocean uniforms (animated shader)
+        {
+            let lava_scene = LavaSceneUniforms {
+                view_proj: view_proj.to_cols_array_2d(),
+                camera_pos: self.camera.position.to_array(),
                 time,
-                (config.width, config.height),
-                delta_time,
+                sun_dir: vis.sun_direction.to_array(),
+                fog_density: vis.fog_density,
+                fog_color: vis.fog_color.to_array(),
+                ambient: vis.ambient_intensity,
+            };
+            queue.write_buffer(
+                &gpu.lava_scene_uniform_buffer,
+                0,
+                bytemuck::cast_slice(&[lava_scene]),
             );
+
+            let lava_params = LavaParams {
+                time,
+                ..LavaParams::default()
+            };
+            queue.write_buffer(
+                &gpu.lava_params_buffer,
+                0,
+                bytemuck::cast_slice(&[lava_params]),
+            );
+        }
+
+        // Update visual systems — skybox with day/night crossfade
+        if let Some(ref cubemap_skybox) = self.cubemap_skybox {
+            // Compute blend factor from DayCycle time (0-1)
+            // Dawn (0.0-0.15): night → day transition
+            // Day  (0.15-0.65): pure day
+            // Dusk (0.65-0.8): day → night transition
+            // Night(0.8-1.0): pure night
+            let day_time = scene.game_state.day_cycle.time();
+            let blend = if day_time < 0.15 {
+                // Dawn: fade from night (1.0) to day (0.0)
+                1.0 - (day_time / 0.15)
+            } else if day_time < 0.65 {
+                // Day: pure day
+                0.0
+            } else if day_time < 0.80 {
+                // Dusk: fade from day (0.0) to night (1.0)
+                (day_time - 0.65) / 0.15
+            } else {
+                // Night: pure night
+                1.0
+            };
+            cubemap_skybox.update(queue, view_proj, blend);
         }
         if let Some(ref material_system) = self.material_system {
             material_system.update_scene_uniforms(queue, view_proj, self.camera.position, time);
         }
         if let Some(ref fog_post) = self.fog_post {
-            fog_post.update(queue, view_proj, self.camera.position);
+            fog_post.update(queue, view_proj, self.camera.position, time);
         }
 
         // Update particle uniforms
@@ -1959,10 +2262,10 @@ impl BattleArenaApp {
         dynamic_index_count
     }
 
-    /// Render the apocalyptic sky background (no depth test).
+    /// Render the cubemap skybox background (no depth test).
     fn render_sky(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
-        if let Some(ref apocalyptic_sky) = self.apocalyptic_sky {
-            apocalyptic_sky.render_to_view(encoder, view);
+        if let Some(ref cubemap_skybox) = self.cubemap_skybox {
+            cubemap_skybox.render_to_view(encoder, view);
         }
     }
 
@@ -2098,6 +2401,44 @@ impl BattleArenaApp {
                 .set_index_buffer(gpu.tree_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..gpu.tree_index_count, 0, 0..1);
         }
+    }
+
+    /// Render the animated lava ocean with the dedicated lava.wgsl shader.
+    /// Uses depth testing (loads existing depth from terrain pass).
+    fn render_lava(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        let gpu = self.gpu.as_ref().unwrap();
+        if gpu.lava_index_count == 0 {
+            return;
+        }
+
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Lava Ocean Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &gpu.depth_texture,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load, // Preserve depth from terrain
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        render_pass.set_pipeline(&gpu.lava_pipeline);
+        render_pass.set_bind_group(0, &gpu.lava_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, gpu.lava_vertex_buffer.slice(..));
+        render_pass.set_index_buffer(gpu.lava_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        render_pass.draw_indexed(0..gpu.lava_index_count, 0, 0..1);
     }
 
     /// Render the SDF ray-marched cannon with its own pipeline and depth testing.

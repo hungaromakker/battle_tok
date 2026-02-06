@@ -159,14 +159,14 @@ pub struct TerrainParams {
 impl Default for TerrainParams {
     fn default() -> Self {
         Self {
-            // Apocalyptic scorched terrain palette (US-P2-012)
-            grass: [0.15, 0.18, 0.10], // Scorched olive (was bright green)
+            // Vibrant battle-arena terrain palette
+            grass: [0.25, 0.40, 0.14], // Rich vivid green
             _pad0: 0.0,
-            dirt: [0.28, 0.20, 0.14], // Ashen brown (volcanic ash)
+            dirt: [0.42, 0.30, 0.20], // Warm earthy brown
             _pad1: 0.0,
-            rock: [0.25, 0.22, 0.24], // Dark volcanic with purple tint
+            rock: [0.45, 0.38, 0.32], // Warm sandstone
             _pad2: 0.0,
-            snow: [0.50, 0.48, 0.45], // Ash/dust peaks (was white snow)
+            snow: [0.65, 0.62, 0.58], // Bright stone peaks
             _pad3: 0.0,
             // Height bands tuned for terrain scale
             dirt_start: 0.6,
@@ -205,13 +205,13 @@ impl Default for LavaParams {
     fn default() -> Self {
         Self {
             time: 0.0,
-            emissive_strength: 1.8,
-            scale: 0.25,
+            emissive_strength: 1.0, // Moderate — lava is under water now
+            scale: 0.2,             // ~5m voronoi cells (world-space)
             speed: 0.35,
             crack_sharpness: 0.85,
             normal_strength: 0.6,
             _pad0: [0.0; 2],
-            core_color: [2.4, 0.65, 0.08], // HDR orange-yellow
+            core_color: [1.0, 0.3, 0.0], // Orange (seen through water)
             _pad1: 0.0,
             crust_color: [0.05, 0.01, 0.01], // Dark red-black
             _pad2: 0.0,
@@ -265,7 +265,7 @@ impl Default for SkyStormParams {
 }
 
 /// Fog Post-Process Params (fog_post.wgsl)
-/// Distance-based + height-based atmospheric fog
+/// Distance-based + height-based atmospheric fog + lava steam boundary
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct FogPostParams {
@@ -278,6 +278,17 @@ pub struct FogPostParams {
     pub inv_view_proj: [[f32; 4]; 4],
     pub camera_pos: [f32; 3],
     pub _pad1: f32,
+    // Lava steam boundary parameters
+    pub steam_color: [f32; 3],
+    pub steam_density: f32,
+    pub island1_center: [f32; 3],
+    pub island_radius: f32,
+    pub island2_center: [f32; 3],
+    pub lava_y: f32,
+    pub steam_height: f32,
+    pub wind_time: f32,
+    pub wind_strength: f32,
+    pub steam_edge_softness: f32,
 }
 
 impl Default for FogPostParams {
@@ -291,6 +302,17 @@ impl Default for FogPostParams {
             inv_view_proj: Mat4::IDENTITY.to_cols_array_2d(),
             camera_pos: [0.0, 0.0, 0.0],
             _pad1: 0.0,
+            // Steam defaults (disabled)
+            steam_color: [0.75, 0.62, 0.50],
+            steam_density: 0.0,
+            island1_center: [0.0; 3],
+            island_radius: 0.0,
+            island2_center: [0.0; 3],
+            lava_y: 0.0,
+            steam_height: 0.0,
+            wind_time: 0.0,
+            wind_strength: 0.0,
+            steam_edge_softness: 0.0,
         }
     }
 }
