@@ -18,6 +18,9 @@
 //! - M: Toggle mirror symmetry at x=0 (stage 1)
 //! - G: Toggle grid (stage 1)
 //! - [ / ]: Decrease/increase eraser radius (stage 1)
+//! - P: Cycle pump profile: Elliptical / Flat / Pointed (stage 2)
+//! - Up/Down arrows: Adjust inflation 0.0-1.0 (stage 2)
+//! - Left/Right arrows: Adjust thickness 0.1-5.0 (stage 2)
 //! - Left mouse: Draw (stage 1)
 //! - Middle/right mouse drag: Pan canvas (stage 1)
 //! - Scroll wheel: Zoom canvas (stage 1)
@@ -610,6 +613,9 @@ fn main() {
     println!("  M: Toggle mirror symmetry (stage 1)");
     println!("  G: Toggle grid (stage 1)");
     println!("  [/]: Adjust eraser radius (stage 1)");
+    println!("  P: Cycle pump profile (stage 2)");
+    println!("  Up/Down: Adjust inflation (stage 2)");
+    println!("  Left/Right: Adjust thickness (stage 2)");
     println!("  Left mouse: Draw (stage 1)");
     println!("  Middle/right drag: Pan canvas (stage 1)");
     println!("  Scroll wheel: Zoom canvas (stage 1)");

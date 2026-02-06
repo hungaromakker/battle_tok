@@ -1142,4 +1142,204 @@ mod tests {
             val
         );
     }
+
+    // =============================================
+    // Linear extrude SDF tests
+    // =============================================
+
+    #[test]
+    fn test_sdf_linear_inside() {
+        let square = test_square();
+        let val = sdf_linear_extrude(Vec3::new(0.0, 0.0, 0.5), &square, 1.0, 0.0);
+        assert!(
+            val < 0.0,
+            "Inside linear extrude should be negative: {}",
+            val
+        );
+    }
+
+    #[test]
+    fn test_sdf_linear_outside_z() {
+        let square = test_square();
+        let val = sdf_linear_extrude(Vec3::new(0.0, 0.0, 2.0), &square, 1.0, 0.0);
+        assert!(
+            val > 0.0,
+            "Above linear extrude should be positive: {}",
+            val
+        );
+    }
+
+    #[test]
+    fn test_sdf_linear_below_z() {
+        let square = test_square();
+        let val = sdf_linear_extrude(Vec3::new(0.0, 0.0, -1.0), &square, 1.0, 0.0);
+        assert!(val > 0.0, "Below z=0 should be positive: {}", val);
+    }
+
+    #[test]
+    fn test_sdf_linear_outside_xy() {
+        let square = test_square();
+        let val = sdf_linear_extrude(Vec3::new(3.0, 0.0, 0.5), &square, 1.0, 0.0);
+        assert!(val > 0.0, "Outside XY should be positive: {}", val);
+    }
+
+    #[test]
+    fn test_sdf_linear_taper_shrinks() {
+        let square = test_square();
+        // With full taper (1.0), the cross-section shrinks to a point at z=depth
+        let val_base = sdf_linear_extrude(Vec3::new(0.5, 0.0, 0.1), &square, 1.0, 1.0);
+        let val_top = sdf_linear_extrude(Vec3::new(0.5, 0.0, 0.9), &square, 1.0, 1.0);
+        assert!(
+            val_base < val_top,
+            "Base should be more inside than top with taper: {} vs {}",
+            val_base,
+            val_top
+        );
+    }
+
+    #[test]
+    fn test_sdf_linear_degenerate() {
+        let square = test_square();
+        // Zero depth should return MAX
+        let val = sdf_linear_extrude(Vec3::ZERO, &square, 0.0, 0.0);
+        assert_eq!(val, f32::MAX);
+        // Empty polygon should return MAX
+        let val2 = sdf_linear_extrude(Vec3::ZERO, &[], 1.0, 0.0);
+        assert_eq!(val2, f32::MAX);
+    }
+
+    // =============================================
+    // Lathe mesh tests
+    // =============================================
+
+    #[test]
+    fn test_lathe_mesh_basic() {
+        let profile = vec![[1.0, 0.0], [1.0, 1.0]];
+        let (verts, indices) = lathe_mesh(&profile, 8, 360.0, [1.0; 4]);
+        assert!(!verts.is_empty(), "Lathe should produce vertices");
+        assert!(!indices.is_empty(), "Lathe should produce indices");
+        assert_eq!(indices.len() % 3, 0, "Indices should be triangles");
+    }
+
+    #[test]
+    fn test_lathe_mesh_empty_profile() {
+        let (verts, indices) = lathe_mesh(&[], 8, 360.0, [1.0; 4]);
+        assert!(verts.is_empty());
+        assert!(indices.is_empty());
+    }
+
+    #[test]
+    fn test_lathe_mesh_single_point() {
+        let (verts, indices) = lathe_mesh(&[[1.0, 0.0]], 8, 360.0, [1.0; 4]);
+        assert!(verts.is_empty());
+        assert!(indices.is_empty());
+    }
+
+    #[test]
+    fn test_lathe_mesh_partial_sweep() {
+        let profile = vec![[1.0, 0.0], [1.0, 1.0]];
+        let (verts_full, _) = lathe_mesh(&profile, 8, 360.0, [1.0; 4]);
+        let (verts_half, _) = lathe_mesh(&profile, 8, 180.0, [1.0; 4]);
+        // Partial sweep produces an extra ring (cap)
+        assert!(
+            verts_half.len() > verts_full.len(),
+            "Partial sweep should have more verts: {} vs {}",
+            verts_half.len(),
+            verts_full.len()
+        );
+    }
+
+    #[test]
+    fn test_recompute_lathe_normals_unit_length() {
+        let profile = vec![[1.0, 0.0], [1.0, 1.0]];
+        let (mut verts, indices) = lathe_mesh(&profile, 8, 360.0, [1.0; 4]);
+        recompute_lathe_normals(&mut verts, &indices);
+        for v in &verts {
+            let n = Vec3::from_array(v.normal);
+            let len = n.length();
+            assert!(
+                (len - 1.0).abs() < 0.01,
+                "Normal should be unit length, got {}",
+                len
+            );
+        }
+    }
+
+    #[test]
+    fn test_recompute_lathe_normals_empty() {
+        // Should not panic on empty input
+        recompute_lathe_normals(&mut [], &[]);
+    }
+
+    // =============================================
+    // Extruder method dispatch tests
+    // =============================================
+
+    #[test]
+    fn test_generate_preview_linear_method() {
+        let mut ext = Extruder::new();
+        ext.params.method = ExtrudeMethod::Linear;
+        ext.params.mc_resolution = 16;
+        let outline = Outline2D {
+            points: vec![[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]],
+            closed: true,
+        };
+        let result = ext.generate_preview(&[outline]);
+        assert!(result, "Linear extrude should produce a mesh");
+        assert_eq!(ext.mesh_indices.len() % 3, 0);
+    }
+
+    #[test]
+    fn test_generate_preview_lathe_method() {
+        let mut ext = Extruder::new();
+        ext.params.method = ExtrudeMethod::Lathe;
+        ext.params.segments = 8;
+        let outline = Outline2D {
+            points: vec![[1.0, 0.0], [1.0, 1.0], [0.5, 1.5]],
+            closed: true,
+        };
+        let result = ext.generate_preview(&[outline]);
+        assert!(result, "Lathe should produce a mesh");
+        assert_eq!(ext.mesh_indices.len() % 3, 0);
+    }
+
+    // =============================================
+    // 2D SDF signed distance tests
+    // =============================================
+
+    #[test]
+    fn test_sdf_2d_polygon_signed() {
+        let square = test_square();
+        let inside_val = sdf_2d_polygon(Vec2::ZERO, &square);
+        assert!(
+            inside_val < 0.0,
+            "Inside should be negative: {}",
+            inside_val
+        );
+        let outside_val = sdf_2d_polygon(Vec2::new(3.0, 0.0), &square);
+        assert!(
+            outside_val > 0.0,
+            "Outside should be positive: {}",
+            outside_val
+        );
+    }
+
+    #[test]
+    fn test_sdf_2d_polygon_distance_magnitude() {
+        let square = test_square();
+        // Center of a [-1,1]x[-1,1] square: distance to nearest edge is 1.0
+        let center = sdf_2d_polygon(Vec2::ZERO, &square);
+        assert!(
+            (center - (-1.0)).abs() < 0.01,
+            "Center distance should be -1.0, got {}",
+            center
+        );
+        // Point at (2, 0): distance to nearest edge (x=1) is 1.0
+        let outside = sdf_2d_polygon(Vec2::new(2.0, 0.0), &square);
+        assert!(
+            (outside - 1.0).abs() < 0.01,
+            "Outside distance should be 1.0, got {}",
+            outside
+        );
+    }
 }
