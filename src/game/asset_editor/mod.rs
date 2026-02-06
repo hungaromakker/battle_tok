@@ -4,6 +4,7 @@
 //! The editor allows creating game assets through a multi-stage pipeline:
 //! Draw2D -> Extrude -> Sculpt -> Color -> Save.
 
+pub mod asset_file;
 pub mod canvas_2d;
 pub mod extrude;
 pub mod image_trace;
@@ -17,12 +18,15 @@ pub mod variety;
 use glam::Vec3;
 
 use crate::game::types::Vertex;
+use crate::render::building_blocks::BlockVertex;
+use asset_file::{AssetMetadata, load_btasset, save_btasset};
 use canvas_2d::Canvas2D;
 use extrude::{Extruder, PumpProfile};
 use orbit_camera::OrbitCamera;
 use paint::PaintSystem;
 use sculpt_bridge::SculptBridge;
 use undo::UndoStack;
+use variety::VarietyParams;
 
 // ============================================================================
 // ENUMS
@@ -174,6 +178,32 @@ impl Default for AssetDraft {
     }
 }
 
+/// Stage 5 (Save) dialog state.
+///
+/// Holds the user-editable fields displayed when the editor is in the Save stage.
+#[derive(Debug, Clone)]
+pub struct SaveDialog {
+    /// Asset name entered by the user.
+    pub name: String,
+    /// Category slug (e.g. "tree", "rock").
+    pub category: String,
+    /// Comma-separated tags.
+    pub tags: String,
+    /// Status message shown after a save or load attempt.
+    pub status_message: String,
+}
+
+impl Default for SaveDialog {
+    fn default() -> Self {
+        Self {
+            name: String::from("Untitled"),
+            category: String::from("prop"),
+            tags: String::new(),
+            status_message: String::new(),
+        }
+    }
+}
+
 /// The main asset editor state.
 /// Manages the editing pipeline and current draft asset.
 pub struct AssetEditor {
@@ -195,6 +225,8 @@ pub struct AssetEditor {
     pub sculpt: SculptBridge,
     /// Vertex color painting for Stage 4 (Color)
     pub paint: PaintSystem,
+    /// Stage 5 save dialog fields
+    pub save_dialog: SaveDialog,
 }
 
 impl Default for AssetEditor {
@@ -216,6 +248,7 @@ impl AssetEditor {
             extruder: Extruder::new(),
             sculpt: SculptBridge::new(),
             paint: PaintSystem::new(),
+            save_dialog: SaveDialog::default(),
         }
     }
 
@@ -350,6 +383,98 @@ impl AssetEditor {
         self.canvas = Canvas2D::new();
         self.sculpt = SculptBridge::new();
         self.paint = PaintSystem::new();
+        self.save_dialog = SaveDialog::default();
+    }
+
+    /// Save the current mesh as a .btasset file.
+    ///
+    /// Uses the save dialog fields for metadata. Writes to
+    /// `assets/world/<category>/<name>.btasset`.
+    pub fn save_asset(&mut self) -> Result<std::path::PathBuf, String> {
+        let vertices = self.collect_vertices();
+        let indices = self.collect_indices();
+
+        if vertices.is_empty() {
+            return Err("No mesh data to save".to_string());
+        }
+
+        let tags: Vec<String> = self
+            .save_dialog
+            .tags
+            .split(',')
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
+
+        let metadata = AssetMetadata {
+            name: self.save_dialog.name.clone(),
+            category: self.save_dialog.category.clone(),
+            tags,
+            created_at: String::new(), // no chrono dependency; left empty
+            vertex_count: vertices.len() as u32,
+            index_count: indices.len() as u32,
+        };
+
+        let variety = VarietyParams::default();
+
+        let file_name = self.save_dialog.name.to_lowercase().replace(' ', "_");
+        let dir = std::path::PathBuf::from("assets/world").join(&self.save_dialog.category);
+        let path = dir.join(format!("{file_name}.btasset"));
+
+        save_btasset(&path, &vertices, &indices, &metadata, Some(&variety))
+            .map_err(|e| format!("{e}"))?;
+
+        let msg = format!("Saved: {}", path.display());
+        println!("{msg}");
+        self.save_dialog.status_message = msg;
+        Ok(path)
+    }
+
+    /// Load a .btasset file and replace the current editor mesh.
+    pub fn load_asset(&mut self, path: &std::path::Path) -> Result<(), String> {
+        let loaded = load_btasset(path).map_err(|e| format!("{e}"))?;
+
+        // Convert Vertex -> BlockVertex (identical layout, different type).
+        self.extruder.mesh_vertices = loaded
+            .vertices
+            .iter()
+            .map(|v| BlockVertex {
+                position: v.position,
+                normal: v.normal,
+                color: v.color,
+            })
+            .collect();
+        self.extruder.mesh_indices = loaded.indices;
+
+        self.save_dialog.name = loaded.metadata.name.clone();
+        self.save_dialog.category = loaded.metadata.category.clone();
+        self.save_dialog.tags = loaded.metadata.tags.join(", ");
+
+        let msg = format!("Loaded: {}", path.display());
+        println!("{msg}");
+        self.save_dialog.status_message = msg;
+        Ok(())
+    }
+
+    /// Collect the current mesh vertices for saving.
+    ///
+    /// Converts from the extruder's `BlockVertex` to the file format's `Vertex`.
+    /// Both types have identical `#[repr(C)]` layout (position + normal + color = 40 bytes).
+    fn collect_vertices(&self) -> Vec<Vertex> {
+        self.extruder
+            .mesh_vertices
+            .iter()
+            .map(|bv| Vertex {
+                position: bv.position,
+                normal: bv.normal,
+                color: bv.color,
+            })
+            .collect()
+    }
+
+    /// Collect the current mesh indices for saving.
+    fn collect_indices(&self) -> Vec<u32> {
+        self.extruder.mesh_indices.clone()
     }
 }
 
