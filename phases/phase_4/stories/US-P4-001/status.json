@@ -83,7 +83,7 @@
     "iteration": 2,
     "failed_reasons": [],
     "dependencies": [],
-    "commit_hash": "8ca41476f8dec0bf1e9a1dbf4e7b1e57ce1c538c",
+    "commit_hash": "83da5e5cd0865f498cadd17c30b8a245db53f7dd",
     "files_modified": [
         "src/bin/battle_editor.rs",
         "src/game/asset_editor/mod.rs",
