@@ -7,31 +7,35 @@
     "min_iterations": 1,
     "criteria": [
         {"text": "undo.rs exists with UndoStack and UndoCommand types", "done": false, "notes": ""},
-        {"text": "UndoCommand has variants for canvas, extrude, sculpt, and paint operations", "done": false, "notes": ""},
-        {"text": "Stack enforces maximum of 50 operations (drops oldest when exceeded)", "done": false, "notes": ""},
-        {"text": "push() truncates redo history when a new command is pushed", "done": false, "notes": ""},
-        {"text": "undo() returns the command to reverse and decrements position", "done": false, "notes": ""},
-        {"text": "redo() returns the command to reapply and increments position", "done": false, "notes": ""},
+        {"text": "UndoCommand has variants for canvas (AddOutline, RemoveOutline, ModifyOutline), extrude (ChangeExtrudeParams), sculpt (MeshSnapshot), and paint (VertexColors) operations", "done": false, "notes": ""},
+        {"text": "Stack enforces maximum of 50 operations, dropping oldest when exceeded", "done": false, "notes": ""},
+        {"text": "push() truncates redo history when a new command is pushed after undo", "done": false, "notes": ""},
+        {"text": "undo() returns the command to reverse and decrements cursor position", "done": false, "notes": ""},
+        {"text": "redo() returns the command to reapply and increments cursor position", "done": false, "notes": ""},
+        {"text": "can_undo() and can_redo() correctly report availability", "done": false, "notes": ""},
         {"text": "Ctrl+Z triggers undo in battle_editor.rs keyboard handling", "done": false, "notes": ""},
         {"text": "Ctrl+Y triggers redo in battle_editor.rs keyboard handling", "done": false, "notes": ""},
-        {"text": "can_undo() and can_redo() correctly report availability", "done": false, "notes": ""},
-        {"text": "cargo check passes with 0 errors", "done": false, "notes": ""}
+        {"text": "battle_arena.rs is NOT modified", "done": false, "notes": ""},
+        {"text": "cargo check --bin battle_editor passes with 0 errors", "done": false, "notes": ""},
+        {"text": "cargo check --bin battle_arena passes with 0 errors", "done": false, "notes": ""}
     ],
     "verification_commands": [
-        {"cmd": "test -f /home/hungaromakker/battle_tok/src/game/asset_editor/undo.rs && echo EXISTS", "expect_contains": "EXISTS", "description": "Undo module exists"},
-        {"cmd": "grep -c 'UndoStack\\|UndoCommand\\|apply_undo\\|apply_redo' /home/hungaromakker/battle_tok/src/game/asset_editor/undo.rs", "expect_gt": 0, "description": "Undo types defined"},
-        {"cmd": "grep -c 'AddOutline\\|RemoveOutline\\|MeshSnapshot\\|VertexColors\\|ChangeExtrudeParams' /home/hungaromakker/battle_tok/src/game/asset_editor/undo.rs", "expect_gt": 0, "description": "Command variants defined"},
-        {"cmd": "grep -c 'pub mod undo' /home/hungaromakker/battle_tok/src/game/asset_editor/mod.rs", "expect_gt": 0, "description": "Undo module declared"},
-        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "Project compiles"}
+        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check --bin battle_editor 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_editor binary compiles with undo module"},
+        {"cmd": "cd /home/hungaromakker/battle_tok && cargo check --bin battle_arena 2>&1; echo EXIT:$?", "expect_contains": "EXIT:0", "description": "battle_arena still compiles unchanged"},
+        {"cmd": "test -f /home/hungaromakker/battle_tok/src/game/asset_editor/undo.rs && echo EXISTS", "expect_contains": "EXISTS", "description": "undo.rs file exists"},
+        {"cmd": "grep -c 'UndoStack\\|UndoCommand' /home/hungaromakker/battle_tok/src/game/asset_editor/undo.rs", "expect_gt": 0, "description": "Core undo types are defined"},
+        {"cmd": "grep -c 'AddOutline\\|RemoveOutline\\|MeshSnapshot\\|VertexColors\\|ChangeExtrudeParams' /home/hungaromakker/battle_tok/src/game/asset_editor/undo.rs", "expect_gt": 0, "description": "All UndoCommand variants exist"},
+        {"cmd": "grep -c 'pub mod undo' /home/hungaromakker/battle_tok/src/game/asset_editor/mod.rs", "expect_gt": 0, "description": "undo module registered in mod.rs"}
     ],
     "checklist": [
         {"item": "Read spec.md for implementation details", "done": false},
-        {"item": "Create src/game/asset_editor/undo.rs with UndoCommand and UndoStack", "done": false},
-        {"item": "Implement push, undo, redo with max stack of 50", "done": false},
-        {"item": "Implement apply_undo and apply_redo functions", "done": false},
-        {"item": "Wire Ctrl+Z and Ctrl+Y in battle_editor.rs", "done": false},
-        {"item": "Run cargo check", "done": false},
-        {"item": "Commit changes", "done": false}
+        {"item": "Create src/game/asset_editor/undo.rs with UndoStack and UndoCommand types", "done": false},
+        {"item": "Implement push() with redo truncation and max size enforcement", "done": false},
+        {"item": "Implement undo() and redo() with cursor management", "done": false},
+        {"item": "Implement can_undo() and can_redo() helpers", "done": false},
+        {"item": "Add apply_undo and apply_redo functions for each UndoCommand variant", "done": false},
+        {"item": "Wire Ctrl+Z and Ctrl+Y into battle_editor.rs keyboard handler", "done": false},
+        {"item": "Run cargo check --bin battle_editor and cargo check --bin battle_arena", "done": false}
     ],
     "worker_notes": "",
     "notes_history": [],
@@ -43,5 +47,5 @@
     "iteration_history": [],
     "learnings": [],
     "verification_rejections": 0,
-    "created_at": "2026-02-06T18:00:00Z"
+    "created_at": "2026-02-06T14:00:00Z"
 }

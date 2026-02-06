@@ -1,184 +1,260 @@
 # US-P4-008: Sculpting Bridge
 
 ## Description
-Create `src/game/asset_editor/sculpt_bridge.rs` wrapping the existing `SculptingManager` from `engine/src/render/sculpting.rs` for Stage 3 of the asset editor. Add sphere add/subtract tools using `smooth_union()` and `smooth_subtraction()` from `sdf_operations.rs`. The sculpt bridge provides face extrusion, vertex/edge pulling, smooth brush, and SDF-based sphere add/subtract operations. The asset editor is a separate binary (`cargo run --bin battle_editor`) that shares the engine library but has its own winit window and event loop. `battle_arena.rs` is never modified.
+Create a bridge module that wraps the existing `SculptingManager` (from `engine/src/render/sculpting.rs`) and exposes a set of sculpting tools for refining extruded meshes in Stage 3 (Sculpt). This includes face extrude, vertex pull, edge pull, smooth brush, and SDF-based add/subtract sphere operations. The add/subtract sphere tools use the existing `smooth_union` and `smooth_subtraction` functions from `engine/src/render/sdf_operations.rs` combined with `MarchingCubes` for re-meshing.
 
 ## The Core Concept / Why This Matters
-The sculpting stage is where flat extruded shapes become organic 3D objects. The existing `SculptingManager` in the engine provides face extrusion, vertex pulling, and edge pulling -- these are direct mesh manipulation tools. But artists also need additive/subtractive sculpting: stamping spheres to add bumps (knots on a tree trunk, rivets on armor) and carving spheres to create hollows (eye sockets, bowl interiors). These operations use SDF smooth_union and smooth_subtraction followed by marching cubes re-meshing, bridging the gap between direct mesh editing and SDF-based sculpting. The smooth brush is essential for cleaning up harsh edges left by other operations, averaging vertex positions with their neighbors to create organic-looking surfaces.
+Extrusion (Stage 2) produces a good starting shape, but it is rarely the final form. Sculpting is where the artist refines the mesh — pulling out a branch on a tree, smoothing a jagged edge on a rock, adding a knob to a structure, or carving a hollow into a decoration. The existing engine has a `SculptingManager` that handles low-level mesh manipulation, but it needs a higher-level interface tailored to the editor workflow. The smooth brush is essential for cleaning up marching cubes artifacts (staircase edges). The add/subtract sphere tools use SDF operations to seamlessly blend new geometry into the existing mesh, which is far superior to manually pulling vertices.
 
 ## Goal
-Create `src/game/asset_editor/sculpt_bridge.rs` with `SculptBridge` struct providing face extrusion (via SculptingManager), AddSphere/SubtractSphere (via SDF operations + MarchingCubes), and Smooth brush (vertex averaging), integrated into Stage 3 of the `battle_editor` binary.
+Create `src/game/asset_editor/sculpt_bridge.rs` that wraps `SculptingManager` and provides a tool-based sculpting interface. Implement six sculpt tools with appropriate UI controls. Integrate into the editor Stage 3 with orbit camera and tool selection.
 
 ## Files to Create/Modify
-- Create `src/game/asset_editor/sculpt_bridge.rs` -- SculptBridge, SculptTool enum, smooth brush, SDF sphere operations
-- Modify `src/game/asset_editor/mod.rs` -- Add `pub mod sculpt_bridge;`, route Stage 3 input to SculptBridge
+- **Create** `src/game/asset_editor/sculpt_bridge.rs` — `SculptBridge` struct wrapping `SculptingManager`, `SculptTool` enum, tool implementations (FaceExtrude, VertexPull, EdgePull, Smooth, AddSphere, SubtractSphere), ray-mesh intersection for cursor targeting
+- **Modify** `src/game/asset_editor/mod.rs` — Add `pub mod sculpt_bridge;`, integrate into `AssetEditor` for Stage 3, wire up tool selection and mouse input
+- **Modify** `src/bin/battle_editor.rs` — Forward sculpt-specific inputs (tool keys, mouse click/drag, brush size controls) when in Stage 3
 
 ## Implementation Steps
-1. Define the sculpt tool enum:
+1. Define types:
    ```rust
-   #[derive(Clone, Copy, Debug, PartialEq)]
    pub enum SculptTool {
-       FaceExtrude,
-       VertexPull,
-       EdgePull,
-       Smooth,
-       AddSphere,
-       SubtractSphere,
+       FaceExtrude,     // push/pull selected face along its normal
+       VertexPull,      // drag individual vertices
+       EdgePull,        // drag edge loops
+       Smooth,          // average vertex positions with neighbors
+       AddSphere,       // smooth_union with sphere SDF at cursor
+       SubtractSphere,  // smooth_subtraction with sphere SDF at cursor
    }
-   ```
-
-2. Define the SculptBridge struct:
-   ```rust
+   
    pub struct SculptBridge {
-       pub active_tool: SculptTool,
-       pub brush_radius: f32,    // default 0.5, range 0.1-5.0
-       pub smooth_factor: f32,   // default 0.5, range 0.0-1.0
+       manager: SculptingManager,
+       pub tool: SculptTool,
+       pub brush_radius: f32,    // 0.1 to 3.0, default 0.5
+       pub brush_strength: f32,  // 0.0 to 1.0, default 0.5
+       pub smooth_k: f32,        // smoothness factor for SDF ops, 0.1 to 1.0, default 0.3
+       // Internal state
+       dragging: bool,
+       hit_point: Option<[f32; 3]>,
+       hit_normal: Option<[f32; 3]>,
+       hit_face_idx: Option<u32>,
+       hit_vertex_idx: Option<u32>,
    }
    ```
-
-3. Implement smooth brush algorithm:
+2. Implement ray-mesh intersection for cursor targeting:
    ```rust
-   /// Smooth brush: find vertices within radius of cursor hit point,
-   /// average each with its neighbor positions weighted by distance falloff.
-   pub fn smooth_brush(
-       &self,
-       mesh: &mut Mesh,
-       hit_point: Vec3,
+   fn raycast_mesh(
+       ray_origin: [f32; 3],
+       ray_dir: [f32; 3],
+       vertices: &[Vertex],
+       indices: &[u32],
+   ) -> Option<(f32, [f32; 3], [f32; 3], u32)>  // (t, hit_point, hit_normal, face_index)
+   ```
+   - Test ray against each triangle (Moller-Trumbore algorithm)
+   - Return closest hit
+   - Compute screen-to-world ray from mouse position + orbit camera inverse view-projection
+3. Implement `SculptTool::FaceExtrude`:
+   - On click: raycast to find hit face, record face index and normal
+   - On drag: move all vertices of the hit face along its normal by drag distance
+   - Scale movement by `brush_strength`
+   - Delegate vertex movement to `SculptingManager`
+4. Implement `SculptTool::VertexPull`:
+   - On click: raycast to find nearest vertex to hit point
+   - On drag: move vertex along camera-relative direction (screen-space drag → world-space offset)
+   - Scale by `brush_strength`
+5. Implement `SculptTool::EdgePull`:
+   - On click: find the edge nearest to the hit point
+   - On drag: move both vertices of the edge along the averaged normal
+   - Scale by `brush_strength`
+6. Implement `SculptTool::Smooth`:
+   - Smooth brush: on click/drag, for each vertex within `brush_radius` of the hit point:
+     - Find all neighbor vertices (connected by edges in the index buffer)
+     - New position = lerp(current, average_of_neighbors, brush_strength)
+   - Apply iteratively while mouse is held (1 iteration per frame)
+   - This is a Laplacian smooth weighted by distance from cursor center (falloff)
+   ```rust
+   fn smooth_vertices(
+       vertices: &mut [Vertex],
+       indices: &[u32],
+       center: [f32; 3],
+       radius: f32,
+       strength: f32,
    ) {
-       let radius_sq = self.brush_radius * self.brush_radius;
-       // Build adjacency: for each vertex, find connected neighbors via shared edges
-       let adjacency = build_vertex_adjacency(&mesh.indices, mesh.vertices.len());
-
-       // Collect smoothed positions first (avoid mutating while iterating)
-       let mut new_positions: Vec<Option<[f32; 3]>> = vec![None; mesh.vertices.len()];
-
-       for (i, vertex) in mesh.vertices.iter().enumerate() {
-           let pos = Vec3::from(vertex.position);
-           let dist_sq = (pos - hit_point).length_squared();
-           if dist_sq > radius_sq { continue; }
-
-           // Distance falloff: 1.0 at center, 0.0 at edge
-           let falloff = 1.0 - (dist_sq / radius_sq).sqrt();
-           let weight = falloff * self.smooth_factor;
-
-           // Average with neighbor positions
+       let adjacency = build_adjacency(indices, vertices.len());
+       let affected: Vec<usize> = vertices.iter().enumerate()
+           .filter(|(_, v)| distance(v.position, center) < radius)
+           .map(|(i, _)| i)
+           .collect();
+       
+       let new_positions: Vec<[f32; 3]> = affected.iter().map(|&i| {
            let neighbors = &adjacency[i];
-           if neighbors.is_empty() { continue; }
-           let avg: Vec3 = neighbors.iter()
-               .map(|&ni| Vec3::from(mesh.vertices[ni].position))
-               .sum::<Vec3>() / neighbors.len() as f32;
-
-           let smoothed = pos.lerp(avg, weight);
-           new_positions[i] = Some(smoothed.into());
-       }
-
-       // Apply smoothed positions
-       for (i, new_pos) in new_positions.iter().enumerate() {
-           if let Some(p) = new_pos {
-               mesh.vertices[i].position = *p;
-           }
+           if neighbors.is_empty() { return vertices[i].position; }
+           let avg = neighbors.iter()
+               .map(|&n| vertices[n].position)
+               .fold([0.0; 3], |a, b| add3(a, b));
+           let avg = scale3(avg, 1.0 / neighbors.len() as f32);
+           let falloff = 1.0 - distance(vertices[i].position, center) / radius;
+           lerp3(vertices[i].position, avg, strength * falloff)
+       }).collect();
+       
+       for (idx, &vi) in affected.iter().enumerate() {
+           vertices[vi].position = new_positions[idx];
        }
    }
    ```
-
-4. Implement AddSphere operation:
+7. Implement `SculptTool::AddSphere`:
+   - On click: place a sphere SDF at the hit point with `brush_radius`
+   - Convert current mesh back to SDF (approximate: use mesh distance field, or store original SDF)
+   - Combine: `smooth_union(mesh_sdf, sphere_sdf, smooth_k)` using the existing function from `engine/src/render/sdf_operations.rs`
+   - Re-mesh via `MarchingCubes::new(resolution).generate_mesh(...)`
+   - Replace current mesh with new mesh
+   - Sphere SDF: `fn sphere_sdf(p: [f32; 3], center: [f32; 3], radius: f32) -> f32 { distance(p, center) - radius }`
+8. Implement `SculptTool::SubtractSphere`:
+   - Same as AddSphere but use `smooth_subtraction(mesh_sdf, sphere_sdf, smooth_k)`
+   - This carves a smooth hole/dent at the cursor position
+   - Re-mesh via MarchingCubes
+9. For AddSphere/SubtractSphere, maintain an SDF representation alongside the mesh:
+   - Store a list of SDF operations: `Vec<SdfOp>` where `SdfOp` is `Union(center, radius)` or `Subtract(center, radius)`
+   - On each add/subtract, append to the list and regenerate mesh from the full SDF chain
+   - This avoids the lossy mesh→SDF→mesh round-trip
    ```rust
-   /// Add a sphere at cursor position using SDF smooth_union + MarchingCubes remesh.
-   /// Converts current mesh to SDF, unions with sphere SDF, re-meshes.
-   pub fn add_sphere(
-       &self,
-       mesh: &Mesh,
-       center: Vec3,
-       radius: f32,
-       smoothness: f32,
-   ) -> Mesh {
-       // Convert current mesh to SDF representation
-       let mesh_sdf = mesh_to_sdf(mesh);
-       // Create sphere SDF at cursor position
-       let sphere_sdf = sdf_sphere(center, radius);
-       // Combine using smooth union from sdf_operations.rs
-       let combined = smooth_union(mesh_sdf, sphere_sdf, smoothness);
-       // Re-mesh using MarchingCubes
-       marching_cubes(&combined, grid_resolution)
+   enum SdfOp {
+       Base(Box<dyn Fn(f32, f32, f32) -> f32>),
+       Union { center: [f32; 3], radius: f32 },
+       Subtract { center: [f32; 3], radius: f32 },
    }
    ```
+10. Tool selection hotkeys:
+    - 1 (on numpad or with Shift): FaceExtrude
+    - 2: VertexPull
+    - 3: EdgePull
+    - 4: Smooth
+    - 5: AddSphere
+    - 6: SubtractSphere
+    - Note: these are Stage 3 specific — number keys 1-5 for stage switching only work outside of sculpt mode
+    - Use F1-F6 or Shift+1-6 to avoid conflict with stage switching
+11. Brush controls:
+    - `[` / `]`: decrease/increase `brush_radius` (step 0.1, clamp 0.1 to 3.0)
+    - `-` / `=`: decrease/increase `brush_strength` (step 0.05, clamp 0.05 to 1.0)
+    - Shift+`[` / Shift+`]`: decrease/increase `smooth_k` for SDF operations
+12. Visual feedback:
+    - Render brush cursor as a wireframe sphere at the hit point with `brush_radius`
+    - Highlight affected vertices/faces in a different color during hover
+    - Show tool name and parameter values in the UI panel
+13. Build vertex adjacency map for smooth tool:
+    ```rust
+    fn build_adjacency(indices: &[u32], vertex_count: usize) -> Vec<Vec<usize>> {
+        let mut adj = vec![vec![]; vertex_count];
+        for tri in indices.chunks(3) {
+            let (a, b, c) = (tri[0] as usize, tri[1] as usize, tri[2] as usize);
+            adj[a].push(b); adj[a].push(c);
+            adj[b].push(a); adj[b].push(c);
+            adj[c].push(a); adj[c].push(b);
+        }
+        for list in &mut adj { list.sort_unstable(); list.dedup(); }
+        adj
+    }
+    ```
 
-5. Implement SubtractSphere operation:
-   ```rust
-   /// Subtract a sphere at cursor position using SDF smooth_subtraction + MarchingCubes remesh.
-   pub fn subtract_sphere(
-       &self,
-       mesh: &Mesh,
-       center: Vec3,
-       radius: f32,
-       smoothness: f32,
-   ) -> Mesh {
-       let mesh_sdf = mesh_to_sdf(mesh);
-       let sphere_sdf = sdf_sphere(center, radius);
-       let carved = smooth_subtraction(sphere_sdf, mesh_sdf, smoothness);
-       marching_cubes(&carved, grid_resolution)
-   }
-   ```
+## Code Patterns
+Using existing engine SDF operations:
+```rust
+use crate::engine::render::sdf_operations::{smooth_union, smooth_subtraction};
+use crate::engine::render::marching_cubes::MarchingCubes;
+use crate::engine::render::sculpting::SculptingManager;
 
-6. Delegate FaceExtrude, VertexPull, EdgePull to existing SculptingManager:
-   ```rust
-   pub fn delegate_to_sculpting_manager(
-       &self,
-       sculpting_manager: &mut SculptingManager,
-       tool: SculptTool,
-       // ... input parameters
-   ) {
-       match tool {
-           SculptTool::FaceExtrude => sculpting_manager.extrude_face(/*...*/),
-           SculptTool::VertexPull => sculpting_manager.pull_vertex(/*...*/),
-           SculptTool::EdgePull => sculpting_manager.pull_edge(/*...*/),
-           _ => {} // Smooth, AddSphere, SubtractSphere handled locally
-       }
-   }
-   ```
+// AddSphere: combine existing SDF with a new sphere
+fn add_sphere_op(
+    base_sdf: &dyn Fn(f32, f32, f32) -> f32,
+    center: [f32; 3],
+    radius: f32,
+    k: f32,
+) -> impl Fn(f32, f32, f32) -> f32 + '_ {
+    move |x, y, z| {
+        let d1 = base_sdf(x, y, z);
+        let d2 = ((x - center[0]).powi(2) + (y - center[1]).powi(2) + (z - center[2]).powi(2)).sqrt() - radius;
+        smooth_union(d1, d2, k)
+    }
+}
+```
 
-7. Build vertex adjacency helper:
-   ```rust
-   fn build_vertex_adjacency(indices: &[u32], vertex_count: usize) -> Vec<Vec<usize>> {
-       let mut adj = vec![Vec::new(); vertex_count];
-       for tri in indices.chunks(3) {
-           let (a, b, c) = (tri[0] as usize, tri[1] as usize, tri[2] as usize);
-           // Add bidirectional edges
-           if !adj[a].contains(&b) { adj[a].push(b); adj[b].push(a); }
-           if !adj[b].contains(&c) { adj[b].push(c); adj[c].push(b); }
-           if !adj[a].contains(&c) { adj[a].push(c); adj[c].push(a); }
-       }
-       adj
-   }
-   ```
-
-8. Wire into `mod.rs`: add `pub mod sculpt_bridge;`, add `sculpt: SculptBridge` field to AssetEditor, route Stage 3 input events and render calls to SculptBridge.
+Moller-Trumbore ray-triangle intersection:
+```rust
+fn ray_triangle_intersect(
+    origin: [f32; 3], dir: [f32; 3],
+    v0: [f32; 3], v1: [f32; 3], v2: [f32; 3],
+) -> Option<(f32, f32, f32)> {  // (t, u, v)
+    let edge1 = sub3(v1, v0);
+    let edge2 = sub3(v2, v0);
+    let h = cross3(dir, edge2);
+    let a = dot3(edge1, h);
+    if a.abs() < 1e-8 { return None; }
+    let f = 1.0 / a;
+    let s = sub3(origin, v0);
+    let u = f * dot3(s, h);
+    if !(0.0..=1.0).contains(&u) { return None; }
+    let q = cross3(s, edge1);
+    let v = f * dot3(dir, q);
+    if v < 0.0 || u + v > 1.0 { return None; }
+    let t = f * dot3(edge2, q);
+    if t > 1e-8 { Some((t, u, v)) } else { None }
+}
+```
 
 ## Acceptance Criteria
-- [ ] `sculpt_bridge.rs` exists with `SculptBridge` struct and `SculptTool` enum
-- [ ] SculptTool enum has FaceExtrude, VertexPull, EdgePull, Smooth, AddSphere, SubtractSphere variants
-- [ ] Face extrusion from SculptingManager is accessible through the bridge
-- [ ] AddSphere uses SDF smooth_union at cursor position + MarchingCubes remesh
-- [ ] SubtractSphere uses SDF smooth_subtraction + MarchingCubes remesh
-- [ ] Smooth brush finds vertices within radius and averages with neighbor positions using distance falloff
-- [ ] Vertex adjacency is built from triangle indices
-- [ ] SculptBridge is wired into mod.rs for Stage 3 input routing
-- [ ] `cargo check` passes with 0 errors
+- [ ] `sculpt_bridge.rs` exists with `SculptBridge` struct wrapping `SculptingManager`
+- [ ] `SculptTool` enum has all six variants: FaceExtrude, VertexPull, EdgePull, Smooth, AddSphere, SubtractSphere
+- [ ] Ray-mesh intersection (Moller-Trumbore) correctly finds clicked face/vertex
+- [ ] FaceExtrude: push/pull face along its normal on drag
+- [ ] VertexPull: move individual vertex on drag
+- [ ] EdgePull: move edge vertices along averaged normal on drag
+- [ ] Smooth brush: averages vertex positions with neighbors within radius, with distance falloff
+- [ ] AddSphere: `smooth_union` with sphere SDF at cursor, re-mesh via MarchingCubes
+- [ ] SubtractSphere: `smooth_subtraction` with sphere SDF at cursor, re-mesh via MarchingCubes
+- [ ] SDF operation history maintained for lossless add/subtract chains
+- [ ] Tool selection via F1-F6 or Shift+1-6
+- [ ] Brush radius adjustable with `[` / `]`
+- [ ] Brush strength adjustable with `-` / `=`
+- [ ] Visual brush cursor (wireframe sphere) at hit point
+- [ ] `cargo check --bin battle_editor` compiles with 0 errors
 
 ## Verification Commands
-- `test -f /home/hungaromakker/battle_tok/src/game/asset_editor/sculpt_bridge.rs && echo EXISTS` -- expected: EXISTS
-- `grep -c 'SculptBridge\|SculptTool' /home/hungaromakker/battle_tok/src/game/asset_editor/sculpt_bridge.rs` -- expected: > 0
-- `grep -c 'AddSphere\|SubtractSphere\|Smooth\|FaceExtrude' /home/hungaromakker/battle_tok/src/game/asset_editor/sculpt_bridge.rs` -- expected: > 0
-- `grep -c 'smooth_union\|smooth_subtraction\|marching_cubes\|build_vertex_adjacency' /home/hungaromakker/battle_tok/src/game/asset_editor/sculpt_bridge.rs` -- expected: > 0
-- `grep -c 'pub mod sculpt_bridge' /home/hungaromakker/battle_tok/src/game/asset_editor/mod.rs` -- expected: > 0
-- `cd /home/hungaromakker/battle_tok && cargo check 2>&1; echo EXIT:$?` -- expected: EXIT:0
+- `cmd`: `cargo check --bin battle_editor 2>&1; echo EXIT:$?`
+  `expect_contains`: `EXIT:0`
+  `description`: `battle_editor compiles with sculpt bridge`
+- `cmd`: `cargo check --bin battle_arena 2>&1; echo EXIT:$?`
+  `expect_contains`: `EXIT:0`
+  `description`: `battle_arena still compiles`
+- `cmd`: `test -f src/game/asset_editor/sculpt_bridge.rs && echo EXISTS`
+  `expect_contains`: `EXISTS`
+  `description`: `sculpt_bridge.rs file exists`
+- `cmd`: `grep -c 'pub struct SculptBridge' src/game/asset_editor/sculpt_bridge.rs`
+  `expect_gt`: 0
+  `description`: `SculptBridge struct defined`
+- `cmd`: `grep -c 'SculptTool' src/game/asset_editor/sculpt_bridge.rs`
+  `expect_gt`: 3
+  `description`: `SculptTool enum defined and used`
+- `cmd`: `grep -c 'FaceExtrude\|VertexPull\|EdgePull\|Smooth\|AddSphere\|SubtractSphere' src/game/asset_editor/sculpt_bridge.rs`
+  `expect_gt`: 5
+  `description`: `All six sculpt tool variants present`
+- `cmd`: `grep -c 'smooth_union\|smooth_subtraction' src/game/asset_editor/sculpt_bridge.rs`
+  `expect_gt`: 1
+  `description`: `SDF smooth operations used for add/subtract sphere`
+- `cmd`: `grep -c 'SculptingManager' src/game/asset_editor/sculpt_bridge.rs`
+  `expect_gt`: 0
+  `description`: `Wraps existing SculptingManager`
+- `cmd`: `grep -c 'MarchingCubes\|generate_mesh' src/game/asset_editor/sculpt_bridge.rs`
+  `expect_gt`: 0
+  `description`: `MarchingCubes used for re-meshing after SDF operations`
+- `cmd`: `grep -c 'pub mod sculpt_bridge' src/game/asset_editor/mod.rs`
+  `expect_gt`: 0
+  `description`: `sculpt_bridge module registered`
 
 ## Success Looks Like
-The artist enters Stage 3 (Sculpt) with an extruded mesh. They select FaceExtrude and click a face -- it pushes outward, creating a protrusion. They switch to AddSphere, set radius to 0.3, and click on the trunk of a tree mesh -- a smooth bump appears where they clicked, blending seamlessly into the trunk surface. They use SubtractSphere to carve a small hollow. The smooth brush lets them soften any harsh transitions. Every operation updates the mesh in real-time, and the sculpted geometry looks organic and natural.
+In Stage 3 (Sculpt), the extruded mesh from Stage 2 is displayed with the orbit camera. Pressing F1 activates FaceExtrude — clicking a face and dragging pushes it outward or inward. F4 activates Smooth — painting over jagged marching cubes edges softens them into clean curves. F5 activates AddSphere — clicking on the mesh surface blends a smooth sphere into the geometry, like adding a blob of clay. F6 activates SubtractSphere — clicking carves a smooth dent or hole. The brush cursor (wireframe sphere) follows the mouse on the mesh surface. Bracket keys resize the brush. The mesh updates in real-time during sculpting.
 
 ## Dependencies
-- Depends on: US-P4-006 (needs a 3D mesh from the extrusion stage to sculpt)
+- Depends on: US-P4-006
 
 ## Complexity
-- Complexity: normal
-- Min iterations: 1
+- Complexity: complex
+- Min iterations: 2

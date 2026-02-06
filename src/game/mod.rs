@@ -24,6 +24,9 @@ pub mod systems;
 // Arena configuration
 pub mod config;
 
+// Asset editor (standalone binary module)
+pub mod asset_editor;
+
 // New Stalberg-style building and economy systems
 pub mod building;
 pub mod economy;

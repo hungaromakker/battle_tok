@@ -1,49 +1,42 @@
 # US-P4-012: Asset Library Panel
 
 ## Description
-Create `src/game/asset_editor/library.rs` with an `AssetLibrary` struct that provides a browsable, filterable overlay panel for managing saved `.btasset` files. The panel displays assets in a grid layout with category tabs and search filtering. It reads and writes `assets/world/library.json` as a persistent index. The panel is toggled with F10 and uses the existing `add_quad()` and `draw_text()` UI primitives. The asset editor is a **separate binary** (`battle_editor`); `battle_arena.rs` is never modified.
+Create `src/game/asset_editor/library.rs` with an `AssetLibrary` struct that provides a browsable, filterable overlay panel for managing saved `.btasset` files. The panel displays assets in a grid layout with category tabs and search filtering. It reads and writes `assets/world/library.json` as a persistent index. The panel is toggled with F10 and uses the existing `add_quad()` and `draw_text()` UI primitives from `src/game/ui/text.rs`. The asset editor is a **separate binary** (`battle_editor`); `battle_arena.rs` is never modified.
 
 ## The Core Concept / Why This Matters
-As artists create dozens of assets (trees, rocks, grass, structures), they need a way to browse, find, and select them without navigating the filesystem. The library panel acts as a visual catalog — organized by category, searchable by name and tags, displaying key stats like vertex count and bounding box size. When an asset is selected from the library, it can be loaded into the editor for modification or chosen for world placement. This closes the loop between creation and reuse, making the asset pipeline self-contained within the editor.
+As artists create dozens of assets (trees, rocks, grass, structures), they need a way to browse, find, and select them without navigating the filesystem. The library panel acts as a visual catalog organized by category, searchable by name and tags, displaying key stats like vertex count and bounding box size. When an asset is selected from the library, it can be loaded into the editor for modification or chosen for world placement. This closes the loop between creation and reuse, making the asset pipeline self-contained within the editor.
 
 ## Goal
 Create `src/game/asset_editor/library.rs` with an `AssetLibrary` struct providing a grid-based overlay panel with category tabs, search filtering, and asset selection, persisted to `assets/world/library.json`.
 
 ## Files to Create/Modify
-- **Create** `src/game/asset_editor/library.rs` — `AssetLibrary`, `LibraryEntry`, `LibraryAction` types, panel rendering and interaction logic
-- **Modify** `src/game/asset_editor/mod.rs` — Add `pub mod library;`, add `library: AssetLibrary` field to `AssetEditor`, route F10 toggle and panel input
+- **Create** `src/game/asset_editor/library.rs` - `AssetLibrary`, `LibraryEntry`, `LibraryAction` types, panel rendering and interaction logic
+- **Modify** `src/game/asset_editor/mod.rs` - Add `pub mod library;`, add `library: AssetLibrary` field to `AssetEditor`, route F10 toggle and panel input
 
 ## Implementation Steps
-1. Define `LibraryEntry` struct:
-   ```rust
-   #[derive(Clone, Debug, Serialize, Deserialize)]
-   pub struct LibraryEntry {
-       pub id: String,              // unique identifier
-       pub name: String,            // display name
-       pub category: String,        // tree, rock, grass, structure, prop, decoration
-       pub tags: Vec<String>,       // searchable tags
-       pub path: String,            // relative path to .btasset file
-       pub vertex_count: u32,       // for display
-       pub bounds_size: [f32; 3],   // bounding box dimensions
-   }
-   ```
+1. Define `LibraryEntry` struct with `Serialize`/`Deserialize`:
+   - `id: String` - unique identifier
+   - `name: String` - display name
+   - `category: String` - tree, rock, grass, structure, prop, decoration
+   - `tags: Vec<String>` - searchable tags
+   - `path: String` - relative path to .btasset file
+   - `vertex_count: u32` - for display
+   - `bounds_size: [f32; 3]` - bounding box dimensions for display
 2. Define `AssetLibrary` struct:
-   - `entries: Vec<LibraryEntry>` — all known assets
-   - `visible: bool` — panel open/closed
-   - `selected_category: Option<String>` — active filter tab
-   - `search_query: String` — text search filter
-   - `selected_index: Option<usize>` — highlighted entry in filtered list
-   - `scroll_offset: f32` — for scrolling long lists
+   - `entries: Vec<LibraryEntry>` - all known assets
+   - `visible: bool` - panel open/closed
+   - `selected_category: Option<String>` - active filter tab
+   - `search_query: String` - text search filter
+   - `selected_index: Option<usize>` - highlighted entry in filtered list
+   - `scroll_offset: f32` - for scrolling long lists
 3. Define `LibraryAction` enum: `Select(usize)`, `LoadForEdit(String)`, `Delete(String)`, `Close`
 4. Implement `load_library(path) -> Vec<LibraryEntry>`:
-   - Read `assets/world/library.json`
-   - Deserialize with `serde_json`
-   - If file doesn't exist, return empty Vec
+   - Read `assets/world/library.json`, deserialize with `serde_json`
+   - If file does not exist, return empty Vec
 5. Implement `save_library(path, entries)`:
-   - Serialize entries to pretty JSON
-   - Write to `assets/world/library.json`
+   - Serialize entries to pretty JSON, write to `assets/world/library.json`
 6. Implement `add_entry(&mut self, entry: LibraryEntry)`:
-   - Push to `entries`, save library
+   - Push to `entries`, call `save_library()`
 7. Implement `filtered_entries(&self) -> Vec<&LibraryEntry>`:
    - Filter by `selected_category` if set
    - Filter by `search_query` matching name or tags (case-insensitive)
@@ -51,17 +44,29 @@ Create `src/game/asset_editor/library.rs` with an `AssetLibrary` struct providin
    - Panel background: semi-transparent dark overlay on right side of screen
    - Category tabs at top: "All", "Trees", "Rocks", "Grass", "Structures", "Props", "Decorations"
    - Grid layout: 4 columns, 120x120px cells
-   - Each cell shows: asset name (truncated), vertex count, category icon placeholder
+   - Each cell shows: asset name (truncated), vertex count, category label
    - Selected cell has highlighted border
 9. Implement click handling:
    - Map mouse position to grid cell index
    - Map clicks on category tabs to filter changes
-   - Click on asset selects it for placement or loading
+   - Click on asset cell selects it for placement or loading
 10. Wire into `mod.rs`: F10 toggles `library.visible`, panel renders as overlay on top of current stage. Auto-add entry when `save_btasset()` completes.
 
 ## Code Patterns
 ```rust
 use crate::game::ui::text::{add_quad, draw_text};
+use serde::{Serialize, Deserialize};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LibraryEntry {
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    pub tags: Vec<String>,
+    pub path: String,
+    pub vertex_count: u32,
+    pub bounds_size: [f32; 3],
+}
 
 pub struct AssetLibrary {
     pub entries: Vec<LibraryEntry>,
@@ -81,9 +86,10 @@ impl AssetLibrary {
         self.entries.iter().filter(|e| {
             let cat_match = self.selected_category.as_ref()
                 .map_or(true, |c| &e.category == c);
-            let search_match = self.search_query.is_empty()
-                || e.name.to_lowercase().contains(&self.search_query.to_lowercase())
-                || e.tags.iter().any(|t| t.to_lowercase().contains(&self.search_query.to_lowercase()));
+            let query = self.search_query.to_lowercase();
+            let search_match = query.is_empty()
+                || e.name.to_lowercase().contains(&query)
+                || e.tags.iter().any(|t| t.to_lowercase().contains(&query));
             cat_match && search_match
         }).collect()
     }
@@ -92,7 +98,7 @@ impl AssetLibrary {
         if !self.visible { return; }
         // Panel background
         add_quad(quads, panel_x, panel_y, panel_w, panel_h, [0.1, 0.1, 0.12, 0.95]);
-        // Category tabs, grid cells, labels...
+        // Render category tabs, grid cells, labels...
     }
 }
 ```
