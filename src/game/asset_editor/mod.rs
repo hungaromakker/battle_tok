@@ -5,6 +5,8 @@
 //! Draw2D -> Extrude -> Sculpt -> Color -> Save.
 
 pub mod canvas_2d;
+pub mod extrude;
+pub mod image_trace;
 pub mod orbit_camera;
 pub mod ui_panels;
 pub mod undo;
