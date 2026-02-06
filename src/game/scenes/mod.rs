@@ -4,4 +4,4 @@
 
 pub mod battle_scene;
 
-pub use battle_scene::BattleScene;
+pub use battle_scene::{BattleScene, ExplosionEvent, WeaponMode};

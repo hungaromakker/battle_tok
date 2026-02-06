@@ -533,8 +533,26 @@ impl BuildingPhysics {
         // Collect position updates to apply after state processing
         let mut position_updates: Vec<(u32, Vec3)> = Vec::new();
         let mut blocks_for_collision_check: Vec<(u32, BuildingBlockShape)> = Vec::new();
+        let velocity_threshold_sq = self.config.velocity_threshold * self.config.velocity_threshold;
 
         for block_id in block_ids {
+            // Early sleep path: for static supported blocks, avoid AABB/shape work entirely.
+            let can_sleep = match self.states.get(&block_id) {
+                Some(state) => {
+                    (state.grounded || state.structurally_supported)
+                        && state.velocity.length_squared() < velocity_threshold_sq
+                        && state.accumulated_force.length_squared() < 0.000_001
+                }
+                None => continue,
+            };
+            if can_sleep {
+                if let Some(state) = self.states.get_mut(&block_id) {
+                    state.velocity = Vec3::ZERO;
+                    state.reset_frame();
+                }
+                continue;
+            }
+
             // Get block data we need (copy to avoid borrow issues)
             let (position, aabb, shape) = {
                 let Some(block) = manager.get_block(block_id) else {

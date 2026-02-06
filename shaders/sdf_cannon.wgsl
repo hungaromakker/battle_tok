@@ -51,13 +51,14 @@ const MAX_DIST: f32 = 500.0;
 const SURFACE_DIST: f32 = 0.01;  // Surface hit threshold
 
 // Cannon dimensions (must match cannon.rs)
-const BARREL_RADIUS: f32 = 0.3;
+const BARREL_RADIUS: f32 = 0.45;
 const BARREL_LENGTH: f32 = 4.0;
-const BODY_HALF_X: f32 = 1.0;     // Half-extent X (total 2.0)
-const BODY_HALF_Y: f32 = 0.5;     // Half-extent Y (total 1.0)
-const BODY_HALF_Z: f32 = 0.75;    // Half-extent Z (total 1.5)
-const BODY_ROUNDING: f32 = 0.1;   // Edge rounding radius
-const SMOOTH_K: f32 = 0.3;        // Smooth union blending factor
+const BODY_HALF_X: f32 = 1.25;    // Half-extent X (total 2.5)
+const BODY_HALF_Y: f32 = 0.70;    // Half-extent Y (total 1.4)
+const BODY_HALF_Z: f32 = 1.10;    // Half-extent Z (total 2.2)
+const BODY_ROUNDING: f32 = 0.18;  // Edge rounding radius
+const WHEEL_RADIUS: f32 = 0.42;
+const SMOOTH_K: f32 = 0.28;       // Smooth union blending factor
 
 // Material color (bronze/iron cannon)
 const CANNON_COLOR: vec3<f32> = vec3<f32>(0.45, 0.35, 0.25);
@@ -161,32 +162,35 @@ fn sdf_cannon(world_p: vec3<f32>) -> f32 {
     // Transform world point to cannon local space
     let local_p = world_p - cannon.world_pos;
 
-    // Body: Rounded box at body center (elevated by half-height)
-    // Body sits at y = BODY_HALF_Y relative to cannon position
-    let body_center = vec3<f32>(0.0, BODY_HALF_Y, 0.0);
+    // Carriage/body
+    let body_center = vec3<f32>(0.0, BODY_HALF_Y * 0.95, 0.0);
     let body_local = local_p - body_center;
-    let body_d = sdf_rounded_box(body_local, vec3<f32>(BODY_HALF_X, BODY_HALF_Y, BODY_HALF_Z), BODY_ROUNDING);
+    let body_d = sdf_rounded_box(
+        body_local,
+        vec3<f32>(BODY_HALF_X, BODY_HALF_Y, BODY_HALF_Z),
+        BODY_ROUNDING,
+    );
 
-    // Barrel: Cylinder extending from the body
-    // The barrel is rotated by the barrel_rotation quaternion
-    // Default orientation: barrel along Z axis (pointing forward)
+    // Wheel hubs
+    let wheel_y = 0.30;
+    let wheel_offset_x = BODY_HALF_X - 0.12;
+    let wheel_l = sdf_sphere(local_p - vec3<f32>(-wheel_offset_x, wheel_y, 0.0), WHEEL_RADIUS);
+    let wheel_r = sdf_sphere(local_p - vec3<f32>( wheel_offset_x, wheel_y, 0.0), WHEEL_RADIUS);
 
-    // Barrel attachment point is at body center, offset forward
-    let barrel_attach = vec3<f32>(0.0, BODY_HALF_Y, 0.0);
-    let barrel_local = local_p - barrel_attach;
+    // Barrel from attachment point along cannon-forward axis
+    let barrel_attach = vec3<f32>(0.0, BODY_HALF_Y + 0.08, BODY_HALF_Z * 0.45);
+    let barrel_dir = normalize(quat_rotate(cannon.barrel_rotation, vec3<f32>(0.0, 0.0, -1.0)));
+    let barrel_start = barrel_attach + barrel_dir * 0.20;
+    let barrel_end = barrel_start + barrel_dir * BARREL_LENGTH;
+    let barrel_d = sdf_capped_cylinder_ab(local_p, barrel_start, barrel_end, BARREL_RADIUS);
 
-    // Rotate point by inverse barrel rotation to evaluate in barrel's local space
-    let barrel_rotated = quat_rotate_inv(cannon.barrel_rotation, barrel_local);
+    let breech_center = barrel_attach - barrel_dir * 0.18;
+    let breech_d = sdf_sphere(local_p - breech_center, BARREL_RADIUS * 1.25);
 
-    // The barrel is a cylinder along Y axis after rotation
-    // We need to offset by half the barrel length since cylinder is centered
-    let barrel_offset = vec3<f32>(0.0, BARREL_LENGTH * 0.5, 0.0);
-    let barrel_p = barrel_rotated - barrel_offset;
-    let barrel_d = sdf_cylinder(barrel_p, BARREL_LENGTH * 0.5, BARREL_RADIUS);
-
-    // Combine with smooth union for organic blending
-    let d = smooth_min(body_d, barrel_d, SMOOTH_K);
-
+    var d = smooth_min(body_d, barrel_d, SMOOTH_K);
+    d = smooth_min(d, breech_d, SMOOTH_K * 0.8);
+    d = min(d, wheel_l);
+    d = min(d, wheel_r);
     return d;
 }
 

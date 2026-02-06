@@ -14,13 +14,13 @@ const MAX_CASCADE_LEVELS: i32 = 3;
 const FALLING_PRISM_MAX_LIFETIME: f32 = 10.0;
 
 /// Debris particles spawned when a prism is directly destroyed.
-const DEBRIS_PER_DESTROY: usize = 8;
+const DEBRIS_PER_DESTROY: usize = 14;
 
 /// Debris particles spawned when a falling prism hits the ground.
-const DEBRIS_PER_GROUND_IMPACT: usize = 12;
+const DEBRIS_PER_GROUND_IMPACT: usize = 18;
 
 /// Debris particles spawned when a falling prism collides with a wall prism.
-const DEBRIS_PER_COLLISION: usize = 6;
+const DEBRIS_PER_COLLISION: usize = 10;
 
 /// Manages the full destruction lifecycle: destroy → cascade → fall → debris.
 ///

@@ -122,10 +122,13 @@ pub mod scenes;
 pub use state::GameState;
 
 // Systems re-exports
-pub use systems::{BuildingSystem, CollisionSystem, ProjectileSystem, ProjectileUpdate};
+pub use systems::{
+    BuildingSystem, BuildingSystemV2, CollisionSystem, ProjectileKind, ProjectileSystem,
+    ProjectileUpdate,
+};
 
 // Scene re-exports
-pub use scenes::BattleScene;
+pub use scenes::{BattleScene, ExplosionEvent, WeaponMode};
 
 // Config re-exports
 pub use config::VisualConfig;

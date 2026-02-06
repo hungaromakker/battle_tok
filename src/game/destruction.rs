@@ -8,6 +8,16 @@ use super::terrain::terrain_height_at;
 
 /// Gravity constant (m/s²)
 pub const GRAVITY: f32 = 9.81;
+const WIND_BASE_STRENGTH: f32 = 1.1;
+const MAX_DEBRIS_UPWARD_SPEED: f32 = 2.8;
+
+fn sample_wind(position: Vec3, time: f32) -> Vec3 {
+    let wx =
+        (position.z * 0.21 + time * 0.9).sin() * 0.7 + (position.x * 0.07 - time * 0.4).cos() * 0.3;
+    let wz =
+        (position.x * 0.17 - time * 0.8).cos() * 0.7 + (position.z * 0.05 + time * 0.3).sin() * 0.3;
+    Vec3::new(wx, 0.0, wz) * WIND_BASE_STRENGTH
+}
 
 /// A hex-prism that is falling due to lost support
 #[derive(Clone)]
@@ -45,15 +55,22 @@ impl FallingPrism {
         }
 
         self.lifetime += delta_time;
+        let wind = sample_wind(self.position, self.lifetime) * 0.22;
+        self.velocity += wind * delta_time;
         self.velocity.y -= GRAVITY * delta_time;
+        let air_damp = (1.0 - 0.9 * delta_time).clamp(0.0, 1.0);
+        self.velocity *= air_damp;
         self.position += self.velocity * delta_time;
+        let ang_damp = (1.0 - 1.5 * delta_time).clamp(0.0, 1.0);
+        self.angular_velocity *= ang_damp;
         self.rotation += self.angular_velocity * delta_time;
 
         let ground_height = terrain_height_at(self.position.x, self.position.z, 0.0);
         if self.position.y < ground_height + 0.1 {
             self.position.y = ground_height + 0.1;
             self.grounded = true;
-            self.velocity = Vec3::ZERO;
+            self.velocity = Vec3::new(self.velocity.x * 0.18, 0.0, self.velocity.z * 0.18);
+            self.angular_velocity *= 0.2;
         }
     }
 }
@@ -71,7 +88,11 @@ pub struct DebrisParticle {
 
 impl DebrisParticle {
     pub fn new(position: Vec3, velocity: Vec3, material: u8) -> Self {
-        let size = 0.03 + (position.x * 12.9898).sin().abs() * 0.05;
+        let size = if material == 10 {
+            0.06 + (position.x * 12.9898).sin().abs() * 0.08
+        } else {
+            0.015 + (position.x * 12.9898).sin().abs() * 0.03
+        };
         let color = get_material_color(material);
 
         Self {
@@ -79,29 +100,41 @@ impl DebrisParticle {
             velocity,
             size,
             color,
-            lifetime: 3.0 + (position.z * 78.233).sin().abs() * 2.0,
+            lifetime: if material == 10 {
+                1.7 + (position.z * 78.233).sin().abs() * 1.1
+            } else {
+                2.2 + (position.z * 78.233).sin().abs() * 1.4
+            },
             grounded: false,
         }
     }
 
     pub fn update(&mut self, delta_time: f32) {
         if self.grounded {
-            self.lifetime -= delta_time;
+            self.lifetime -= delta_time * 1.3;
             return;
         }
 
         self.lifetime -= delta_time;
-        self.velocity.y -= GRAVITY * delta_time;
-        self.velocity *= 0.99;
+        let wind = sample_wind(self.position, self.lifetime.max(0.0)) * 0.75;
+        self.velocity += wind * delta_time;
+        self.velocity.y -= GRAVITY * 1.22 * delta_time;
+        let air_damp = (1.0 - 2.2 * delta_time).clamp(0.0, 1.0);
+        self.velocity *= air_damp;
         self.position += self.velocity * delta_time;
 
         let ground_height = terrain_height_at(self.position.x, self.position.z, 0.0);
         if self.position.y < ground_height + self.size {
             self.position.y = ground_height + self.size;
-            if self.velocity.y.abs() > 0.5 {
-                self.velocity.y *= -0.3;
-                self.velocity.x *= 0.8;
-                self.velocity.z *= 0.8;
+            if self.velocity.y.abs() > 0.35 {
+                // Tiny settle bounce - enough to feel physical, not enough to fly away.
+                self.velocity.y = self.velocity.y.abs() * 0.08;
+                self.velocity.x *= 0.55;
+                self.velocity.z *= 0.55;
+                if self.velocity.length() < 0.55 {
+                    self.grounded = true;
+                    self.velocity = Vec3::ZERO;
+                }
             } else {
                 self.grounded = true;
                 self.velocity = Vec3::ZERO;
@@ -136,19 +169,27 @@ pub fn spawn_debris(position: Vec3, material: u8, count: usize) -> Vec<DebrisPar
     for i in 0..count {
         let angle = (i as f32 / count as f32) * std::f32::consts::TAU;
         let height_offset = ((i as f32 * 0.618).fract() - 0.5) * 0.3;
-        let speed = 2.0 + (i as f32 * 1.618).fract() * 4.0;
+        let speed = if material == 10 {
+            1.6 + (i as f32 * 1.618).fract() * 3.2
+        } else {
+            0.8 + (i as f32 * 1.618).fract() * 2.2
+        };
+        let up_speed = if material == 10 {
+            0.9 + (i as f32 * 0.414).fract() * 1.9
+        } else {
+            0.35 + (i as f32 * 0.414).fract() * 1.2
+        };
+        let wind_bias = sample_wind(position, i as f32 * 0.07) * 0.35;
 
-        let velocity = Vec3::new(
-            angle.cos() * speed,
-            speed * 0.5 + (i as f32 * 0.414).fract() * 3.0,
-            angle.sin() * speed,
-        );
+        let mut velocity =
+            Vec3::new(angle.cos() * speed, up_speed, angle.sin() * speed) + wind_bias;
+        velocity.y = velocity.y.min(MAX_DEBRIS_UPWARD_SPEED);
 
         let spawn_pos = position
             + Vec3::new(
-                (angle + 0.5).cos() * 0.1,
+                (angle + 0.5).cos() * 0.08,
                 height_offset,
-                (angle + 0.5).sin() * 0.1,
+                (angle + 0.5).sin() * 0.08,
             );
 
         particles.push(DebrisParticle::new(spawn_pos, velocity, material));

@@ -17,6 +17,7 @@
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Quat, Vec3};
+use std::collections::HashMap;
 use std::f32::consts::PI;
 
 // ============================================================================
@@ -966,7 +967,123 @@ impl BuildingBlockManager {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
 
+        // Fast path for axis-aligned unit cubes: hidden-face culling.
+        // This dramatically reduces triangle count in dense fort builds.
+        let mut voxel_cubes: HashMap<(i32, i32, i32), (Vec3, u8)> = HashMap::new();
+        let mut fallback_blocks: Vec<&BuildingBlock> = Vec::new();
+
         for block in &self.blocks {
+            if Self::is_voxel_cube(block) {
+                let cell = (
+                    block.position.x.round() as i32,
+                    block.position.y.round() as i32,
+                    block.position.z.round() as i32,
+                );
+                voxel_cubes
+                    .entry(cell)
+                    .or_insert((block.position, block.material));
+            } else {
+                fallback_blocks.push(block);
+            }
+        }
+
+        if !voxel_cubes.is_empty() {
+            // (neighbor_offset, normal, face corners in cube local [-1..1] space)
+            let faces: [([i32; 3], [f32; 3], [[f32; 3]; 4]); 6] = [
+                (
+                    [1, 0, 0],
+                    [1.0, 0.0, 0.0],
+                    [
+                        [1.0, -1.0, -1.0],
+                        [1.0, 1.0, -1.0],
+                        [1.0, 1.0, 1.0],
+                        [1.0, -1.0, 1.0],
+                    ],
+                ),
+                (
+                    [-1, 0, 0],
+                    [-1.0, 0.0, 0.0],
+                    [
+                        [-1.0, -1.0, 1.0],
+                        [-1.0, 1.0, 1.0],
+                        [-1.0, 1.0, -1.0],
+                        [-1.0, -1.0, -1.0],
+                    ],
+                ),
+                (
+                    [0, 1, 0],
+                    [0.0, 1.0, 0.0],
+                    [
+                        [-1.0, 1.0, -1.0],
+                        [-1.0, 1.0, 1.0],
+                        [1.0, 1.0, 1.0],
+                        [1.0, 1.0, -1.0],
+                    ],
+                ),
+                (
+                    [0, -1, 0],
+                    [0.0, -1.0, 0.0],
+                    [
+                        [-1.0, -1.0, 1.0],
+                        [-1.0, -1.0, -1.0],
+                        [1.0, -1.0, -1.0],
+                        [1.0, -1.0, 1.0],
+                    ],
+                ),
+                (
+                    [0, 0, 1],
+                    [0.0, 0.0, 1.0],
+                    [
+                        [-1.0, -1.0, 1.0],
+                        [1.0, -1.0, 1.0],
+                        [1.0, 1.0, 1.0],
+                        [-1.0, 1.0, 1.0],
+                    ],
+                ),
+                (
+                    [0, 0, -1],
+                    [0.0, 0.0, -1.0],
+                    [
+                        [1.0, -1.0, -1.0],
+                        [-1.0, -1.0, -1.0],
+                        [-1.0, 1.0, -1.0],
+                        [1.0, 1.0, -1.0],
+                    ],
+                ),
+            ];
+
+            for (&cell, &(position, material)) in &voxel_cubes {
+                let color = material_color(material);
+
+                for (neighbor_offset, normal_arr, corners) in &faces {
+                    let neighbor = (
+                        cell.0 + neighbor_offset[0],
+                        cell.1 + neighbor_offset[1],
+                        cell.2 + neighbor_offset[2],
+                    );
+                    if voxel_cubes.contains_key(&neighbor) {
+                        continue;
+                    }
+
+                    let base_idx = vertices.len() as u32;
+                    let normal = Vec3::new(normal_arr[0], normal_arr[1], normal_arr[2]);
+                    for corner in corners {
+                        let local = Vec3::new(corner[0], corner[1], corner[2]) * 0.5;
+                        vertices.push(BlockVertex::new(position + local, normal, color));
+                    }
+                    indices.extend_from_slice(&[
+                        base_idx,
+                        base_idx + 1,
+                        base_idx + 2,
+                        base_idx,
+                        base_idx + 2,
+                        base_idx + 3,
+                    ]);
+                }
+            }
+        }
+
+        for block in fallback_blocks {
             let (block_verts, block_idx) = block.generate_mesh();
             let base_idx = vertices.len() as u32;
             vertices.extend(block_verts);
@@ -974,6 +1091,22 @@ impl BuildingBlockManager {
         }
 
         (vertices, indices)
+    }
+
+    fn is_voxel_cube(block: &BuildingBlock) -> bool {
+        let BuildingBlockShape::Cube { half_extents } = block.shape else {
+            return false;
+        };
+
+        let is_unit = (half_extents.x - 0.5).abs() <= 1e-4
+            && (half_extents.y - 0.5).abs() <= 1e-4
+            && (half_extents.z - 0.5).abs() <= 1e-4;
+        if !is_unit {
+            return false;
+        }
+
+        // q and -q represent the same orientation, so use |dot|.
+        block.rotation.dot(Quat::IDENTITY).abs() >= 0.9999
     }
 
     /// Find blocks that intersect with a given AABB
@@ -990,6 +1123,24 @@ impl BuildingBlockManager {
         let mut closest: Option<(u32, f32)> = None;
 
         for block in &self.blocks {
+            // Fast AABB lower-bound reject before expensive SDF eval.
+            let aabb = block.aabb();
+            let clamped = Vec3::new(
+                point.x.clamp(aabb.min.x, aabb.max.x),
+                point.y.clamp(aabb.min.y, aabb.max.y),
+                point.z.clamp(aabb.min.z, aabb.max.z),
+            );
+            let min_possible_dist = (point - clamped).length();
+            if min_possible_dist > max_distance {
+                continue;
+            }
+
+            if let Some((_, best_dist)) = closest
+                && min_possible_dist > best_dist
+            {
+                continue;
+            }
+
             let dist = block.sdf(point);
             if dist < max_distance {
                 if let Some((_, best_dist)) = closest {

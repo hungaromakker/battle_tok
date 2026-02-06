@@ -18,6 +18,8 @@ struct Uniforms {
 }
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(1) var structure_rock_tex: texture_2d<f32>;
+@group(0) @binding(2) var structure_rock_sampler: sampler;
 
 struct VertexInput {
     @location(0) position: vec3<f32>,
@@ -200,6 +202,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Enhanced terrain color with height bands + slope detection
     let albedo = get_terrain_material(in.world_pos, normal, in.color.rgb);
+
+    // Stone texture modulation for structure blocks (world-space tiled)
+    let uv = in.world_pos.xz * 0.18;
+    let rock_sample = textureSample(structure_rock_tex, structure_rock_sampler, uv).rgb;
+    let neutral_delta =
+        abs(in.color.r - in.color.g) + abs(in.color.g - in.color.b) + abs(in.color.r - in.color.b);
+    let stone_mask = clamp(1.0 - neutral_delta * 3.5, 0.0, 1.0);
+    let textured_albedo = mix(albedo, albedo * (0.7 + rock_sample * 0.6), stone_mask * 0.7);
     
     // Detect grass/vegetation by green channel dominance
     let is_grass = albedo.g > albedo.r * 1.3 && albedo.g > albedo.b * 1.5;
@@ -236,7 +246,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let radiance = sun_color * sun_intensity;
     
     // Direct lighting contribution
-    var direct_light = (kd * albedo / 3.14159265 + specular) * radiance * n_dot_l;
+    var direct_light = (kd * textured_albedo / 3.14159265 + specular) * radiance * n_dot_l;
     
     // ============================================================
     // SUBSURFACE SCATTERING (grass/vegetation)
@@ -244,7 +254,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     if (is_grass) {
         let sss = sss_approx(view_dir, sun_dir, normal, 0.4);
         let sss_color = vec3<f32>(0.4, 0.55, 0.15) * 2.0;  // Bright yellow-green
-        direct_light = direct_light + sss_color * sss * albedo;
+        direct_light = direct_light + sss_color * sss * textured_albedo;
     }
     
     // ============================================================
@@ -258,7 +268,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Simple AO based on normal (facing down = more occluded)
     let ao = normal.y * 0.25 + 0.75;
 
-    let ambient_light = albedo * ambient_color * 0.5 * ao;
+    let ambient_light = textured_albedo * ambient_color * 0.5 * ao;
     
     // ============================================================
     // RIM LIGHT (subtle sky-colored edge highlight)

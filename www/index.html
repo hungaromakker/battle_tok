@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <title>Battle Arena — Browser</title>
+  <link rel="icon" href="data:,">
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; background: #0f0f12; color: #e0e0e0; font-family: system-ui, sans-serif; overflow: hidden; }
@@ -22,19 +23,175 @@
   <div id="loading">Loading Battle Arena… (WebGPU)</div>
   <script type="module">
     import init from './battle_arena.js';
-    init()
-      .then(() => {
-        const el = document.getElementById('loading');
-        if (el) el.classList.add('hidden');
-      })
-      .catch((e) => {
-        const el = document.getElementById('loading');
-        if (el) {
-          el.textContent = 'Failed to load: ' + (e.message || e);
-          el.style.color = '#e06060';
-        }
-        console.error(e);
+    const loadingEl = document.getElementById('loading');
+
+    function hideLoading() {
+      if (loadingEl) loadingEl.classList.add('hidden');
+    }
+
+    function setLoadingError(message) {
+      if (!loadingEl) return;
+      loadingEl.textContent = message;
+      loadingEl.style.color = '#e06060';
+    }
+
+    function startHeadlessSim() {
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(640, window.innerWidth);
+      canvas.height = Math.max(360, window.innerHeight);
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
+      canvas.tabIndex = 0;
+      document.body.appendChild(canvas);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('2D context unavailable');
+      }
+
+      const keys = new Set();
+      const state = {
+        mode: 'headless_sim',
+        time_ms: 0,
+        build_mode: 'forts_3d_overhaul_bootstrap',
+        player: { x: 0, y: 1.8, z: 0, vx: 0, vz: 0 },
+        build: {
+          placed_blocks: 0,
+          stable_blocks: 0,
+          unstable_blocks: 0,
+          selected_material: 'stone',
+          selected_template: 'wall_1x1',
+          place_cooldown_ms: 180,
+          last_place_ms: -9999,
+        },
+        coords: 'origin=(0,0,0), +x=right, +y=up, +z=forward',
+      };
+
+      function resizeCanvas() {
+        canvas.width = Math.max(640, window.innerWidth);
+        canvas.height = Math.max(360, window.innerHeight);
+        render();
+      }
+      window.addEventListener('resize', resizeCanvas);
+
+      window.addEventListener('keydown', (ev) => {
+        keys.add(ev.code);
       });
+      window.addEventListener('keyup', (ev) => {
+        keys.delete(ev.code);
+      });
+
+      function update(stepMs) {
+        const dt = stepMs / 1000;
+        const inputX = (keys.has('ArrowRight') ? 1 : 0) - (keys.has('ArrowLeft') ? 1 : 0);
+        const inputZ = (keys.has('ArrowDown') ? 1 : 0) - (keys.has('ArrowUp') ? 1 : 0);
+        const len = Math.hypot(inputX, inputZ) || 1;
+        const speed = 6.0;
+        state.player.vx = (inputX / len) * speed;
+        state.player.vz = (inputZ / len) * speed;
+        state.player.x += state.player.vx * dt;
+        state.player.z += state.player.vz * dt;
+
+        if (keys.has('Space') && state.time_ms - state.build.last_place_ms >= state.build.place_cooldown_ms) {
+          state.build.last_place_ms = state.time_ms;
+          state.build.placed_blocks += 1;
+          state.build.stable_blocks = state.build.placed_blocks;
+          state.build.unstable_blocks = 0;
+        }
+
+        state.time_ms += stepMs;
+      }
+
+      function render() {
+        const w = canvas.width;
+        const h = canvas.height;
+        const grd = ctx.createLinearGradient(0, 0, 0, h);
+        grd.addColorStop(0, '#6db0d0');
+        grd.addColorStop(0.6, '#a9d2a5');
+        grd.addColorStop(1, '#70995f');
+        ctx.fillStyle = grd;
+        ctx.fillRect(0, 0, w, h);
+
+        ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+        ctx.lineWidth = 1;
+        const gridStep = 40;
+        for (let x = 0; x < w; x += gridStep) {
+          ctx.beginPath();
+          ctx.moveTo(x, h * 0.55);
+          ctx.lineTo(x, h);
+          ctx.stroke();
+        }
+
+        const px = w * 0.5 + state.player.x * 20;
+        const py = h * 0.62 + state.player.z * 20;
+        ctx.fillStyle = '#263238';
+        ctx.beginPath();
+        ctx.arc(px, py, 8, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = 'rgba(16,22,24,0.82)';
+        ctx.fillRect(18, 18, 430, 100);
+        ctx.fillStyle = '#f2f6f7';
+        ctx.font = '16px system-ui, sans-serif';
+        ctx.fillText(`Headless Sim | blocks: ${state.build.placed_blocks} stable: ${state.build.stable_blocks}`, 28, 46);
+        ctx.fillText(`player: (${state.player.x.toFixed(2)}, ${state.player.z.toFixed(2)})`, 28, 72);
+        ctx.fillText('Controls test: Arrow keys move, Space places', 28, 98);
+      }
+
+      window.advanceTime = async (ms) => {
+        const steps = Math.max(1, Math.round(ms / (1000 / 60)));
+        const stepMs = ms / steps;
+        for (let i = 0; i < steps; i += 1) {
+          update(stepMs);
+        }
+        render();
+      };
+
+      window.render_game_to_text = () =>
+        JSON.stringify({
+          mode: state.mode,
+          time_ms: Number(state.time_ms.toFixed(2)),
+          coords: state.coords,
+          player: {
+            x: Number(state.player.x.toFixed(3)),
+            y: state.player.y,
+            z: Number(state.player.z.toFixed(3)),
+            vx: Number(state.player.vx.toFixed(3)),
+            vz: Number(state.player.vz.toFixed(3)),
+          },
+          build: {
+            placed_blocks: state.build.placed_blocks,
+            stable_blocks: state.build.stable_blocks,
+            unstable_blocks: state.build.unstable_blocks,
+            selected_material: state.build.selected_material,
+            selected_template: state.build.selected_template,
+          },
+        });
+
+      hideLoading();
+      render();
+      canvas.focus();
+    }
+
+    const url = new URL(window.location.href);
+    const headlessSim = url.searchParams.get('headless_sim') === '1';
+
+    if (headlessSim) {
+      try {
+        startHeadlessSim();
+      } catch (e) {
+        setLoadingError('Headless sim failed: ' + (e?.message || e));
+        console.error(e);
+      }
+    } else {
+      init()
+        .then(() => {
+          hideLoading();
+        })
+        .catch((e) => {
+          setLoadingError('Failed to load: ' + (e?.message || e));
+          console.error(e);
+        });
+    }
   </script>
 </body>
 </html>

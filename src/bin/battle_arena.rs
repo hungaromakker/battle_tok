@@ -7,6 +7,7 @@
 //! - Mouse right-drag: Look around (FPS style)
 //! - Space: Jump (first-person mode) / Fire cannon (free camera)
 //! - F: Fire cannon (aims where you look)
+//! - X: Toggle weapon (cannonball / rocket launcher)
 //! - G: Grab/release cannon (walk to reposition)
 //! - Shift: Sprint when moving
 //! - V: Toggle first-person / free camera mode
@@ -19,7 +20,7 @@
 //! Browser (wasm): build with `cargo build --bin battle_arena --target wasm32-unknown-unknown`,
 //! then run `wasm-bindgen` and serve. Enables AI agents to test the game in the browser.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -29,7 +30,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 use battle_tok_engine::render::hex_prism::DEFAULT_HEX_RADIUS;
-use glam::{Mat4, Vec3};
+use glam::{IVec3, Mat4, Vec3};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{
@@ -52,13 +53,14 @@ use battle_tok_engine::render::{
 use battle_tok_engine::render::{BuildingBlock, MergedMesh};
 
 // Import game module types
+use battle_tok_engine::game::ProjectileKind;
 use battle_tok_engine::game::config::{ArenaConfig, VisualConfig};
 use battle_tok_engine::game::terrain::terrain_height_at_island;
 use battle_tok_engine::game::{
     BLOCK_GRID_SIZE, BattleScene, BridgeConfig, BuilderMode, Camera, FloatingIslandConfig,
     LavaParams, Mesh, MovementKeys, PLAYER_EYE_HEIGHT, SHADER_SOURCE, SdfCannonData,
     SdfCannonUniforms, SelectedFace, StartOverlay, TerrainEditorUI, TerrainParams, Uniforms,
-    Vertex, generate_all_trees_mesh, generate_bridge, generate_floating_island,
+    Vertex, WeaponMode, generate_all_trees_mesh, generate_bridge, generate_floating_island,
     generate_lava_ocean, generate_trees_on_terrain, get_material_color, is_inside_hexagon,
     set_terrain_params,
 };
@@ -73,6 +75,15 @@ use wgpu::util::DeviceExt;
 /// GPU buffers for a merged mesh (baked from SDF)
 struct MergedMeshBuffers {
     _id: u32,
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    index_count: u32,
+}
+
+/// GPU buffers for one cullable building chunk.
+struct BlockChunkBuffers {
+    center: Vec3,
+    radius: f32,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
@@ -94,6 +105,13 @@ struct LavaSceneUniforms {
 
 const HDR_SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const BLOOM_MIP_COUNT: usize = 5;
+/// Disabled by default: double-click SDF merge causes large frame-time spikes.
+const ENABLE_SDF_DOUBLE_CLICK_MERGE: bool = false;
+const BLOCK_RENDER_CHUNK_SIZE: i32 = 12;
+const BLOCK_RENDER_MAX_DISTANCE: f32 = 260.0;
+const BLOCK_REAR_CULL_DOT: f32 = -0.30;
+const STRUCTURE_ROCK_TEXTURE_BYTES: &[u8] =
+    include_bytes!("../../Assets/textures/rock_stone_tile.png");
 
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -173,6 +191,8 @@ struct GpuResources {
     // Dynamic mesh (projectiles, debris)
     dynamic_vertex_buffer: wgpu::Buffer,
     dynamic_index_buffer: wgpu::Buffer,
+    dynamic_vertex_capacity: u64,
+    dynamic_index_capacity: u64,
 
     // Hex walls
     hex_wall_vertex_buffer: wgpu::Buffer,
@@ -191,11 +211,12 @@ struct GpuResources {
     // UI
     ui_uniform_buffer: wgpu::Buffer,
     ui_bind_group: wgpu::BindGroup,
+    _structure_texture: wgpu::Texture,
+    _structure_texture_view: wgpu::TextureView,
+    _structure_texture_sampler: wgpu::Sampler,
 
-    // Building blocks
-    block_vertex_buffer: Option<wgpu::Buffer>,
-    block_index_buffer: Option<wgpu::Buffer>,
-    block_index_count: u32,
+    // Building blocks (split into cullable chunks)
+    block_chunk_buffers: Vec<BlockChunkBuffers>,
 
     // Merged mesh GPU buffers
     merged_mesh_buffers: Vec<MergedMeshBuffers>,
@@ -301,6 +322,65 @@ impl GpuResources {
             h = (h / 2).max(1);
         }
         mips
+    }
+
+    fn create_structure_rock_texture(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> (wgpu::Texture, wgpu::TextureView, wgpu::Sampler) {
+        let decoded = image::load_from_memory(STRUCTURE_ROCK_TEXTURE_BYTES)
+            .expect("Failed to decode embedded structure rock texture")
+            .to_rgba8();
+        let (width, height) = decoded.dimensions();
+
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Structure Rock Texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            decoded.as_raw(),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Structure Rock Sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        (texture, view, sampler)
     }
 
     fn resize(&mut self, new_size: PhysicalSize<u32>) {
@@ -414,6 +494,7 @@ struct BattleArenaApp {
     shift_drag_build_active: bool,
     shift_drag_start: Option<Vec3>,
     shift_drag_preview_positions: Vec<Vec3>,
+    preview_update_accumulator: f32,
 
     // Windows focus overlay
     start_overlay: StartOverlay,
@@ -462,6 +543,7 @@ impl BattleArenaApp {
             shift_drag_build_active: false,
             shift_drag_start: None,
             shift_drag_preview_positions: Vec::new(),
+            preview_update_accumulator: 0.0,
             start_overlay: StartOverlay::default(),
             terrain_ui: TerrainEditorUI::default(),
             start_time: Instant::now(),
@@ -592,28 +674,58 @@ impl BattleArenaApp {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let (structure_texture, structure_texture_view, structure_texture_sampler) =
+            GpuResources::create_structure_rock_texture(&device, &queue);
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Uniform Bind Group Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
 
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Uniform Bind Group"),
             layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&structure_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&structure_texture_sampler),
+                },
+            ],
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -826,10 +938,20 @@ impl BattleArenaApp {
         let ui_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("UI Bind Group"),
             layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: ui_uniform_buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: ui_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&structure_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&structure_texture_sampler),
+                },
+            ],
         });
 
         // SDF CANNON RENDERING SETUP (US-013)
@@ -1322,16 +1444,18 @@ impl BattleArenaApp {
         );
 
         // Dynamic buffers
+        let dynamic_vertex_capacity = 1024 * 1024;
         let dynamic_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Dynamic Vertex Buffer"),
-            size: 1024 * 1024,
+            size: dynamic_vertex_capacity,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
+        let dynamic_index_capacity = 256 * 1024;
         let dynamic_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Dynamic Index Buffer"),
-            size: 256 * 1024,
+            size: dynamic_index_capacity,
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -1845,6 +1969,8 @@ impl BattleArenaApp {
             static_index_count: static_mesh.indices.len() as u32,
             dynamic_vertex_buffer,
             dynamic_index_buffer,
+            dynamic_vertex_capacity,
+            dynamic_index_capacity,
             hex_wall_vertex_buffer,
             hex_wall_index_buffer,
             hex_wall_index_count,
@@ -1866,9 +1992,10 @@ impl BattleArenaApp {
             bloom_ping_view,
             ui_uniform_buffer,
             ui_bind_group,
-            block_vertex_buffer: None,
-            block_index_buffer: None,
-            block_index_count: 0,
+            _structure_texture: structure_texture,
+            _structure_texture_view: structure_texture_view,
+            _structure_texture_sampler: structure_texture_sampler,
+            block_chunk_buffers: Vec::new(),
             merged_mesh_buffers: Vec::new(),
             tree_vertex_buffer,
             tree_index_buffer,
@@ -1931,6 +2058,27 @@ impl BattleArenaApp {
                 self.camera.position = scene.player.get_eye_position();
             }
         }
+        let projectile_trails: Vec<(Vec3, Vec3, ProjectileKind)> = self
+            .scene
+            .as_ref()
+            .unwrap()
+            .projectiles
+            .iter_with_kind()
+            .map(|(proj, kind)| (proj.position, proj.velocity, kind))
+            .collect();
+        let explosion_events = self.scene.as_mut().unwrap().drain_explosion_events();
+        if let Some(ref mut particle_system) = self.particle_system {
+            for (proj_pos, proj_vel, kind) in projectile_trails {
+                if kind == ProjectileKind::Rocket {
+                    Self::spawn_rocket_trail_embers(particle_system, proj_pos, proj_vel);
+                } else {
+                    Self::spawn_cannonball_trail_embers(particle_system, proj_pos, proj_vel);
+                }
+            }
+            for event in explosion_events {
+                Self::spawn_explosion_embers(particle_system, event.position, event.ember_count);
+            }
+        }
 
         // Free camera mode (no scene borrow needed)
         if !self.scene.as_ref().unwrap().first_person_mode {
@@ -1963,10 +2111,38 @@ impl BattleArenaApp {
         if self.scene.as_ref().unwrap().hex_grid.needs_mesh_update() {
             self.regenerate_hex_wall_mesh();
         }
+        if self
+            .scene
+            .as_ref()
+            .unwrap()
+            .building
+            .block_manager
+            .needs_mesh_update()
+        {
+            self.regenerate_block_mesh();
+        }
 
         // Update builder cursor and block preview
         self.update_builder_cursor();
-        self.update_block_preview();
+        let toolbar_visible = self
+            .scene
+            .as_ref()
+            .is_some_and(|s| s.building.toolbar().visible);
+        if !toolbar_visible {
+            self.preview_update_accumulator = 0.0;
+            self.update_block_preview();
+        } else if self.shift_drag_build_active || self.left_mouse_pressed {
+            // Keep drag placement fully responsive.
+            self.preview_update_accumulator = 0.0;
+            self.update_block_preview();
+        } else {
+            // Throttle expensive placement raycasts while idle in build mode.
+            self.preview_update_accumulator += delta_time;
+            if self.preview_update_accumulator >= (1.0 / 30.0) {
+                self.preview_update_accumulator = 0.0;
+                self.update_block_preview();
+            }
+        }
         self.update_shift_drag_build_preview();
 
         // Block pickup system
@@ -2016,8 +2192,7 @@ impl BattleArenaApp {
                             .inventory
                             .stash(shape, material)
                         {
-                            scene.building.block_physics.unregister_block(block_id);
-                            scene.building.block_manager.remove_block(block_id);
+                            scene.building.remove_block(block_id);
                             count = scene.building.toolbar().inventory.count();
                             max = scene.building.toolbar().inventory.max_capacity;
                             did_stash = true;
@@ -2065,9 +2240,8 @@ impl BattleArenaApp {
                             8,
                         );
                         scene.destruction.add_debris(debris);
-                        scene.building.block_physics.unregister_block(*block_id);
                     }
-                    scene.building.block_manager.remove_block(*block_id);
+                    scene.building.remove_block(*block_id);
                 }
             }
             needs_update
@@ -2075,6 +2249,74 @@ impl BattleArenaApp {
         if needs_mesh_update {
             self.regenerate_block_mesh();
         }
+    }
+
+    fn spawn_explosion_embers(particle_system: &mut ParticleSystem, center: Vec3, count: usize) {
+        let count = count.clamp(8, 128);
+        let inv_count = 1.0 / count as f32;
+
+        for i in 0..count {
+            let t = i as f32 * inv_count;
+            let angle = t * std::f32::consts::TAU + (i as f32 * 0.377).sin();
+            let ring = ((i as f32 * 0.618_034).fract() * 1.8) + 0.2;
+            let y = center.y + ((i as f32 * 0.414).fract() * 1.2) + 0.1;
+            let spawn = [
+                center.x + angle.cos() * ring,
+                y,
+                center.z + angle.sin() * ring,
+            ];
+            particle_system.spawn_ember(spawn);
+        }
+    }
+
+    fn spawn_rocket_trail_embers(
+        particle_system: &mut ParticleSystem,
+        position: Vec3,
+        velocity: Vec3,
+    ) {
+        let back = (-velocity).normalize_or_zero();
+        let back = if back.length_squared() > 1e-6 {
+            back
+        } else {
+            Vec3::new(0.0, 0.0, 1.0)
+        };
+        let center = position + back * 0.32;
+        let seed = position.x * 12.9898 + position.y * 37.719 + position.z * 78.233;
+
+        for i in 0..2 {
+            let t = i as f32 * 0.73 + seed;
+            let angle = t * std::f32::consts::TAU;
+            let radius = 0.05 + (t * 0.618).fract() * 0.06;
+            let spawn = [
+                center.x + angle.cos() * radius,
+                center.y + 0.03 + (t * 0.414).fract() * 0.08,
+                center.z + angle.sin() * radius,
+            ];
+            particle_system.spawn_ember(spawn);
+        }
+    }
+
+    fn spawn_cannonball_trail_embers(
+        particle_system: &mut ParticleSystem,
+        position: Vec3,
+        velocity: Vec3,
+    ) {
+        let back = (-velocity).normalize_or_zero();
+        let back = if back.length_squared() > 1e-6 {
+            back
+        } else {
+            Vec3::new(0.0, 0.0, 1.0)
+        };
+        let center = position + back * 0.22;
+        let seed = position.x * 19.173 + position.y * 7.341 + position.z * 31.289;
+        let angle = (seed * 2.319).fract() * std::f32::consts::TAU;
+        let radius = 0.05 + (seed * 0.618).fract() * 0.05;
+        let spawn = [
+            center.x + angle.cos() * radius,
+            center.y + 0.03 + (seed * 0.414).fract() * 0.05,
+            center.z + angle.sin() * radius,
+        ];
+        particle_system.spawn_ember(spawn);
     }
 
     /// Regenerate hex-prism wall mesh and update GPU buffers
@@ -2396,6 +2638,11 @@ impl BattleArenaApp {
 
     /// Place a building block at the preview position
     fn place_building_block(&mut self) {
+        let quick_mode = self
+            .scene
+            .as_ref()
+            .is_some_and(|s| s.building.toolbar().quick_mode);
+
         let preview_pos = self
             .scene
             .as_ref()
@@ -2411,14 +2658,25 @@ impl BattleArenaApp {
             },
         };
 
-        let ground_hint = self.sample_build_ground_height(position.x, position.z);
-        if let Some(_block_id) = self
-            .scene
-            .as_mut()
-            .unwrap()
-            .building
-            .place_block_with_ground_hint(position, ground_hint)
-        {
+        let placed = if quick_mode {
+            self.place_structure_at_anchor(position)
+        } else {
+            let ground_hint = self.sample_build_ground_height(position.x, position.z);
+            if self
+                .scene
+                .as_mut()
+                .unwrap()
+                .building
+                .place_block_with_ground_hint(position, ground_hint)
+                .is_some()
+            {
+                1
+            } else {
+                0
+            }
+        };
+
+        if placed > 0 {
             self.regenerate_block_mesh();
         }
     }
@@ -2464,7 +2722,17 @@ impl BattleArenaApp {
             .collect();
 
         let mut placed_count = 0u32;
-        {
+        let quick_mode = self
+            .scene
+            .as_ref()
+            .is_some_and(|s| s.building.toolbar().quick_mode);
+        if quick_mode {
+            let mut all_instances = Vec::new();
+            for (anchor, _) in placements {
+                all_instances.extend(self.structure_instances_at_anchor(anchor));
+            }
+            placed_count += self.place_structure_instances(all_instances);
+        } else {
             let scene = self.scene.as_mut().unwrap();
             for (position, ground_hint) in placements {
                 if scene
@@ -2480,6 +2748,114 @@ impl BattleArenaApp {
         if placed_count > 0 {
             self.regenerate_block_mesh();
         }
+    }
+
+    fn structure_instances_at_anchor(
+        &self,
+        anchor: Vec3,
+    ) -> Vec<(Vec3, battle_tok_engine::render::BuildingBlockShape)> {
+        let Some(scene) = self.scene.as_ref() else {
+            return Vec::new();
+        };
+        let layout = scene.building.toolbar().selected_structure_layout();
+        layout
+            .into_iter()
+            .map(|(offset, shape)| {
+                (
+                    Vec3::new(
+                        anchor.x + offset.x as f32 * BLOCK_GRID_SIZE,
+                        anchor.y + offset.y as f32 * BLOCK_GRID_SIZE,
+                        anchor.z + offset.z as f32 * BLOCK_GRID_SIZE,
+                    ),
+                    shape,
+                )
+            })
+            .collect()
+    }
+
+    fn place_structure_at_anchor(&mut self, anchor: Vec3) -> u32 {
+        self.place_structure_instances(self.structure_instances_at_anchor(anchor))
+    }
+
+    fn world_to_build_cell(position: Vec3) -> IVec3 {
+        IVec3::new(
+            (position.x / BLOCK_GRID_SIZE).round() as i32,
+            (position.y / BLOCK_GRID_SIZE).round() as i32,
+            (position.z / BLOCK_GRID_SIZE).round() as i32,
+        )
+    }
+
+    fn place_structure_instances(
+        &mut self,
+        mut instances: Vec<(Vec3, battle_tok_engine::render::BuildingBlockShape)>,
+    ) -> u32 {
+        if instances.is_empty() {
+            return 0;
+        }
+
+        // Deduplicate by snapped build cell before placement attempts.
+        let mut seen_cells = HashSet::<IVec3>::new();
+        instances.retain(|(position, _)| seen_cells.insert(Self::world_to_build_cell(*position)));
+        instances.sort_by(|a, b| {
+            a.0.y
+                .total_cmp(&b.0.y)
+                .then_with(|| a.0.x.total_cmp(&b.0.x))
+                .then_with(|| a.0.z.total_cmp(&b.0.z))
+        });
+        let placements: Vec<(
+            Vec3,
+            battle_tok_engine::render::BuildingBlockShape,
+            IVec3,
+            Option<f32>,
+        )> = instances
+            .into_iter()
+            .map(|(position, shape)| {
+                (
+                    position,
+                    shape,
+                    Self::world_to_build_cell(position),
+                    self.sample_build_ground_height(position.x, position.z),
+                )
+            })
+            .collect();
+
+        let material = self
+            .scene
+            .as_ref()
+            .map(|s| s.building.toolbar().selected_material)
+            .unwrap_or(0);
+
+        let mut placed = 0u32;
+        let mut skipped_occupied = 0u32;
+        let mut blocked_other = 0u32;
+
+        if let Some(scene) = self.scene.as_mut() {
+            for (position, shape, cell, ground_hint) in placements {
+                if scene.building.statics_v2.is_occupied(cell) {
+                    skipped_occupied += 1;
+                    continue;
+                }
+
+                if scene
+                    .building
+                    .place_block_shape_with_ground_hint(shape, position, material, ground_hint)
+                    .is_some()
+                {
+                    placed += 1;
+                } else {
+                    blocked_other += 1;
+                }
+            }
+        }
+
+        if skipped_occupied > 0 || blocked_other > 0 {
+            println!(
+                "[Build] Template placement: +{} | skipped occupied {} | blocked {}",
+                placed, skipped_occupied, blocked_other
+            );
+        }
+
+        placed
     }
 
     fn line_build_positions(start: Vec3, end: Vec3) -> Vec<Vec3> {
@@ -2516,19 +2892,16 @@ impl BattleArenaApp {
 
     fn generate_block_preview_mesh(
         &self,
-        positions: &[Vec3],
+        instances: &[(Vec3, battle_tok_engine::render::BuildingBlockShape)],
         pulse_alpha: f32,
         color: [f32; 3],
     ) -> Option<(Vec<Vertex>, Vec<u32>)> {
-        let scene = self.scene.as_ref()?;
-        let shape = scene.building.toolbar().get_selected_shape();
-
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
         let preview_color = [color[0], color[1], color[2], pulse_alpha];
 
-        for pos in positions {
-            let block = BuildingBlock::new(shape, *pos, 0);
+        for (pos, shape) in instances {
+            let block = BuildingBlock::new(*shape, *pos, 0);
             let (block_verts, block_indices) = block.generate_mesh();
             let base = vertices.len() as u32;
             vertices.extend(block_verts.iter().map(|v| Vertex {
@@ -2730,12 +3103,16 @@ impl BattleArenaApp {
             let h = first.size.1 * (1.0 - t) + second.size.1 * t;
             let half_extents = Vec3::new(segment_length * 0.6, h * 0.5, w * 0.5);
             let shape = battle_tok_engine::render::BuildingBlockShape::Cube { half_extents };
-            let block = BuildingBlock::new(shape, pos, scene.building.toolbar().selected_material);
+            let material = scene.building.toolbar().selected_material;
+            let block = BuildingBlock::new(shape, pos, material);
             let block_id = scene.building.block_manager.add_block(block);
             scene
                 .building
                 .block_physics
                 .register_grounded_block(block_id);
+            scene
+                .building
+                .register_external_grounded_block(block_id, pos, material);
         }
         self.regenerate_block_mesh();
     }
@@ -2790,37 +3167,95 @@ impl BattleArenaApp {
             None => return,
         };
         let scene = self.scene.as_ref().unwrap();
-
-        let (vertices, indices) = scene.building.block_manager.generate_combined_mesh();
-        if vertices.is_empty() {
-            gpu.block_index_count = 0;
+        let blocks = scene.building.block_manager.blocks();
+        if blocks.is_empty() {
+            gpu.block_chunk_buffers.clear();
+            if let Some(scene_mut) = self.scene.as_mut() {
+                scene_mut.building.block_manager.clear_dirty();
+            }
             return;
         }
 
-        let mesh_vertices: Vec<Vertex> = vertices
-            .iter()
-            .map(|v| Vertex {
+        #[derive(Default)]
+        struct ChunkBuildData {
+            vertices: Vec<Vertex>,
+            indices: Vec<u32>,
+            min: Vec3,
+            max: Vec3,
+            initialized: bool,
+        }
+
+        let mut chunks: HashMap<(i32, i32, i32), ChunkBuildData> = HashMap::new();
+        let chunk_size = BLOCK_RENDER_CHUNK_SIZE as f32;
+
+        for block in blocks {
+            let key = (
+                (block.position.x / chunk_size).floor() as i32,
+                (block.position.y / chunk_size).floor() as i32,
+                (block.position.z / chunk_size).floor() as i32,
+            );
+            let chunk = chunks.entry(key).or_default();
+
+            let aabb = block.aabb();
+            if chunk.initialized {
+                chunk.min = chunk.min.min(aabb.min);
+                chunk.max = chunk.max.max(aabb.max);
+            } else {
+                chunk.min = aabb.min;
+                chunk.max = aabb.max;
+                chunk.initialized = true;
+            }
+
+            let (block_vertices, block_indices) = block.generate_mesh();
+            let base = chunk.vertices.len() as u32;
+            chunk.vertices.extend(block_vertices.iter().map(|v| Vertex {
                 position: v.position,
                 normal: v.normal,
                 color: v.color,
-            })
-            .collect();
+            }));
+            chunk.indices.extend(block_indices.iter().map(|i| i + base));
+        }
 
-        gpu.block_vertex_buffer = Some(gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Block Vertex Buffer"),
-                contents: bytemuck::cast_slice(&mesh_vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            },
-        ));
-        gpu.block_index_buffer = Some(gpu.device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Block Index Buffer"),
-                contents: bytemuck::cast_slice(&indices),
-                usage: wgpu::BufferUsages::INDEX,
-            },
-        ));
-        gpu.block_index_count = indices.len() as u32;
+        let mut sorted_chunks: Vec<((i32, i32, i32), ChunkBuildData)> =
+            chunks.into_iter().collect();
+        sorted_chunks.sort_by_key(|(key, _)| *key);
+
+        let mut new_buffers = Vec::with_capacity(sorted_chunks.len());
+        for (_key, chunk) in sorted_chunks {
+            if chunk.indices.is_empty() {
+                continue;
+            }
+
+            let vertex_buffer = gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Block Chunk Vertex Buffer"),
+                    contents: bytemuck::cast_slice(&chunk.vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+            let index_buffer = gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Block Chunk Index Buffer"),
+                    contents: bytemuck::cast_slice(&chunk.indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
+
+            let center = (chunk.min + chunk.max) * 0.5;
+            let radius = (chunk.max - center).length().max(1.0);
+            new_buffers.push(BlockChunkBuffers {
+                center,
+                radius,
+                vertex_buffer,
+                index_buffer,
+                index_count: chunk.indices.len() as u32,
+            });
+        }
+
+        gpu.block_chunk_buffers = new_buffers;
+        if let Some(scene_mut) = self.scene.as_mut() {
+            scene_mut.building.block_manager.clear_dirty();
+        }
     }
 
     /// Generate ghost preview mesh for builder mode
@@ -3460,6 +3895,18 @@ impl BattleArenaApp {
     /// Prepare all GPU buffer data for the current frame: dynamic meshes, uniforms,
     /// SDF cannon data, and visual system updates. Returns the dynamic index count.
     fn prepare_frame_data(&mut self, time: f32, _delta_time: f32) -> u32 {
+        fn grow_capacity(current: u64, required: u64) -> u64 {
+            let mut capacity = current.max(64 * 1024);
+            while capacity < required {
+                let next = capacity.saturating_mul(2);
+                if next <= capacity {
+                    return required;
+                }
+                capacity = next;
+            }
+            capacity
+        }
+
         // Build dynamic mesh from scene data (needs &self.scene, then &self for ghost/grid)
         let dynamic_mesh = self.scene.as_ref().unwrap().generate_dynamic_mesh();
         let dynamic_indices: Vec<u32> = (0..dynamic_mesh.len() as u32).collect();
@@ -3468,24 +3915,59 @@ impl BattleArenaApp {
 
         let dynamic_index_count = dynamic_indices.len() as u32;
 
+        {
+            let gpu = self.gpu.as_mut().unwrap();
+            let vertex_bytes = (dynamic_mesh.len() * std::mem::size_of::<Vertex>()) as u64;
+            let index_bytes = (dynamic_indices.len() * std::mem::size_of::<u32>()) as u64;
+
+            if vertex_bytes > gpu.dynamic_vertex_capacity {
+                let new_capacity = grow_capacity(gpu.dynamic_vertex_capacity, vertex_bytes);
+                gpu.dynamic_vertex_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Dynamic Vertex Buffer"),
+                    size: new_capacity,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                gpu.dynamic_vertex_capacity = new_capacity;
+                println!(
+                    "[DynamicMesh] Grew vertex buffer to {} bytes",
+                    gpu.dynamic_vertex_capacity
+                );
+            }
+
+            if index_bytes > gpu.dynamic_index_capacity {
+                let new_capacity = grow_capacity(gpu.dynamic_index_capacity, index_bytes);
+                gpu.dynamic_index_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Dynamic Index Buffer"),
+                    size: new_capacity,
+                    usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                gpu.dynamic_index_capacity = new_capacity;
+                println!(
+                    "[DynamicMesh] Grew index buffer to {} bytes",
+                    gpu.dynamic_index_capacity
+                );
+            }
+
+            if !dynamic_mesh.is_empty() {
+                gpu.queue.write_buffer(
+                    &gpu.dynamic_vertex_buffer,
+                    0,
+                    bytemuck::cast_slice(&dynamic_mesh),
+                );
+                gpu.queue.write_buffer(
+                    &gpu.dynamic_index_buffer,
+                    0,
+                    bytemuck::cast_slice(&dynamic_indices),
+                );
+            }
+        }
+
         let gpu = self.gpu.as_ref().unwrap();
         let queue = &gpu.queue;
         let config = &gpu.surface_config;
         let scene = self.scene.as_ref().unwrap();
-
-        // Update dynamic buffers
-        if !dynamic_mesh.is_empty() {
-            queue.write_buffer(
-                &gpu.dynamic_vertex_buffer,
-                0,
-                bytemuck::cast_slice(&dynamic_mesh),
-            );
-            queue.write_buffer(
-                &gpu.dynamic_index_buffer,
-                0,
-                bytemuck::cast_slice(&dynamic_indices),
-            );
-        }
 
         // Update uniforms
         let aspect = config.width as f32 / config.height as f32;
@@ -3788,14 +4270,29 @@ impl BattleArenaApp {
             render_pass.draw_indexed(0..gpu.hex_wall_index_count, 0, 0..1);
         }
 
-        // Building blocks
-        if let (Some(block_vb), Some(block_ib)) =
-            (&gpu.block_vertex_buffer, &gpu.block_index_buffer)
-            && gpu.block_index_count > 0
-        {
-            render_pass.set_vertex_buffer(0, block_vb.slice(..));
-            render_pass.set_index_buffer(block_ib.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..gpu.block_index_count, 0, 0..1);
+        // Building blocks (camera-aware chunk culling).
+        let cam_pos = self.camera.position;
+        let cam_forward = self.camera.get_forward();
+        for chunk in &gpu.block_chunk_buffers {
+            if chunk.index_count == 0 {
+                continue;
+            }
+
+            let to_chunk = chunk.center - cam_pos;
+            let dist = to_chunk.length();
+            if dist > BLOCK_RENDER_MAX_DISTANCE + chunk.radius {
+                continue;
+            }
+            if dist > 20.0 {
+                let dir = to_chunk / dist.max(1e-6);
+                if cam_forward.dot(dir) < BLOCK_REAR_CULL_DOT {
+                    continue;
+                }
+            }
+
+            render_pass.set_vertex_buffer(0, chunk.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(chunk.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..chunk.index_count, 0, 0..1);
         }
 
         // Block placement preview / drag hologram
@@ -3812,10 +4309,22 @@ impl BattleArenaApp {
         }
 
         if !preview_positions.is_empty() {
+            let quick_mode = scene.building.toolbar().quick_mode;
+            let mut preview_instances: Vec<(Vec3, battle_tok_engine::render::BuildingBlockShape)> =
+                Vec::new();
+            if quick_mode {
+                for anchor in &preview_positions {
+                    preview_instances.extend(self.structure_instances_at_anchor(*anchor));
+                }
+            } else {
+                let shape = scene.building.toolbar().get_selected_shape();
+                preview_instances.extend(preview_positions.iter().copied().map(|p| (p, shape)));
+            }
+
             let pulse = (self.start_time.elapsed().as_secs_f32() * 3.0).sin() * 0.5 + 0.5;
             let alpha = 0.22 + pulse * 0.18;
             if let Some((preview_vertices, preview_indices)) =
-                self.generate_block_preview_mesh(&preview_positions, alpha, [0.15, 1.0, 0.30])
+                self.generate_block_preview_mesh(&preview_instances, alpha, [0.15, 1.0, 0.30])
             {
                 let preview_vb = gpu
                     .device
@@ -4160,17 +4669,31 @@ impl BattleArenaApp {
             KeyCode::Space => {
                 if pressed {
                     if scene.first_person_mode {
-                        // In first-person mode: jump first, but also fire if near cannon
+                        // In first-person mode: jump + fire
                         scene.player.request_jump();
-                    } else if !self.builder_mode.enabled {
-                        scene.fire_cannon();
+                    }
+                    if !self.builder_mode.enabled && !scene.fire_cannon() {
+                        println!("[Weapon] Cannot fire: projectile limit reached");
                     }
                 }
                 self.movement.up = pressed;
             }
             KeyCode::KeyF if pressed => {
-                // F key: Fire cannon (works in any mode if close enough)
-                scene.fire_cannon();
+                // F key: Fire active weapon
+                if !scene.fire_cannon() {
+                    println!("[Weapon] Cannot fire: projectile limit reached");
+                }
+            }
+            KeyCode::KeyX if pressed => {
+                let mode = scene.toggle_weapon_mode();
+                println!(
+                    "[Weapon] {}",
+                    match mode {
+                        WeaponMode::Cannonball => "Cannonball mode",
+                        WeaponMode::RocketLauncher =>
+                            "Rocket launcher mode (blast affects both sides)",
+                    }
+                );
             }
             KeyCode::KeyG if pressed => {
                 // G key: Grab/release cannon
@@ -4180,7 +4703,7 @@ impl BattleArenaApp {
                     println!(
                         "[Cannon] {}",
                         if grabbed {
-                            "Grabbed! Walk to move it, F to fire, G to release"
+                            "Grabbed! Walk to move it, F to fire, X to swap weapon, G to release"
                         } else {
                             "Released at current position"
                         }
@@ -4223,37 +4746,100 @@ impl BattleArenaApp {
 
             KeyCode::Tab if pressed => {
                 if scene.building.toolbar().visible {
-                    scene.building.toolbar_mut().next_shape();
+                    if scene.building.toolbar().quick_mode {
+                        scene.building.toolbar_mut().next_structure();
+                    } else {
+                        scene.building.toolbar_mut().next_shape();
+                    }
                 }
             }
 
+            KeyCode::KeyQ | KeyCode::KeyM if pressed => {
+                let toolbar_was_visible = scene.building.toolbar().visible;
+                if toolbar_was_visible {
+                    scene.building.toolbar_mut().toggle_quick_mode();
+                } else {
+                    scene.building.toolbar_mut().toggle();
+                    if let Some(window) = &self.window {
+                        let _ = window.set_cursor_grab(CursorGrabMode::None);
+                        window.set_cursor_visible(true);
+                    }
+                    let mode_name = if scene.building.toolbar().quick_mode {
+                        "quick-build"
+                    } else {
+                        "primitive"
+                    };
+                    println!(
+                        "[BuildToolbar] Opened via Q/M in {} mode (press Q/M again to toggle)",
+                        mode_name
+                    );
+                }
+                self.update_block_preview();
+            }
+
             KeyCode::Digit1 if pressed && scene.building.toolbar().visible => {
-                scene.building.toolbar_mut().select_shape(0)
+                if scene.building.toolbar().quick_mode {
+                    scene.building.toolbar_mut().select_structure(0)
+                } else {
+                    scene.building.toolbar_mut().select_shape(0)
+                }
             }
             KeyCode::Digit2 if pressed && scene.building.toolbar().visible => {
-                scene.building.toolbar_mut().select_shape(1)
+                if scene.building.toolbar().quick_mode {
+                    scene.building.toolbar_mut().select_structure(1)
+                } else {
+                    scene.building.toolbar_mut().select_shape(1)
+                }
             }
             KeyCode::Digit3 if pressed && scene.building.toolbar().visible => {
-                scene.building.toolbar_mut().select_shape(2)
+                if scene.building.toolbar().quick_mode {
+                    scene.building.toolbar_mut().select_structure(2)
+                } else {
+                    scene.building.toolbar_mut().select_shape(2)
+                }
             }
             KeyCode::Digit4 if pressed && scene.building.toolbar().visible => {
-                scene.building.toolbar_mut().select_shape(3)
+                if scene.building.toolbar().quick_mode {
+                    scene.building.toolbar_mut().select_structure(3)
+                } else {
+                    scene.building.toolbar_mut().select_shape(3)
+                }
             }
             KeyCode::Digit5 if pressed && scene.building.toolbar().visible => {
-                scene.building.toolbar_mut().select_shape(4)
+                if scene.building.toolbar().quick_mode {
+                    scene.building.toolbar_mut().select_structure(4)
+                } else {
+                    scene.building.toolbar_mut().select_shape(4)
+                }
             }
             KeyCode::Digit6 if pressed && scene.building.toolbar().visible => {
-                scene.building.toolbar_mut().select_shape(5)
+                if scene.building.toolbar().quick_mode {
+                    scene.building.toolbar_mut().select_structure(5)
+                } else {
+                    scene.building.toolbar_mut().select_shape(5)
+                }
             }
             KeyCode::Digit7 if pressed && scene.building.toolbar().visible => {
-                scene.building.toolbar_mut().select_shape(6)
+                if scene.building.toolbar().quick_mode {
+                    scene.building.toolbar_mut().select_structure(6)
+                } else {
+                    scene.building.toolbar_mut().select_shape(6)
+                }
             }
 
             KeyCode::ArrowUp if pressed && scene.building.toolbar().visible => {
-                scene.building.toolbar_mut().prev_shape()
+                if scene.building.toolbar().quick_mode {
+                    scene.building.toolbar_mut().prev_structure()
+                } else {
+                    scene.building.toolbar_mut().prev_shape()
+                }
             }
             KeyCode::ArrowDown if pressed && scene.building.toolbar().visible => {
-                scene.building.toolbar_mut().next_shape()
+                if scene.building.toolbar().quick_mode {
+                    scene.building.toolbar_mut().next_structure()
+                } else {
+                    scene.building.toolbar_mut().next_shape()
+                }
             }
 
             KeyCode::F11 if pressed => {
@@ -4489,7 +5075,7 @@ impl ApplicationHandler for BattleArenaApp {
                                 self.start_shift_drag_build();
                             } else if bridge_mode {
                                 self.handle_bridge_click();
-                            } else if !self.handle_block_click() {
+                            } else if !ENABLE_SDF_DOUBLE_CLICK_MERGE || !self.handle_block_click() {
                                 self.place_building_block();
                             }
                         }
@@ -4549,9 +5135,20 @@ impl ApplicationHandler for BattleArenaApp {
 
                     if let (Some(window), Some(scene)) = (&self.window, &self.scene) {
                         let mode_str = if scene.building.toolbar().visible {
-                            "Build".to_string()
+                            if scene.building.toolbar().quick_mode {
+                                format!(
+                                    "Build-Q:{}",
+                                    scene.building.toolbar().quick_structure_name()
+                                )
+                            } else {
+                                "Build-Primitive".to_string()
+                            }
                         } else {
                             "Combat".to_string()
+                        };
+                        let weapon_str = match scene.weapon_mode() {
+                            WeaponMode::Cannonball => "Cannonball",
+                            WeaponMode::RocketLauncher => "Rocket",
                         };
                         let postfx_str = format!(
                             "P:{} TAA:{} B:{}",
@@ -4560,8 +5157,9 @@ impl ApplicationHandler for BattleArenaApp {
                             if self.bloom_enabled { "on" } else { "off" }
                         );
                         window.set_title(&format!(
-                            "Battle Sphere - {} | FPS: {:.0} | {:.2}ms | Draws~{} | {} | Prisms: {}",
+                            "Battle Sphere - {} | Weapon: {} | FPS: {:.0} | {:.2}ms | Draws~{} | {} | Prisms: {}",
                             mode_str,
+                            weapon_str,
                             self.fps,
                             self.frame_time_ms,
                             self.draw_calls_estimate,
@@ -4613,7 +5211,7 @@ fn main() {
     println!("*** Click anywhere to start ***");
     println!();
     println!("Controls: WASD Move, Space Jump, V Toggle FPS/Free");
-    println!("G: Grab/Release Cannon, F: Fire Cannon");
+    println!("G: Grab/Release Cannon, F: Fire, X: Toggle Rocket Launcher");
     println!(
         "B: Builder, T: Terrain Editor, F7/F8/F9: PostFx/TAA/Bloom, F11: Fullscreen, ESC: Exit"
     );
@@ -4625,10 +5223,13 @@ fn main() {
     event_loop.run_app(&mut app).unwrap();
 }
 
+#[cfg(target_arch = "wasm32")]
+fn main() {}
+
 /// Browser entry point. Async init (request_adapter/request_device) then runs the game loop.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
-pub fn main() {
+pub fn wasm_start() {
     console_error_panic_hook::set_once();
 
     let event_loop = EventLoop::new().unwrap();

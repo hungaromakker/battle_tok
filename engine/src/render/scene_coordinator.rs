@@ -150,7 +150,7 @@ impl SceneCoordinator {
     }
 
     /// Create render context from current state
-    fn create_render_context(&self) -> RenderContext {
+    fn create_render_context(&self) -> RenderContext<'_> {
         let (width, height) = self.gpu.dimensions();
         RenderContext {
             device: &self.gpu.device,
