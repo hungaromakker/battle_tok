@@ -162,8 +162,7 @@ impl BattleScene {
     /// 6. Meteor spawning & impacts
     /// 7. Player-block collision
     /// 8. Player-hex collision (via render grid iteration)
-    /// 9. Building structural physics
-    /// 10. Economy / day-cycle tick
+    /// 9. Economy / day-cycle tick
     pub fn update(&mut self, delta: f32, movement: &MovementState, camera_forward: Vec3) {
         // 1. Player movement (island-aware ground collision)
         let keys = MovementKeys {
@@ -222,10 +221,7 @@ impl BattleScene {
         // 8. Player-hex collision
         self.check_player_hex_collision();
 
-        // 9. Building structural physics
-        let _removed = self.building.update_physics(delta);
-
-        // 10. Economy / day cycle
+        // 9. Economy / day cycle
         self.game_state.update(delta);
     }
 

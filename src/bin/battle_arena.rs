@@ -19,6 +19,7 @@
 //! Browser (wasm): build with `cargo build --bin battle_arena --target wasm32-unknown-unknown`,
 //! then run `wasm-bindgen` and serve. Enables AI agents to test the game in the browser.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -52,12 +53,14 @@ use battle_tok_engine::render::{BuildingBlock, MergedMesh};
 
 // Import game module types
 use battle_tok_engine::game::config::{ArenaConfig, VisualConfig};
+use battle_tok_engine::game::terrain::terrain_height_at_island;
 use battle_tok_engine::game::{
-    BattleScene, BridgeConfig, BuilderMode, Camera, FloatingIslandConfig, LavaParams, Mesh,
-    MovementKeys, PLAYER_EYE_HEIGHT, SHADER_SOURCE, SdfCannonData, SdfCannonUniforms, SelectedFace,
-    StartOverlay, TerrainEditorUI, TerrainParams, Uniforms, Vertex, generate_all_trees_mesh,
-    generate_bridge, generate_floating_island, generate_lava_ocean, generate_trees_on_terrain,
-    get_material_color, set_terrain_params, terrain_height_at,
+    BLOCK_GRID_SIZE, BattleScene, BridgeConfig, BuilderMode, Camera, FloatingIslandConfig,
+    LavaParams, Mesh, MovementKeys, PLAYER_EYE_HEIGHT, SHADER_SOURCE, SdfCannonData,
+    SdfCannonUniforms, SelectedFace, StartOverlay, TerrainEditorUI, TerrainParams, Uniforms,
+    Vertex, generate_all_trees_mesh, generate_bridge, generate_floating_island,
+    generate_lava_ocean, generate_trees_on_terrain, get_material_color, is_inside_hexagon,
+    set_terrain_params,
 };
 use battle_tok_engine::render::hex_prism::DEFAULT_HEX_HEIGHT;
 
@@ -154,6 +157,7 @@ struct GpuResources {
 
     // Pipelines
     pipeline: wgpu::RenderPipeline,
+    preview_pipeline: wgpu::RenderPipeline,
     sdf_cannon_pipeline: wgpu::RenderPipeline,
     ui_pipeline: wgpu::RenderPipeline,
 
@@ -407,6 +411,9 @@ struct BattleArenaApp {
 
     // Builder mode (stays here — mixes with winit cursor control)
     builder_mode: BuilderMode,
+    shift_drag_build_active: bool,
+    shift_drag_start: Option<Vec3>,
+    shift_drag_preview_positions: Vec<Vec3>,
 
     // Windows focus overlay
     start_overlay: StartOverlay,
@@ -452,6 +459,9 @@ impl BattleArenaApp {
             _last_mouse_pos: None,
             current_mouse_pos: None,
             builder_mode: BuilderMode::default(),
+            shift_drag_build_active: false,
+            shift_drag_start: None,
+            shift_drag_preview_positions: Vec::new(),
             start_overlay: StartOverlay::default(),
             terrain_ui: TerrainEditorUI::default(),
             start_time: Instant::now(),
@@ -667,6 +677,71 @@ impl BattleArenaApp {
                 depth_compare: wgpu::CompareFunction::Less,
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        // Preview pipeline: alpha-blended hologram with depth test but no depth writes.
+        let preview_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Preview Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: 0,
+                            shader_location: 0,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x3,
+                            offset: 12,
+                            shader_location: 1,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x4,
+                            offset: 24,
+                            shader_location: 2,
+                        },
+                    ],
+                }],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: HDR_SCENE_FORMAT,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: -2,
+                    slope_scale: -1.0,
+                    clamp: 0.0,
+                },
             }),
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
@@ -1760,6 +1835,7 @@ impl BattleArenaApp {
             surface,
             surface_config,
             pipeline,
+            preview_pipeline,
             sdf_cannon_pipeline,
             ui_pipeline,
             uniform_buffer,
@@ -1891,6 +1967,7 @@ impl BattleArenaApp {
         // Update builder cursor and block preview
         self.update_builder_cursor();
         self.update_block_preview();
+        self.update_shift_drag_build_preview();
 
         // Block pickup system
         const PICKUP_HOLD_TIME: f32 = 0.5;
@@ -2195,6 +2272,51 @@ impl BattleArenaApp {
         (self.camera.position, ray_dir)
     }
 
+    /// Sample build-ground height on the active islands.
+    ///
+    /// Returns `None` outside buildable island surfaces.
+    fn sample_build_ground_height(&self, x: f32, z: f32) -> Option<f32> {
+        let scene = self.scene.as_ref()?;
+
+        let attacker = &scene.config.island_attacker;
+        let defender = &scene.config.island_defender;
+
+        let in_attacker = is_inside_hexagon(
+            x - attacker.position.x,
+            z - attacker.position.z,
+            attacker.radius,
+        );
+        let in_defender = is_inside_hexagon(
+            x - defender.position.x,
+            z - defender.position.z,
+            defender.radius,
+        );
+
+        if !in_attacker && !in_defender {
+            return None;
+        }
+
+        let use_attacker = if in_attacker && in_defender {
+            let da2 = (x - attacker.position.x).powi(2) + (z - attacker.position.z).powi(2);
+            let dd2 = (x - defender.position.x).powi(2) + (z - defender.position.z).powi(2);
+            da2 <= dd2
+        } else {
+            in_attacker
+        };
+
+        let island = if use_attacker { attacker } else { defender };
+        let base_y = island.position.y + island.surface_height;
+
+        Some(terrain_height_at_island(
+            x,
+            z,
+            base_y,
+            island.position.x,
+            island.position.z,
+            island.radius,
+        ))
+    }
+
     /// Update builder mode cursor position
     fn update_builder_cursor(&mut self) {
         if !self.builder_mode.enabled {
@@ -2216,29 +2338,12 @@ impl BattleArenaApp {
             return Some(above);
         }
 
-        let attacker_center = scene.config.island_attacker.position;
-        let defender_center = scene.config.island_defender.position;
-        let platform_radius = scene.config.island_attacker.radius;
-
         let max_dist = 200.0;
         let step_size = 0.5;
         let mut t = 0.0;
         while t < max_dist {
             let point = ray_origin + ray_dir * t;
-            let in_attacker = (point.x - attacker_center.x).powi(2)
-                + (point.z - attacker_center.z).powi(2)
-                < platform_radius * platform_radius;
-            let in_defender = (point.x - defender_center.x).powi(2)
-                + (point.z - defender_center.z).powi(2)
-                < platform_radius * platform_radius;
-
-            if in_attacker || in_defender {
-                let base_y = if in_attacker {
-                    attacker_center.y
-                } else {
-                    defender_center.y
-                };
-                let terrain_y = terrain_height_at(point.x, point.z, base_y);
+            if let Some(terrain_y) = self.sample_build_ground_height(point.x, point.z) {
                 if point.y <= terrain_y + 0.1 {
                     let build_level = self.builder_mode.build_level;
                     let (q, r, _) = battle_tok_engine::render::hex_prism::world_to_axial(point);
@@ -2284,7 +2389,9 @@ impl BattleArenaApp {
         let (ray_origin, ray_dir) = self.screen_to_ray(mouse_pos.0, mouse_pos.1);
         scene
             .building
-            .calculate_placement(ray_origin, ray_dir, &|x, z| terrain_height_at(x, z, 0.0))
+            .calculate_placement(ray_origin, ray_dir, &|x, z| {
+                self.sample_build_ground_height(x, z)
+            })
     }
 
     /// Place a building block at the preview position
@@ -2304,8 +2411,138 @@ impl BattleArenaApp {
             },
         };
 
-        if let Some(_block_id) = self.scene.as_mut().unwrap().building.place_block(position) {
+        let ground_hint = self.sample_build_ground_height(position.x, position.z);
+        if let Some(_block_id) = self
+            .scene
+            .as_mut()
+            .unwrap()
+            .building
+            .place_block_with_ground_hint(position, ground_hint)
+        {
             self.regenerate_block_mesh();
+        }
+    }
+
+    fn start_shift_drag_build(&mut self) {
+        let Some(start_pos) = self.calculate_block_placement_position() else {
+            return;
+        };
+        self.shift_drag_build_active = true;
+        self.shift_drag_start = Some(start_pos);
+        self.shift_drag_preview_positions = vec![start_pos];
+    }
+
+    fn update_shift_drag_build_preview(&mut self) {
+        if !self.shift_drag_build_active || !self.left_mouse_pressed {
+            return;
+        }
+        let Some(start) = self.shift_drag_start else {
+            return;
+        };
+        let Some(end) = self.calculate_block_placement_position() else {
+            return;
+        };
+        self.shift_drag_preview_positions = Self::line_build_positions(start, end);
+    }
+
+    fn commit_shift_drag_build(&mut self) {
+        if !self.shift_drag_build_active {
+            return;
+        }
+
+        let positions = std::mem::take(&mut self.shift_drag_preview_positions);
+        self.shift_drag_build_active = false;
+        self.shift_drag_start = None;
+
+        if positions.is_empty() {
+            return;
+        }
+
+        let placements: Vec<(Vec3, Option<f32>)> = positions
+            .into_iter()
+            .map(|pos| (pos, self.sample_build_ground_height(pos.x, pos.z)))
+            .collect();
+
+        let mut placed_count = 0u32;
+        {
+            let scene = self.scene.as_mut().unwrap();
+            for (position, ground_hint) in placements {
+                if scene
+                    .building
+                    .place_block_with_ground_hint(position, ground_hint)
+                    .is_some()
+                {
+                    placed_count += 1;
+                }
+            }
+        }
+
+        if placed_count > 0 {
+            self.regenerate_block_mesh();
+        }
+    }
+
+    fn line_build_positions(start: Vec3, end: Vec3) -> Vec<Vec3> {
+        let sx = (start.x / BLOCK_GRID_SIZE).round() as i32;
+        let sy = (start.y / BLOCK_GRID_SIZE).round() as i32;
+        let sz = (start.z / BLOCK_GRID_SIZE).round() as i32;
+
+        let ex = (end.x / BLOCK_GRID_SIZE).round() as i32;
+        let ey = (end.y / BLOCK_GRID_SIZE).round() as i32;
+        let ez = (end.z / BLOCK_GRID_SIZE).round() as i32;
+
+        let dx = ex - sx;
+        let dy = ey - sy;
+        let dz = ez - sz;
+        let steps = dx.abs().max(dy.abs()).max(dz.abs()).max(1);
+
+        let mut cells = Vec::with_capacity((steps + 1) as usize);
+        let mut seen = HashSet::new();
+        for i in 0..=steps {
+            let t = i as f32 / steps as f32;
+            let gx = (sx as f32 + dx as f32 * t).round() as i32;
+            let gy = (sy as f32 + dy as f32 * t).round() as i32;
+            let gz = (sz as f32 + dz as f32 * t).round() as i32;
+            if seen.insert((gx, gy, gz)) {
+                cells.push(Vec3::new(
+                    gx as f32 * BLOCK_GRID_SIZE,
+                    gy as f32 * BLOCK_GRID_SIZE,
+                    gz as f32 * BLOCK_GRID_SIZE,
+                ));
+            }
+        }
+        cells
+    }
+
+    fn generate_block_preview_mesh(
+        &self,
+        positions: &[Vec3],
+        pulse_alpha: f32,
+        color: [f32; 3],
+    ) -> Option<(Vec<Vertex>, Vec<u32>)> {
+        let scene = self.scene.as_ref()?;
+        let shape = scene.building.toolbar().get_selected_shape();
+
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        let preview_color = [color[0], color[1], color[2], pulse_alpha];
+
+        for pos in positions {
+            let block = BuildingBlock::new(shape, *pos, 0);
+            let (block_verts, block_indices) = block.generate_mesh();
+            let base = vertices.len() as u32;
+            vertices.extend(block_verts.iter().map(|v| Vertex {
+                position: v.position,
+                normal: v.normal,
+                color: preview_color,
+            }));
+            indices.extend(block_indices.iter().map(|i| i + base));
+        }
+
+        if vertices.is_empty() {
+            None
+        } else {
+            Some((vertices, indices))
         }
     }
 
@@ -2495,7 +2732,10 @@ impl BattleArenaApp {
             let shape = battle_tok_engine::render::BuildingBlockShape::Cube { half_extents };
             let block = BuildingBlock::new(shape, pos, scene.building.toolbar().selected_material);
             let block_id = scene.building.block_manager.add_block(block);
-            scene.building.block_physics.register_block(block_id);
+            scene
+                .building
+                .block_physics
+                .register_grounded_block(block_id);
         }
         self.regenerate_block_mesh();
     }
@@ -2584,6 +2824,7 @@ impl BattleArenaApp {
     }
 
     /// Generate ghost preview mesh for builder mode
+    #[allow(dead_code)]
     fn generate_ghost_preview_mesh(&self, time: f32) -> Option<Mesh> {
         if !self.builder_mode.enabled || !self.builder_mode.show_preview {
             return None;
@@ -2620,6 +2861,7 @@ impl BattleArenaApp {
     }
 
     /// Generate grid overlay mesh for builder mode
+    #[allow(dead_code)]
     fn generate_grid_overlay_mesh(&self) -> Option<Mesh> {
         if !self.builder_mode.enabled {
             return None;
@@ -2657,8 +2899,14 @@ impl BattleArenaApp {
                     let z1 = world_pos.z + hex_radius * angle1.cos();
                     let x2 = world_pos.x + hex_radius * angle2.sin();
                     let z2 = world_pos.z + hex_radius * angle2.cos();
-                    let y1 = terrain_height_at(x1, z1, 0.0) + 0.1;
-                    let y2 = terrain_height_at(x2, z2, 0.0) + 0.1;
+                    let y1 = self
+                        .sample_build_ground_height(x1, z1)
+                        .map(|y| y + 0.1)
+                        .unwrap_or(world_pos.y + 0.1);
+                    let y2 = self
+                        .sample_build_ground_height(x2, z2)
+                        .map(|y| y + 0.1)
+                        .unwrap_or(world_pos.y + 0.1);
 
                     let edge_dx = x2 - x1;
                     let edge_dz = z2 - z1;
@@ -3213,20 +3461,10 @@ impl BattleArenaApp {
     /// SDF cannon data, and visual system updates. Returns the dynamic index count.
     fn prepare_frame_data(&mut self, time: f32, _delta_time: f32) -> u32 {
         // Build dynamic mesh from scene data (needs &self.scene, then &self for ghost/grid)
-        let mut dynamic_mesh = self.scene.as_ref().unwrap().generate_dynamic_mesh();
-        let mut dynamic_indices: Vec<u32> = (0..dynamic_mesh.len() as u32).collect();
+        let dynamic_mesh = self.scene.as_ref().unwrap().generate_dynamic_mesh();
+        let dynamic_indices: Vec<u32> = (0..dynamic_mesh.len() as u32).collect();
 
-        if let Some(ghost_mesh) = self.generate_ghost_preview_mesh(time) {
-            let base = dynamic_mesh.len() as u32;
-            dynamic_mesh.extend(ghost_mesh.vertices);
-            dynamic_indices.extend(ghost_mesh.indices.iter().map(|i| i + base));
-        }
-
-        if let Some(grid_mesh) = self.generate_grid_overlay_mesh() {
-            let base = dynamic_mesh.len() as u32;
-            dynamic_mesh.extend(grid_mesh.vertices);
-            dynamic_indices.extend(grid_mesh.indices.iter().map(|i| i + base));
-        }
+        // Legacy hex-builder ghost/grid previews are intentionally disabled in battle_arena.
 
         let dynamic_index_count = dynamic_indices.len() as u32;
 
@@ -3560,29 +3798,25 @@ impl BattleArenaApp {
             render_pass.draw_indexed(0..gpu.block_index_count, 0, 0..1);
         }
 
-        // Block placement preview
+        // Block placement preview / drag hologram
+        let mut preview_positions = Vec::new();
         if scene.building.toolbar().visible
             && scene.building.toolbar().show_preview
             && !scene.building.toolbar().is_bridge_mode()
-            && let Some(preview_pos) = scene.building.toolbar().preview_position
         {
-            let shape = scene.building.toolbar().get_selected_shape();
-            let preview_block = BuildingBlock::new(shape, preview_pos, 0);
-            let (preview_verts, preview_indices) = preview_block.generate_mesh();
+            if self.shift_drag_build_active && !self.shift_drag_preview_positions.is_empty() {
+                preview_positions.extend(self.shift_drag_preview_positions.iter().copied());
+            } else if let Some(preview_pos) = scene.building.toolbar().preview_position {
+                preview_positions.push(preview_pos);
+            }
+        }
 
+        if !preview_positions.is_empty() {
             let pulse = (self.start_time.elapsed().as_secs_f32() * 3.0).sin() * 0.5 + 0.5;
-            let highlight_color = [0.2 + pulse * 0.3, 0.9, 0.2 + pulse * 0.2, 0.85];
-
-            let preview_vertices: Vec<Vertex> = preview_verts
-                .iter()
-                .map(|v| Vertex {
-                    position: v.position,
-                    normal: v.normal,
-                    color: highlight_color,
-                })
-                .collect();
-
-            if !preview_vertices.is_empty() && !preview_indices.is_empty() {
+            let alpha = 0.22 + pulse * 0.18;
+            if let Some((preview_vertices, preview_indices)) =
+                self.generate_block_preview_mesh(&preview_positions, alpha, [0.15, 1.0, 0.30])
+            {
                 let preview_vb = gpu
                     .device
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -3597,9 +3831,13 @@ impl BattleArenaApp {
                         contents: bytemuck::cast_slice(&preview_indices),
                         usage: wgpu::BufferUsages::INDEX,
                     });
+                render_pass.set_pipeline(&gpu.preview_pipeline);
+                render_pass.set_bind_group(0, &gpu.uniform_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, preview_vb.slice(..));
                 render_pass.set_index_buffer(preview_ib.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..preview_indices.len() as u32, 0, 0..1);
+                render_pass.set_pipeline(&gpu.pipeline);
+                render_pass.set_bind_group(0, &gpu.uniform_bind_group, &[]);
             }
         }
 
@@ -3961,8 +4199,15 @@ impl BattleArenaApp {
             }
 
             KeyCode::KeyB if pressed => {
-                self.builder_mode.toggle();
+                // Keep legacy hex-builder path disabled to avoid overlay/input conflicts.
+                self.builder_mode.enabled = false;
+                self.builder_mode.cursor_coord = None;
                 scene.building.toolbar_mut().toggle();
+                if !scene.building.toolbar().visible {
+                    self.shift_drag_build_active = false;
+                    self.shift_drag_start = None;
+                    self.shift_drag_preview_positions.clear();
+                }
                 if let Some(window) = &self.window {
                     if scene.building.toolbar().visible {
                         let _ = window.set_cursor_grab(CursorGrabMode::None);
@@ -4198,7 +4443,6 @@ impl ApplicationHandler for BattleArenaApp {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                let scene = self.scene.as_mut().unwrap();
                 let mouse_pos = self.current_mouse_pos.unwrap_or((0.0, 0.0));
 
                 if self.start_overlay.visible && state == ElementState::Pressed {
@@ -4221,28 +4465,43 @@ impl ApplicationHandler for BattleArenaApp {
                             if self.terrain_ui.on_mouse_press(mouse_pos.0, mouse_pos.1) {
                                 return;
                             }
-                        } else if self.terrain_ui.on_mouse_release(mouse_pos.0, mouse_pos.1) {
+                        } else if self.terrain_ui.on_mouse_release(mouse_pos.0, mouse_pos.1)
+                            && let Some(scene) = self.scene.as_mut()
+                        {
                             scene.terrain_needs_rebuild = true;
                         }
 
-                        if scene.building.toolbar().visible && pressed {
-                            if scene.building.toolbar().is_bridge_mode() {
+                        if !pressed && self.shift_drag_build_active {
+                            self.commit_shift_drag_build();
+                        }
+
+                        let toolbar_visible = self
+                            .scene
+                            .as_ref()
+                            .is_some_and(|s| s.building.toolbar().visible);
+                        let bridge_mode = self
+                            .scene
+                            .as_ref()
+                            .is_some_and(|s| s.building.toolbar().is_bridge_mode());
+
+                        if toolbar_visible && pressed {
+                            if self.movement.sprint && !bridge_mode {
+                                self.start_shift_drag_build();
+                            } else if bridge_mode {
                                 self.handle_bridge_click();
                             } else if !self.handle_block_click() {
                                 self.place_building_block();
                             }
-                        } else if self.builder_mode.enabled && pressed {
-                            self.builder_mode.place_at_cursor(&mut scene.hex_grid);
                         }
                     }
                     MouseButton::Right => {
-                        if self.builder_mode.enabled && state == ElementState::Pressed {
-                            self.builder_mode.remove_at_cursor(&mut scene.hex_grid);
-                        }
                         self.mouse_pressed = state == ElementState::Pressed;
                     }
                     MouseButton::Middle => {
-                        if state == ElementState::Pressed && scene.building.toolbar().visible {
+                        if state == ElementState::Pressed
+                            && let Some(scene) = self.scene.as_mut()
+                            && scene.building.toolbar().visible
+                        {
                             scene.building.toolbar_mut().next_material();
                         }
                     }
@@ -4266,9 +4525,6 @@ impl ApplicationHandler for BattleArenaApp {
                 if scene.building.toolbar().visible {
                     scene.building.toolbar_mut().adjust_height(scroll);
                     self.update_block_preview();
-                } else if self.builder_mode.enabled {
-                    let delta = if scroll > 0.0 { 1 } else { -1 };
-                    self.builder_mode.adjust_level(delta);
                 } else {
                     self.camera.position += self.camera.get_forward() * scroll * 5.0;
                 }
@@ -4292,8 +4548,8 @@ impl ApplicationHandler for BattleArenaApp {
                     self.last_fps_update = now;
 
                     if let (Some(window), Some(scene)) = (&self.window, &self.scene) {
-                        let mode_str = if self.builder_mode.enabled {
-                            format!("BUILDER (Mat: {})", self.builder_mode.selected_material + 1)
+                        let mode_str = if scene.building.toolbar().visible {
+                            "Build".to_string()
                         } else {
                             "Combat".to_string()
                         };

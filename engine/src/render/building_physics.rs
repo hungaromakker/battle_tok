@@ -36,6 +36,8 @@ pub struct BlockPhysicsState {
     pub peak_impact: f32,
     /// Is the block detached from structure and can be picked up?
     pub is_loose: bool,
+    /// True when a block is explicitly anchored to terrain on placement.
+    pub terrain_anchored: bool,
     /// Block mass in kg (calculated from volume * material density)
     pub mass: f32,
     /// Current roll axis for spheres/cylinders (None = sliding, not rolling)
@@ -60,6 +62,7 @@ impl Default for BlockPhysicsState {
             accumulated_force: Vec3::ZERO,
             peak_impact: 0.0,
             is_loose: false,
+            terrain_anchored: false,
             mass: 10.0, // Default mass, will be recalculated on register
             rolling_axis: None,
             tumble_progress: 0.0,
@@ -241,6 +244,7 @@ impl BuildingPhysics {
         // New blocks start as NOT supported - the support check will verify
         state.grounded = false;
         state.structurally_supported = false;
+        state.terrain_anchored = false;
         self.states.insert(block_id, state);
         self.graph_dirty = true;
         // Schedule initial support check (very short delay to verify support)
@@ -262,6 +266,7 @@ impl BuildingPhysics {
         // New blocks start as NOT supported - the support check will verify
         state.grounded = false;
         state.structurally_supported = false;
+        state.terrain_anchored = false;
         self.states.insert(block_id, state);
         self.graph_dirty = true;
         // Schedule initial support check (very short delay to verify support)
@@ -273,6 +278,22 @@ impl BuildingPhysics {
         let mut state = BlockPhysicsState::default();
         state.grounded = true;
         state.structurally_supported = true;
+        state.terrain_anchored = true;
+        state.velocity = Vec3::ZERO;
+        state.angular_velocity = Vec3::ZERO;
+        self.states.insert(block_id, state);
+        self.graph_dirty = true;
+    }
+
+    /// Register a block that is attached to structure (stacked/adjacent),
+    /// but not resting on terrain.
+    pub fn register_structurally_supported_block(&mut self, block_id: u32) {
+        let mut state = BlockPhysicsState::default();
+        state.grounded = false;
+        state.structurally_supported = true;
+        state.terrain_anchored = false;
+        state.velocity = Vec3::ZERO;
+        state.angular_velocity = Vec3::ZERO;
         self.states.insert(block_id, state);
         self.graph_dirty = true;
     }
@@ -387,6 +408,12 @@ impl BuildingPhysics {
         let Some(block) = manager.get_block(block_id) else {
             return false;
         };
+
+        if let Some(state) = self.states.get(&block_id)
+            && state.terrain_anchored
+        {
+            return true;
+        }
 
         let aabb = block.aabb();
 
@@ -587,8 +614,10 @@ impl BuildingPhysics {
                     }
                 }
 
-                // Skip further processing if grounded and stable (after friction applied)
-                if state.grounded && state.velocity.length() < self.config.velocity_threshold {
+                // Skip further processing if supported and stable.
+                if (state.grounded || state.structurally_supported)
+                    && state.velocity.length() < self.config.velocity_threshold
+                {
                     state.velocity = Vec3::ZERO;
                     state.reset_frame();
                     continue;
