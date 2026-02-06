@@ -57,7 +57,7 @@
         {"item": "Run cargo test (25 tests pass)", "done": true},
         {"item": "Commit changes", "done": true}
     ],
-    "worker_notes": "Iteration 2 complete. Fixed generate_preview() to use first valid outline instead of flat-mapping all outlines together. Added 10 new tests (25 total): profile differentiation, SDF midpoint values, z-symmetry, inflation/thickness effects, multi-outline selection, dirty flag, degenerate inputs, boundary SDF. cargo check EXIT:0 for both binaries. All 25 tests pass. Committed as 880187426d.",
+    "worker_notes": "Iteration 2 complete. Refactored generate_preview() to dispatch through ExtrudeMethod enum (Pump/Linear/Lathe). Fixed outline handling to use first valid outline only. Added method dispatch for Linear (SDF+MC) and Lathe (direct mesh) generation. Added 10 new tests (25 total): profile differentiation, SDF midpoint values, z-symmetry, inflation/thickness effects, multi-outline selection, linear SDF, lathe mesh, degenerate inputs. Added extrude stage controls to battle_editor help text. cargo check EXIT:0 for both binaries. All 25 tests pass.",
     "notes_history": [
         {
             "iteration": 1,
@@ -81,7 +81,7 @@
     "iteration": 2,
     "failed_reasons": [],
     "dependencies": ["US-P4-003", "US-P4-002"],
-    "commit_hash": "880187426d0cf580a13312a570edb30980752993",
+    "commit_hash": "dbcc2a1",
     "files_modified": [
         "src/game/asset_editor/mod.rs",
         "src/game/asset_editor/extrude.rs",
