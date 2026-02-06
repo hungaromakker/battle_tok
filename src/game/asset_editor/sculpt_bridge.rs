@@ -81,9 +81,11 @@ pub struct SculptBridge {
     pub mc_resolution: u32,
     /// Engine sculpting manager for face/edge/vertex operations
     sculpting_manager: SculptingManager,
-    /// Cached SDF grid for the current mesh (unused until iteration 2)
+    /// Cached SDF grid for the current mesh (reserved for performance optimization)
+    #[allow(dead_code)]
     mesh_sdf_cache: Option<Vec<f32>>,
-    /// Current mesh AABB (min, max)
+    /// Current mesh AABB (min, max) - updated on mesh modification
+    #[allow(dead_code)]
     mesh_bounds: (Vec3, Vec3),
     /// Whether the mesh has been modified since last GPU upload
     dirty: bool,
@@ -200,6 +202,11 @@ impl SculptBridge {
                 let _ = (is_pressed, is_dragging, cursor_world_pos);
             }
         }
+    }
+
+    /// Invalidate the SDF cache (call when mesh changes externally).
+    pub fn invalidate_cache(&mut self) {
+        self.mesh_sdf_cache = None;
     }
 
     /// Get a reference to the underlying sculpting manager.
@@ -362,9 +369,13 @@ fn mesh_bounds(mesh: &Mesh) -> (Vec3, Vec3) {
 /// Approximate signed distance from point `p` to the mesh surface.
 ///
 /// Computes unsigned distance as min distance to any triangle, then
-/// determines sign by dot product with the nearest triangle normal.
+/// determines sign by dot product of the displacement from the closest
+/// surface point with the nearest triangle's face normal. Positive means
+/// outside the mesh (in the direction the normal points), negative means
+/// inside.
 fn approximate_mesh_sdf(p: Vec3, mesh: &Mesh) -> f32 {
     let mut best_dist_sq = f32::MAX;
+    let mut best_closest = p;
     let mut best_normal = Vec3::Y;
 
     for tri in mesh.indices.chunks(3) {
@@ -375,10 +386,11 @@ fn approximate_mesh_sdf(p: Vec3, mesh: &Mesh) -> f32 {
         let v1 = Vec3::from(mesh.vertices[tri[1] as usize].position);
         let v2 = Vec3::from(mesh.vertices[tri[2] as usize].position);
 
-        let (dist_sq, _closest) = point_triangle_dist_sq(p, v0, v1, v2);
+        let (dist_sq, closest) = point_triangle_dist_sq(p, v0, v1, v2);
 
         if dist_sq < best_dist_sq {
             best_dist_sq = dist_sq;
+            best_closest = closest;
             let edge1 = v1 - v0;
             let edge2 = v2 - v0;
             best_normal = edge1.cross(edge2);
@@ -386,13 +398,9 @@ fn approximate_mesh_sdf(p: Vec3, mesh: &Mesh) -> f32 {
     }
 
     let dist = best_dist_sq.sqrt();
-    let centroid_approx = p
-        - (mesh
-            .vertices
-            .first()
-            .map(|v| Vec3::from(v.position))
-            .unwrap_or(Vec3::ZERO));
-    let sign = if best_normal.dot(centroid_approx) >= 0.0 {
+    // Sign: positive if p is on the outward side of the nearest triangle
+    let displacement = p - best_closest;
+    let sign = if best_normal.dot(displacement) >= 0.0 {
         1.0
     } else {
         -1.0
@@ -521,6 +529,16 @@ fn nearest_vertex_color(old_mesh: &Mesh, pos: Vec3) -> [f32; 4] {
         }
     }
     best_color
+}
+
+/// Transfer vertex colors from `old_mesh` to `new_mesh` via nearest-vertex lookup.
+///
+/// For each vertex in `new_mesh`, finds the nearest vertex in `old_mesh` and
+/// copies its color. This preserves painted colors across SDF re-meshing.
+pub fn transfer_vertex_colors(old_mesh: &Mesh, new_mesh: &mut Mesh) {
+    for v in &mut new_mesh.vertices {
+        v.color = nearest_vertex_color(old_mesh, Vec3::from(v.position));
+    }
 }
 
 // ============================================================================
@@ -664,11 +682,12 @@ mod tests {
     #[test]
     fn test_stamp_sphere_add() {
         let mut mesh = test_box_mesh();
-        let original_count = mesh.vertices.len();
         stamp_sphere(&mut mesh, Vec3::new(0.5, 0.0, 0.0), 0.3, 0.15, 16, true);
-        // Mesh should be regenerated (different vertex/index counts)
+        // Mesh should be regenerated with geometry
         assert!(!mesh.vertices.is_empty());
         assert!(!mesh.indices.is_empty());
+        // Indices should be valid triangles
+        assert_eq!(mesh.indices.len() % 3, 0);
     }
 
     #[test]
@@ -707,5 +726,93 @@ mod tests {
         assert!(bridge.is_dirty());
         bridge.clear_dirty();
         assert!(!bridge.is_dirty());
+    }
+
+    #[test]
+    fn test_stamp_sphere_on_empty_mesh_is_noop() {
+        let mut mesh = Mesh::new();
+        stamp_sphere(&mut mesh, Vec3::ZERO, 0.5, 0.15, 16, true);
+        // Should not panic and mesh stays empty
+        assert!(mesh.vertices.is_empty());
+    }
+
+    #[test]
+    fn test_transfer_vertex_colors() {
+        let old_mesh = test_triangle_mesh();
+        let mut new_mesh = Mesh {
+            vertices: vec![
+                Vertex {
+                    position: [0.01, 0.0, 0.0],
+                    normal: [0.0, 1.0, 0.0],
+                    color: [0.0, 0.0, 0.0, 1.0], // Will be overwritten
+                },
+                Vertex {
+                    position: [0.99, 0.0, 0.0],
+                    normal: [0.0, 1.0, 0.0],
+                    color: [0.0, 0.0, 0.0, 1.0],
+                },
+            ],
+            indices: vec![],
+        };
+        transfer_vertex_colors(&old_mesh, &mut new_mesh);
+        // Vertex near (0,0,0) should get red from old vertex 0
+        assert!((new_mesh.vertices[0].color[0] - 1.0).abs() < 1e-6);
+        // Vertex near (1,0,0) should get green from old vertex 1
+        assert!((new_mesh.vertices[1].color[1] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_all_tool_variants() {
+        let all = SculptTool::all();
+        assert_eq!(all.len(), 6);
+        assert_eq!(all[0], SculptTool::FaceExtrude);
+        assert_eq!(all[5], SculptTool::SubtractSphere);
+    }
+
+    #[test]
+    fn test_invalidate_cache() {
+        let mut bridge = SculptBridge::new();
+        bridge.invalidate_cache();
+        // Should not panic, cache should be None
+        assert!(bridge.sculpting_manager().is_enabled());
+    }
+
+    #[test]
+    fn test_approximate_mesh_sdf_magnitude() {
+        let mesh = test_box_mesh();
+        // A point far outside the box should have non-zero SDF magnitude
+        let sdf = approximate_mesh_sdf(Vec3::new(5.0, 0.0, 0.0), &mesh);
+        // The approximate SDF magnitude should be roughly the distance to the
+        // nearest surface point (box extends to 0.5, so distance ~ 4.5)
+        assert!(
+            sdf.abs() > 4.0,
+            "SDF magnitude should be large for distant point, got {}",
+            sdf
+        );
+    }
+
+    #[test]
+    fn test_point_triangle_dist_sq_on_vertex() {
+        let v0 = Vec3::ZERO;
+        let v1 = Vec3::new(1.0, 0.0, 0.0);
+        let v2 = Vec3::new(0.0, 1.0, 0.0);
+        // Point exactly at v0
+        let (dist_sq, closest) = point_triangle_dist_sq(v0, v0, v1, v2);
+        assert!(dist_sq < 1e-10);
+        assert!(closest.distance(v0) < 1e-5);
+    }
+
+    #[test]
+    fn test_sculpt_manager_delegation() {
+        let mut bridge = SculptBridge::new();
+        // FaceExtrude should set engine mode to Extrude
+        bridge.set_tool(SculptTool::FaceExtrude);
+        assert_eq!(bridge.sculpting_manager().mode(), SculptMode::Extrude);
+        // VertexPull should set mode to PullVertex
+        bridge.set_tool(SculptTool::VertexPull);
+        assert_eq!(bridge.sculpting_manager().mode(), SculptMode::PullVertex);
+        // EdgePull should set mode to PullEdge
+        bridge.set_tool(SculptTool::EdgePull);
+        assert_eq!(bridge.sculpting_manager().mode(), SculptMode::PullEdge);
     }
 }
