@@ -53,6 +53,40 @@ use battle_tok_engine::game::asset_editor::{AssetEditor, EditorStage};
 use battle_tok_engine::game::types::Vertex;
 
 // ============================================================================
+// GPU UNIFORM TYPES
+// ============================================================================
+
+/// Uniform data for the 3D mesh pipeline (view-projection + lighting).
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct MeshUniforms {
+    view_projection: [[f32; 4]; 4],
+    light_dir: [f32; 3],
+    _pad: f32,
+}
+
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+/// Create a depth texture view for the 3D mesh pipeline.
+fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Editor Depth Texture"),
+        size: wgpu::Extent3d {
+            width: width.max(1),
+            height: height.max(1),
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: DEPTH_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
+}
+
+// ============================================================================
 // GPU RESOURCES (minimal for editor)
 // ============================================================================
 
@@ -64,6 +98,14 @@ struct EditorGpu {
     surface_config: wgpu::SurfaceConfiguration,
     /// Render pipeline for 2D canvas overlays (vertex-colored triangles).
     overlay_pipeline: wgpu::RenderPipeline,
+    /// Render pipeline for 3D mesh preview (stages 2-5) with depth + lighting.
+    mesh_pipeline: wgpu::RenderPipeline,
+    /// Uniform buffer for 3D mesh pipeline (view-projection + light).
+    mesh_uniform_buffer: wgpu::Buffer,
+    /// Bind group for the 3D mesh uniform.
+    mesh_bind_group: wgpu::BindGroup,
+    /// Depth texture view for 3D rendering (recreated on resize).
+    depth_view: wgpu::TextureView,
 }
 
 impl EditorGpu {
@@ -72,6 +114,9 @@ impl EditorGpu {
             self.surface_config.width = new_size.width;
             self.surface_config.height = new_size.height;
             self.surface.configure(&self.device, &self.surface_config);
+            // Recreate depth texture to match new surface size
+            self.depth_view =
+                create_depth_texture(&self.device, new_size.width, new_size.height);
         }
     }
 }
@@ -243,12 +288,133 @@ impl BattleEditorApp {
             cache: None,
         });
 
+        // ----------------------------------------------------------------
+        // 3D Mesh Pipeline (stages 2-5): orbit camera + depth + lighting
+        // ----------------------------------------------------------------
+        let mesh_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Editor 3D Shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../shaders/editor_3d.wgsl").into(),
+            ),
+        });
+
+        let mesh_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Editor 3D Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let mesh_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Editor 3D Pipeline Layout"),
+                bind_group_layouts: &[&mesh_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        // Vertex buffer layout is identical for Vertex and BlockVertex (same repr(C) layout)
+        let vertex_buffer_layout = wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as u64, // 40 bytes
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x3,
+                    offset: 0,
+                    shader_location: 0, // position
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x3,
+                    offset: 12,
+                    shader_location: 1, // normal
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    offset: 24,
+                    shader_location: 2, // color
+                },
+            ],
+        };
+
+        let mesh_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Editor 3D Pipeline"),
+                layout: Some(&mesh_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &mesh_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[vertex_buffer_layout],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &mesh_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: surface_format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
+        let mesh_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Editor 3D Uniform Buffer"),
+            contents: bytemuck::bytes_of(&MeshUniforms {
+                view_projection: [[0.0; 4]; 4],
+                light_dir: [0.5, 0.8, 0.3],
+                _pad: 0.0,
+            }),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let mesh_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Editor 3D Bind Group"),
+            layout: &mesh_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: mesh_uniform_buffer.as_entire_binding(),
+            }],
+        });
+
+        let depth_view = create_depth_texture(&device, size.width.max(1), size.height.max(1));
+
         self.gpu = Some(EditorGpu {
             device,
             queue,
             surface,
             surface_config,
             overlay_pipeline,
+            mesh_pipeline,
+            mesh_uniform_buffer,
+            mesh_bind_group,
+            depth_view,
         });
 
         // Set initial window title
@@ -384,6 +550,25 @@ impl BattleEditorApp {
                         return;
                     }
                 }
+            }
+        }
+
+        // Placement controls (active when library asset is selected)
+        if self.editor.placement.is_active() {
+            match key {
+                KeyCode::KeyR => {
+                    self.editor.placement.handle_rotate();
+                    return;
+                }
+                KeyCode::BracketLeft => {
+                    self.editor.placement.handle_scale_down();
+                    return;
+                }
+                KeyCode::BracketRight => {
+                    self.editor.placement.handle_scale_up();
+                    return;
+                }
+                _ => {}
             }
         }
 
@@ -584,6 +769,71 @@ impl BattleEditorApp {
             }
         }
 
+        // Render 3D mesh (stages 2-5) with orbit camera
+        if self.editor.uses_orbit_camera()
+            && !self.editor.extruder.mesh_vertices.is_empty()
+            && !self.editor.extruder.mesh_indices.is_empty()
+        {
+            // Update uniform buffer with orbit camera view-projection
+            let uniforms = MeshUniforms {
+                view_projection: self.editor.camera.view_projection_matrix(),
+                light_dir: [0.5, 0.8, 0.3],
+                _pad: 0.0,
+            };
+            gpu.queue.write_buffer(
+                &gpu.mesh_uniform_buffer,
+                0,
+                bytemuck::bytes_of(&uniforms),
+            );
+
+            let mesh_vb = gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("3D Mesh Vertex Buffer"),
+                    contents: bytemuck::cast_slice(&self.editor.extruder.mesh_vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+            let mesh_ib = gpu
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("3D Mesh Index Buffer"),
+                    contents: bytemuck::cast_slice(&self.editor.extruder.mesh_indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
+
+            let num_indices = self.editor.extruder.mesh_indices.len() as u32;
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Editor 3D Mesh Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &gpu.depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+
+                pass.set_pipeline(&gpu.mesh_pipeline);
+                pass.set_bind_group(0, &gpu.mesh_bind_group, &[]);
+                pass.set_vertex_buffer(0, mesh_vb.slice(..));
+                pass.set_index_buffer(mesh_ib.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..num_indices, 0, 0..1);
+            }
+        }
+
         // Render canvas overlay (grid, outlines, tool previews)
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
@@ -690,9 +940,26 @@ impl ApplicationHandler for BattleEditorApp {
                         .as_ref()
                         .map(|g| g.surface_config.height as f32)
                         .unwrap_or(800.0);
-                    if self.editor.library.handle_click(mx, my, sw, sh).is_some() {
+                    if let Some(action) = self.editor.library.handle_click(mx, my, sw, sh) {
+                        // Forward library selection to placement system
+                        let _ = action;
+                        let asset_id = self.editor.library.selected_entry()
+                            .map(|e| e.id.clone());
+                        self.editor.placement.select_asset(asset_id);
                         return; // Consumed by library
                     }
+                }
+
+                // Placement click handling (left click when asset selected)
+                if button == MouseButton::Left && pressed && self.editor.placement.is_active() {
+                    if self.ctrl_held {
+                        // Ctrl+Click: scatter brush with flat ground fallback
+                        let ground_raycast = |_x: f32, _z: f32| -> Option<f32> { Some(0.0) };
+                        self.editor.placement.handle_scatter_click(&ground_raycast);
+                    } else {
+                        self.editor.placement.handle_click();
+                    }
+                    return;
                 }
 
                 if self.editor.stage == EditorStage::Draw2D {

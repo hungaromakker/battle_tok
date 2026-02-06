@@ -11,6 +11,7 @@ pub mod image_trace;
 pub mod library;
 pub mod orbit_camera;
 pub mod paint;
+pub mod placement;
 pub mod sculpt_bridge;
 pub mod ui_panels;
 pub mod undo;
@@ -26,6 +27,7 @@ use extrude::{Extruder, PumpProfile};
 use library::AssetLibrary;
 use orbit_camera::OrbitCamera;
 use paint::PaintSystem;
+use placement::PlacementSystem;
 use sculpt_bridge::SculptBridge;
 use undo::UndoStack;
 use variety::VarietyParams;
@@ -231,6 +233,8 @@ pub struct AssetEditor {
     pub save_dialog: SaveDialog,
     /// Asset library panel (F10 toggle)
     pub library: AssetLibrary,
+    /// World placement system for placing assets in the scene
+    pub placement: PlacementSystem,
 }
 
 impl Default for AssetEditor {
@@ -254,6 +258,7 @@ impl AssetEditor {
             paint: PaintSystem::new(),
             save_dialog: SaveDialog::default(),
             library: AssetLibrary::load(),
+            placement: PlacementSystem::new(),
         }
     }
 
@@ -389,6 +394,7 @@ impl AssetEditor {
         self.sculpt = SculptBridge::new();
         self.paint = PaintSystem::new();
         self.save_dialog = SaveDialog::default();
+        self.placement = PlacementSystem::new();
     }
 
     /// Save the current mesh as a .btasset file.
