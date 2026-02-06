@@ -13,7 +13,11 @@
 //! - 5: Save stage
 //! - D: Freehand draw tool (stage 1)
 //! - L: Line tool (stage 1)
+//! - A: Arc tool - 3-click arc creation (stage 1)
+//! - E: Eraser tool - circle cursor point removal (stage 1)
+//! - M: Toggle mirror symmetry at x=0 (stage 1)
 //! - G: Toggle grid (stage 1)
+//! - [ / ]: Decrease/increase eraser radius (stage 1)
 //! - Left mouse: Draw (stage 1)
 //! - Middle/right mouse drag: Pan canvas (stage 1)
 //! - Scroll wheel: Zoom canvas (stage 1)
@@ -245,8 +249,28 @@ impl BattleEditorApp {
                     self.editor.canvas.select_line();
                     return;
                 }
+                KeyCode::KeyA => {
+                    self.editor.canvas.select_arc();
+                    return;
+                }
+                KeyCode::KeyE => {
+                    self.editor.canvas.select_eraser();
+                    return;
+                }
+                KeyCode::KeyM => {
+                    self.editor.canvas.toggle_mirror();
+                    return;
+                }
                 KeyCode::KeyG => {
                     self.editor.canvas.toggle_grid();
+                    return;
+                }
+                KeyCode::BracketLeft => {
+                    self.editor.canvas.decrease_eraser_radius();
+                    return;
+                }
+                KeyCode::BracketRight => {
+                    self.editor.canvas.increase_eraser_radius();
                     return;
                 }
                 _ => {}
@@ -554,7 +578,11 @@ fn main() {
     println!("  1-5: Switch editor stage");
     println!("  D: Freehand draw tool (stage 1)");
     println!("  L: Line tool (stage 1)");
+    println!("  A: Arc tool (stage 1)");
+    println!("  E: Eraser tool (stage 1)");
+    println!("  M: Toggle mirror symmetry (stage 1)");
     println!("  G: Toggle grid (stage 1)");
+    println!("  [/]: Adjust eraser radius (stage 1)");
     println!("  Left mouse: Draw (stage 1)");
     println!("  Middle/right drag: Pan canvas (stage 1)");
     println!("  Scroll wheel: Zoom canvas (stage 1)");
