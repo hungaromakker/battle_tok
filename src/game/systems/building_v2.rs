@@ -13,6 +13,7 @@ pub struct StructuralNode {
     pub cell: IVec3,
     pub material: u8,
     pub terrain_anchor: bool,
+    pub is_joint: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,11 +73,20 @@ impl BuildingSystemV2 {
         self.by_cell.contains_key(&cell)
     }
 
-    pub fn can_place(&self, cell: IVec3, terrain_anchor: bool) -> Result<(), PlaceError> {
+    pub fn can_place(
+        &self,
+        cell: IVec3,
+        terrain_anchor: bool,
+        is_joint: bool,
+    ) -> Result<(), PlaceError> {
         if self.is_occupied(cell) {
             return Err(PlaceError::Occupied);
         }
-        if terrain_anchor || self.has_stable_below(cell) {
+        if terrain_anchor
+            || self.has_stable_below(cell)
+            || (is_joint && self.has_stable_lateral_joint(cell))
+            || (!is_joint && self.has_adjacent_stable_joint(cell))
+        {
             Ok(())
         } else {
             Err(PlaceError::NeedsSupport)
@@ -89,14 +99,16 @@ impl BuildingSystemV2 {
         cell: IVec3,
         material: u8,
         terrain_anchor: bool,
+        is_joint: bool,
     ) -> Result<(), PlaceError> {
-        self.can_place(cell, terrain_anchor)?;
+        self.can_place(cell, terrain_anchor, is_joint)?;
 
         let node = StructuralNode {
             block_id,
             cell,
             material,
             terrain_anchor,
+            is_joint,
         };
         self.nodes.insert(block_id, node);
         self.by_cell.insert(cell, block_id);
@@ -155,6 +167,40 @@ impl BuildingSystemV2 {
             .is_some_and(|below_id| self.stable_nodes.contains(below_id))
     }
 
+    fn has_stable_lateral_joint(&self, cell: IVec3) -> bool {
+        [
+            IVec3::new(cell.x + 1, cell.y, cell.z),
+            IVec3::new(cell.x - 1, cell.y, cell.z),
+            IVec3::new(cell.x, cell.y, cell.z + 1),
+            IVec3::new(cell.x, cell.y, cell.z - 1),
+        ]
+        .into_iter()
+        .any(|neighbor| {
+            self.by_cell
+                .get(&neighbor)
+                .and_then(|id| self.nodes.get(id))
+                .is_some_and(|n| n.is_joint && self.stable_nodes.contains(&n.block_id))
+        })
+    }
+
+    fn has_adjacent_stable_joint(&self, cell: IVec3) -> bool {
+        [
+            IVec3::new(cell.x + 1, cell.y, cell.z),
+            IVec3::new(cell.x - 1, cell.y, cell.z),
+            IVec3::new(cell.x, cell.y + 1, cell.z),
+            IVec3::new(cell.x, cell.y - 1, cell.z),
+            IVec3::new(cell.x, cell.y, cell.z + 1),
+            IVec3::new(cell.x, cell.y, cell.z - 1),
+        ]
+        .into_iter()
+        .any(|neighbor| {
+            self.by_cell
+                .get(&neighbor)
+                .and_then(|id| self.nodes.get(id))
+                .is_some_and(|n| n.is_joint && self.stable_nodes.contains(&n.block_id))
+        })
+    }
+
     fn recompute_support(&mut self) {
         self.stable_nodes.clear();
         self.unstable_nodes.clear();
@@ -165,19 +211,40 @@ impl BuildingSystemV2 {
         let mut node_ids: Vec<u32> = self.nodes.keys().copied().collect();
         node_ids.sort_by_key(|id| self.nodes.get(id).map(|n| n.cell.y).unwrap_or(i32::MAX));
 
-        for id in node_ids {
-            let Some(node) = self.nodes.get(&id) else {
-                continue;
-            };
-            if node.terrain_anchor || self.terrain_anchors.contains(&id) {
-                self.stable_nodes.insert(id);
-                continue;
-            }
-            let below = node.cell + IVec3::new(0, -1, 0);
-            if let Some(below_id) = self.by_cell.get(&below)
-                && self.stable_nodes.contains(below_id)
+        for id in &node_ids {
+            if self
+                .nodes
+                .get(id)
+                .is_some_and(|n| n.terrain_anchor || self.terrain_anchors.contains(id))
             {
-                self.stable_nodes.insert(id);
+                self.stable_nodes.insert(*id);
+            }
+        }
+
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for id in &node_ids {
+                if self.stable_nodes.contains(id) {
+                    continue;
+                }
+                let Some(node) = self.nodes.get(id) else {
+                    continue;
+                };
+                let below = node.cell + IVec3::new(0, -1, 0);
+                let stable_below = self
+                    .by_cell
+                    .get(&below)
+                    .is_some_and(|below_id| self.stable_nodes.contains(below_id));
+                let stable_joint_neighbor = if node.is_joint {
+                    self.has_stable_lateral_joint(node.cell)
+                } else {
+                    self.has_adjacent_stable_joint(node.cell)
+                };
+                if stable_below || stable_joint_neighbor {
+                    self.stable_nodes.insert(*id);
+                    changed = true;
+                }
             }
         }
 
@@ -196,7 +263,7 @@ mod tests {
     #[test]
     fn rejects_floating_first_block() {
         let mut v2 = BuildingSystemV2::new();
-        let result = v2.insert_block(1, IVec3::new(0, 3, 0), 0, false);
+        let result = v2.insert_block(1, IVec3::new(0, 3, 0), 0, false, false);
         assert_eq!(result, Err(PlaceError::NeedsSupport));
         assert_eq!(v2.node_count(), 0);
     }
@@ -204,8 +271,8 @@ mod tests {
     #[test]
     fn accepts_ground_anchor_then_stack() {
         let mut v2 = BuildingSystemV2::new();
-        assert!(v2.insert_block(1, IVec3::new(0, 0, 0), 0, true).is_ok());
-        assert!(v2.insert_block(2, IVec3::new(0, 1, 0), 0, false).is_ok());
+        assert!(v2.insert_block(1, IVec3::new(0, 0, 0), 0, true, true).is_ok());
+        assert!(v2.insert_block(2, IVec3::new(0, 1, 0), 0, false, false).is_ok());
         assert!(v2.is_stable(1));
         assert!(v2.is_stable(2));
         assert_eq!(v2.stable_count(), 2);
@@ -214,9 +281,9 @@ mod tests {
     #[test]
     fn removing_anchor_marks_component_unstable() {
         let mut v2 = BuildingSystemV2::new();
-        assert!(v2.insert_block(1, IVec3::new(0, 0, 0), 0, true).is_ok());
-        assert!(v2.insert_block(2, IVec3::new(0, 1, 0), 0, false).is_ok());
-        assert!(v2.insert_block(3, IVec3::new(0, 2, 0), 0, false).is_ok());
+        assert!(v2.insert_block(1, IVec3::new(0, 0, 0), 0, true, true).is_ok());
+        assert!(v2.insert_block(2, IVec3::new(0, 1, 0), 0, false, false).is_ok());
+        assert!(v2.insert_block(3, IVec3::new(0, 2, 0), 0, false, false).is_ok());
 
         let unstable = v2.remove_block(1);
         assert!(unstable.contains(&2));
@@ -226,12 +293,17 @@ mod tests {
     }
 
     #[test]
-    fn rejects_lateral_only_support() {
+    fn accepts_infill_adjacent_to_joint() {
         let mut v2 = BuildingSystemV2::new();
-        assert!(v2.insert_block(1, IVec3::new(0, 0, 0), 0, true).is_ok());
-        assert_eq!(
-            v2.insert_block(2, IVec3::new(1, 0, 0), 0, false),
-            Err(PlaceError::NeedsSupport)
-        );
+        assert!(v2.insert_block(1, IVec3::new(0, 0, 0), 0, true, true).is_ok());
+        assert!(v2.insert_block(2, IVec3::new(1, 0, 0), 0, false, false).is_ok());
+    }
+
+    #[test]
+    fn accepts_lateral_joint_extension() {
+        let mut v2 = BuildingSystemV2::new();
+        assert!(v2.insert_block(1, IVec3::new(0, 0, 0), 0, true, true).is_ok());
+        assert!(v2.insert_block(2, IVec3::new(1, 0, 0), 0, false, true).is_ok());
+        assert!(v2.is_stable(2));
     }
 }

@@ -52,9 +52,9 @@ const JOINT_OVERSTRESS_DECAY: f32 = 0.82;
 /// The runtime physics system still uses full densities for impacts. These
 /// values only tune the static integrity solver so normal supported walls do
 /// not self-crush under gravity every few frames.
-const JOINT_STRUCTURAL_DENSITY_SCALE: f32 = 0.10;
-const JOINT_STRUCTURAL_DENSITY_MIN: f32 = 80.0;
-const JOINT_STRUCTURAL_DENSITY_MAX: f32 = 360.0;
+const JOINT_STRUCTURAL_DENSITY_SCALE: f32 = 0.07;
+const JOINT_STRUCTURAL_DENSITY_MIN: f32 = 70.0;
+const JOINT_STRUCTURAL_DENSITY_MAX: f32 = 300.0;
 /// Limit a single collapse event to a local area so one impact cannot erase an
 /// entire castle instantly.
 const JOINT_COLLAPSE_RADIUS_CELLS: i32 = 5;
@@ -75,6 +75,7 @@ pub struct BuildingSystem {
     damage_accumulated: HashMap<u32, f32>,
     crack_stage: HashMap<u32, u8>,
     joint_overstress: HashMap<u32, f32>,
+    joint_blocks: HashSet<u32>,
     dynamic_rubble_ids: HashSet<u32>,
     dynamic_rubble_order: VecDeque<u32>,
     rubble_piles: HashMap<u32, RubblePileNode>,
@@ -164,6 +165,7 @@ impl BuildingSystem {
             damage_accumulated: HashMap::new(),
             crack_stage: HashMap::new(),
             joint_overstress: HashMap::new(),
+            joint_blocks: HashSet::new(),
             dynamic_rubble_ids: HashSet::new(),
             dynamic_rubble_order: VecDeque::new(),
             rubble_piles: HashMap::new(),
@@ -215,12 +217,13 @@ impl BuildingSystem {
 
         let block = BuildingBlock::new(shape, position, material);
         let terrain_anchor = Self::is_terrain_anchor(&block, ground_height_hint);
+        let is_joint = Self::is_joint_shape(shape);
         let cell = BuildingSystemV2::world_to_cell(position, BLOCK_GRID_SIZE);
 
         if ENFORCE_JOINT_OUTLINE_BUILD
             && !terrain_anchor
-            && !Self::is_joint_shape(shape)
-            && !self.has_structural_neighbor(cell)
+            && !is_joint
+            && !self.has_joint_neighbor(cell)
         {
             if DEBUG_BLOCK_EVENTS {
                 println!(
@@ -231,7 +234,7 @@ impl BuildingSystem {
             return None;
         }
 
-        match self.statics_v2.can_place(cell, terrain_anchor) {
+        match self.statics_v2.can_place(cell, terrain_anchor, is_joint) {
             Ok(()) => {}
             Err(PlaceError::Occupied) | Err(PlaceError::NeedsSupport) => return None,
         }
@@ -239,7 +242,7 @@ impl BuildingSystem {
         let block_id = self.block_manager.add_block(block);
         if let Err(reason) = self
             .statics_v2
-            .insert_block(block_id, cell, material, terrain_anchor)
+            .insert_block(block_id, cell, material, terrain_anchor, is_joint)
         {
             self.block_manager.remove_block(block_id);
             if VERBOSE_BUILD_LOGS {
@@ -265,10 +268,13 @@ impl BuildingSystem {
         self.damage_accumulated.insert(block_id, 0.0);
         self.crack_stage.insert(block_id, 0);
         self.joint_overstress.insert(block_id, 0.0);
+        if is_joint {
+            self.joint_blocks.insert(block_id);
+        }
 
         if DEBUG_BLOCK_EVENTS {
             println!(
-                "[BlockPlace] id={} material={} shape={:?} world=({:.3},{:.3},{:.3}) cell=({}, {}, {}) anchor={}",
+                "[BlockPlace] id={} material={} shape={:?} world=({:.3},{:.3},{:.3}) cell=({}, {}, {}) anchor={} joint={}",
                 block_id,
                 material,
                 shape,
@@ -278,7 +284,8 @@ impl BuildingSystem {
                 cell.x,
                 cell.y,
                 cell.z,
-                terrain_anchor
+                terrain_anchor,
+                is_joint
             );
         }
 
@@ -716,6 +723,7 @@ impl BuildingSystem {
             self.damage_accumulated.remove(&block_id);
             self.crack_stage.remove(&block_id);
             self.joint_overstress.remove(&block_id);
+            self.joint_blocks.remove(&block_id);
             return Vec::new();
         }
 
@@ -724,6 +732,7 @@ impl BuildingSystem {
         self.damage_accumulated.remove(&block_id);
         self.crack_stage.remove(&block_id);
         self.joint_overstress.remove(&block_id);
+        self.joint_blocks.remove(&block_id);
 
         let unstable = self.statics_v2.remove_block(block_id);
         let detached = self.detach_unstable_static_chain(unstable);
@@ -744,7 +753,10 @@ impl BuildingSystem {
         material: u8,
     ) {
         let cell = BuildingSystemV2::world_to_cell(position, BLOCK_GRID_SIZE);
-        if let Err(err) = self.statics_v2.insert_block(block_id, cell, material, true) {
+        if let Err(err) = self
+            .statics_v2
+            .insert_block(block_id, cell, material, true, false)
+        {
             if VERBOSE_BUILD_LOGS {
                 println!(
                     "[BuildV2] External block registration failed for ID {} at {:?}: {:?}",
@@ -944,6 +956,9 @@ impl BuildingSystem {
         cell: IVec3,
         by_cell: &HashMap<IVec3, u32>,
     ) -> Option<JointStressOutcome> {
+        if !self.joint_blocks.contains(&block_id) {
+            return None;
+        }
         let state = self.block_physics.get_state(block_id)?;
         if state.terrain_anchored || state.is_loose {
             return None;
@@ -956,25 +971,35 @@ impl BuildingSystem {
             .clamp(JOINT_STRUCTURAL_DENSITY_MIN, JOINT_STRUCTURAL_DENSITY_MAX);
         let weight_newtons = volume * structural_density * self.block_physics.config.gravity.abs();
 
-        let below_count = usize::from(by_cell.contains_key(&IVec3::new(cell.x, cell.y - 1, cell.z)));
-        let side_count = [
+        let below_count =
+            usize::from(by_cell.get(&IVec3::new(cell.x, cell.y - 1, cell.z)).is_some_and(
+                |id| self.joint_blocks.contains(id),
+            ));
+        let mut side_joint_count = 0usize;
+        let mut side_infill_count = 0usize;
+        for neighbor in [
             IVec3::new(cell.x + 1, cell.y, cell.z),
             IVec3::new(cell.x - 1, cell.y, cell.z),
             IVec3::new(cell.x, cell.y, cell.z + 1),
             IVec3::new(cell.x, cell.y, cell.z - 1),
-        ]
-        .iter()
-        .filter(|neighbor| by_cell.contains_key(neighbor))
-        .count();
+        ] {
+            if let Some(id) = by_cell.get(&neighbor) {
+                if self.joint_blocks.contains(id) {
+                    side_joint_count += 1;
+                } else {
+                    side_infill_count += 1;
+                }
+            }
+        }
 
         let above_column = (1..=6)
             .take_while(|step| by_cell.contains_key(&IVec3::new(cell.x, cell.y + *step, cell.z)))
             .count() as f32;
-        let column_factor = 1.0 + above_column * 0.42;
+        let column_factor = 1.0 + above_column * 0.42 + side_infill_count as f32 * 0.08;
         let total_vertical_load = weight_newtons * column_factor;
 
         let down_support = below_count.max(1) as f32;
-        let lateral_ties = side_count as f32;
+        let lateral_ties = side_joint_count as f32;
         let unsupported = below_count == 0;
 
         let compression_capacity = profile.compression_n * down_support * (1.0 + lateral_ties * 0.18);
@@ -1047,6 +1072,9 @@ impl BuildingSystem {
             if !visited.insert(candidate_id) {
                 continue;
             }
+            if !self.joint_blocks.contains(&candidate_id) {
+                continue;
+            }
             if !self.statics_v2.contains_block_id(candidate_id) {
                 continue;
             }
@@ -1076,7 +1104,9 @@ impl BuildingSystem {
                 IVec3::new(candidate_cell.x, candidate_cell.y, candidate_cell.z - 1),
             ] {
                 if let Some(neighbor_id) = self.statics_v2.block_id_at_cell(neighbor) {
-                    queue.push_back(neighbor_id);
+                    if self.joint_blocks.contains(&neighbor_id) {
+                        queue.push_back(neighbor_id);
+                    }
                 }
             }
         }
@@ -1274,6 +1304,7 @@ impl BuildingSystem {
         self.damage_accumulated.remove(&block_id);
         self.crack_stage.remove(&block_id);
         self.joint_overstress.remove(&block_id);
+        self.joint_blocks.remove(&block_id);
     }
 
     fn add_units_to_rubble_pile(
@@ -1419,7 +1450,7 @@ impl BuildingSystem {
         )
     }
 
-    fn has_structural_neighbor(&self, cell: IVec3) -> bool {
+    fn has_joint_neighbor(&self, cell: IVec3) -> bool {
         const OFFSETS: [IVec3; 6] = [
             IVec3::new(1, 0, 0),
             IVec3::new(-1, 0, 0),
@@ -1430,7 +1461,10 @@ impl BuildingSystem {
         ];
         for offset in OFFSETS {
             let neighbor_cell = cell + offset;
-            if self.statics_v2.block_id_at_cell(neighbor_cell).is_some() {
+            let Some(neighbor_id) = self.statics_v2.block_id_at_cell(neighbor_cell) else {
+                continue;
+            };
+            if self.joint_blocks.contains(&neighbor_id) {
                 return true;
             }
         }
@@ -1554,7 +1588,10 @@ mod tests {
                 0,
                 Some(0.0),
             );
-            assert!(placed.is_some(), "base placement failed at x={x}");
+            let Some(block_id) = placed else {
+                panic!("base placement failed at x={x}");
+            };
+            system.joint_blocks.insert(block_id);
         }
 
         for y in 1..=3 {
@@ -1565,10 +1602,10 @@ mod tests {
                     0,
                     None,
                 );
-                assert!(
-                    placed.is_some(),
-                    "window-wall placement failed at ({x}, {y})"
-                );
+                let Some(block_id) = placed else {
+                    panic!("window-wall placement failed at ({x}, {y})");
+                };
+                system.joint_blocks.insert(block_id);
             }
         }
 
@@ -1608,6 +1645,19 @@ mod tests {
             stress.overload_ratio <= 1.0,
             "supported wall block overloaded at placement (ratio={:.3})",
             stress.overload_ratio
+        );
+
+        let destroyed = system.run_integrity_pass(0.25);
+        assert!(
+            destroyed.is_empty(),
+            "supported window wall should not lose blocks to passive integrity"
+        );
+        assert!(
+            system
+                .damage_accumulated
+                .values()
+                .all(|damage| damage.abs() <= f32::EPSILON),
+            "supported window wall should not receive passive damage"
         );
     }
 }
