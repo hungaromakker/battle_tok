@@ -20,7 +20,7 @@ use crate::game::state::GameState;
 use crate::game::systems::building_system::DestroyedBlock;
 use crate::game::systems::{
     BuildingSystem, CannonSystem, CollisionSystem, DestructionSystem, MeteorSystem, ProjectileKind,
-    ProjectileSystem,
+    ProjectileSystem, DamageSource,
 };
 use crate::game::trees::{PlacedTree, generate_trees_on_terrain};
 use crate::game::types::{Mesh, Vertex, generate_box, generate_oriented_box, generate_sphere};
@@ -257,6 +257,50 @@ impl BattleScene {
                     let ray_dir = ray / ray_length;
                     let wall_hit = self.hex_grid.ray_cast(upd.prev_pos, ray_dir, ray_length);
                     let hit_radius = Self::projectile_hit_radius(upd.kind);
+                    let voxel_hit =
+                        self.building
+                            .raycast_voxel_segment(upd.prev_pos, upd.new_pos, hit_radius);
+
+                    let wall_dist = wall_hit
+                        .as_ref()
+                        .map(|hit| hit.position.distance(upd.prev_pos))
+                        .unwrap_or(f32::MAX);
+                    let voxel_dist = voxel_hit
+                        .as_ref()
+                        .map(|hit| hit.world_pos.distance(upd.prev_pos))
+                        .unwrap_or(f32::MAX);
+
+                    if let Some(voxel_hit) = voxel_hit
+                        && voxel_dist <= wall_dist
+                    {
+                        remove_indices.push(upd.index);
+                        match upd.kind {
+                            ProjectileKind::Cannonball => {
+                                let _ = self.building.apply_damage_at_hit(
+                                    voxel_hit,
+                                    120.0,
+                                    ray_dir * 9.0 + Vec3::Y * 1.2,
+                                    DamageSource::Cannonball,
+                                );
+                                self.explosion_events.push(ExplosionEvent {
+                                    position: voxel_hit.world_pos,
+                                    ember_count: 12,
+                                });
+                            }
+                            ProjectileKind::Rocket => {
+                                let _ = self.building.apply_damage_at_hit(
+                                    voxel_hit,
+                                    240.0,
+                                    ray_dir * 13.0 + Vec3::Y * 2.0,
+                                    DamageSource::Rocket,
+                                );
+                                self.trigger_rocket_explosion(voxel_hit.world_pos, None, None);
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Voxel-hit did not win: fall back to proxy block collision path.
                     let block_candidates = self.collect_block_candidates_for_segment(
                         upd.prev_pos,
                         upd.new_pos,
@@ -269,11 +313,6 @@ impl BattleScene {
                         self.building.blocks(),
                         &block_candidates,
                     );
-
-                    let wall_dist = wall_hit
-                        .as_ref()
-                        .map(|hit| hit.position.distance(upd.prev_pos))
-                        .unwrap_or(f32::MAX);
                     let block_dist = block_hit
                         .as_ref()
                         .map(|(p, _)| p.distance(upd.prev_pos))

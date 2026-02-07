@@ -285,6 +285,7 @@ mod tests {
             max_hp: 20,
             color_rgb: [1, 2, 3],
             normal_oct: [4, 5],
+            flags: 0,
         };
         assert!(world.place(coord, cell));
         assert!(world.get(coord).is_some());
@@ -303,6 +304,7 @@ mod tests {
                 max_hp: 10,
                 color_rgb: [100, 100, 100],
                 normal_oct: [128, 128],
+                flags: 0,
             },
         );
         let hit = world.raycast_voxel(Vec3::new(0.01, 0.01, 0.01), Vec3::X, 8.0);

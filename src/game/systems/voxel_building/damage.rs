@@ -45,6 +45,7 @@ pub fn default_voxel_cell(material: u8, normal_oct: [u8; 2]) -> VoxelCell {
         max_hp,
         color_rgb: material_color(material),
         normal_oct,
+        flags: 0,
     }
 }
 

@@ -17,7 +17,8 @@ pub use destruction_system::DestructionSystem;
 pub use meteor_system::{MeteorImpact, MeteorSystem};
 pub use projectile_system::{ProjectileKind, ProjectileSystem, ProjectileUpdate};
 pub use voxel_building::{
-    BuildAudioEvent, BuildAudioEventKind, BuildMode, DamageSource, RaymarchQualityState,
-    RenderDeltaBatch, ShellBakeJob, ShellBakeResult, VoxelBuildingRuntime, VoxelCell, VoxelCoord,
-    VoxelDamageResult, VoxelHit, VoxelHudState, VoxelMaterialId,
+    BuildAudioEvent, BuildAudioEventKind, BuildMode, CastleToolParams, DamageSource,
+    RaymarchQualityState, RenderDeltaBatch, ShellBakeJob, ShellBakeResult, SupportReason,
+    SupportSolveResult, VoxelBatchResult, VoxelBuildingRuntime, VoxelCell, VoxelCoord,
+    VoxelDamageResult, VoxelEditBatch, VoxelHit, VoxelHudState, VoxelMaterialId,
 };

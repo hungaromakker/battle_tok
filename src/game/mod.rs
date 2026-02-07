@@ -124,9 +124,10 @@ pub use state::GameState;
 // Systems re-exports
 pub use systems::{
     BuildAudioEvent, BuildAudioEventKind, BuildMode, BuildingSystem, BuildingSystemV2,
-    CollisionSystem, DamageSource, ProjectileKind, ProjectileSystem, ProjectileUpdate,
-    RaymarchQualityState, RenderDeltaBatch, ShellBakeJob, ShellBakeResult, VoxelBuildingRuntime,
-    VoxelCell, VoxelCoord, VoxelDamageResult, VoxelHit, VoxelHudState, VoxelMaterialId,
+    CastleToolParams, CollisionSystem, DamageSource, ProjectileKind, ProjectileSystem,
+    ProjectileUpdate, RaymarchQualityState, RenderDeltaBatch, ShellBakeJob, ShellBakeResult,
+    SupportReason, SupportSolveResult, VoxelBatchResult, VoxelBuildingRuntime, VoxelCell,
+    VoxelCoord, VoxelDamageResult, VoxelEditBatch, VoxelHit, VoxelHudState, VoxelMaterialId,
 };
 
 // Scene re-exports

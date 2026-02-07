@@ -11,8 +11,9 @@ use glam::{IVec3, Vec3};
 use crate::game::builder::{BLOCK_GRID_SIZE, BLOCK_SNAP_DISTANCE, BuildToolbar, SHAPE_NAMES};
 use crate::game::systems::building_v2::BuildingSystemV2;
 use crate::game::systems::voxel_building::{
-    BuildAudioEvent, DamageSource, RenderDeltaBatch, VoxelBuildingRuntime, VoxelCoord,
-    VoxelDamageResult, VoxelHit, VoxelMaterialId, VOXEL_SIZE_METERS,
+    BuildAudioEvent, CastleToolParams, DamageSource, RenderDeltaBatch, SupportReason,
+    SupportSolveResult, VoxelBatchResult, VoxelBuildingRuntime, VoxelCoord, VoxelDamageResult,
+    VoxelEditBatch, VoxelHit, VoxelMaterialId, VOXEL_SIZE_METERS,
 };
 use crate::render::{
     BuildingBlock, BuildingBlockManager, BuildingBlockShape, BuildingPhysics, MergeWorkflowManager,
@@ -647,7 +648,10 @@ impl BuildingSystem {
     pub fn tick(&mut self, dt: f32) {
         self.voxel_runtime.tick(dt);
         if self.voxel_runtime.take_world_change_flag() {
-            self.sync_voxel_proxies();
+            let changed = self.voxel_runtime.drain_changed_coords();
+            if !changed.is_empty() {
+                self.sync_voxel_proxies_for_coords(&changed);
+            }
         }
         self.pending_voxel_audio
             .extend(self.voxel_runtime.drain_audio_events());
@@ -655,6 +659,10 @@ impl BuildingSystem {
 
     pub fn raycast_voxel(&self, origin: Vec3, dir: Vec3, max_dist: f32) -> Option<VoxelHit> {
         self.voxel_runtime.raycast_voxel(origin, dir, max_dist)
+    }
+
+    pub fn raycast_voxel_segment(&self, start: Vec3, end: Vec3, radius: f32) -> Option<VoxelHit> {
+        self.voxel_runtime.raycast_voxel_segment(start, end, radius)
     }
 
     pub fn place_voxel(&mut self, coord: VoxelCoord, material: VoxelMaterialId) -> bool {
@@ -709,6 +717,108 @@ impl BuildingSystem {
         }
         self.block_manager.mark_mesh_dirty();
         placed
+    }
+
+    pub fn apply_voxel_batch(&mut self, batch: &VoxelEditBatch) -> VoxelBatchResult {
+        let result = self.voxel_runtime.apply_voxel_batch(batch);
+        if !result.changed_coords.is_empty() {
+            self.sync_voxel_proxies_for_coords(&result.changed_coords);
+            self.block_manager.mark_mesh_dirty();
+        }
+        result
+    }
+
+    pub fn build_base_plate_rect(
+        &mut self,
+        anchor_a: VoxelCoord,
+        anchor_b: VoxelCoord,
+        material: VoxelMaterialId,
+        params: CastleToolParams,
+    ) -> VoxelBatchResult {
+        let result = self
+            .voxel_runtime
+            .build_base_plate_rect(anchor_a, anchor_b, material, params);
+        if !result.changed_coords.is_empty() {
+            self.sync_voxel_proxies_for_coords(&result.changed_coords);
+            self.block_manager.mark_mesh_dirty();
+        }
+        result
+    }
+
+    pub fn build_base_plate_circle(
+        &mut self,
+        center: VoxelCoord,
+        radius_vox: u8,
+        material: VoxelMaterialId,
+        params: CastleToolParams,
+    ) -> VoxelBatchResult {
+        let result = self
+            .voxel_runtime
+            .build_base_plate_circle(center, radius_vox, material, params);
+        if !result.changed_coords.is_empty() {
+            self.sync_voxel_proxies_for_coords(&result.changed_coords);
+            self.block_manager.mark_mesh_dirty();
+        }
+        result
+    }
+
+    pub fn build_wall_line(
+        &mut self,
+        anchor_a: VoxelCoord,
+        anchor_b: VoxelCoord,
+        material: VoxelMaterialId,
+        params: CastleToolParams,
+    ) -> VoxelBatchResult {
+        let result = self
+            .voxel_runtime
+            .build_wall_line(anchor_a, anchor_b, material, params);
+        if !result.changed_coords.is_empty() {
+            self.sync_voxel_proxies_for_coords(&result.changed_coords);
+            self.block_manager.mark_mesh_dirty();
+        }
+        result
+    }
+
+    pub fn build_wall_ring(
+        &mut self,
+        center: VoxelCoord,
+        radius_vox: u8,
+        material: VoxelMaterialId,
+        params: CastleToolParams,
+    ) -> VoxelBatchResult {
+        let result = self
+            .voxel_runtime
+            .build_wall_ring(center, radius_vox, material, params);
+        if !result.changed_coords.is_empty() {
+            self.sync_voxel_proxies_for_coords(&result.changed_coords);
+            self.block_manager.mark_mesh_dirty();
+        }
+        result
+    }
+
+    pub fn build_joint_column(
+        &mut self,
+        anchor: VoxelCoord,
+        height_vox: u8,
+        radius_vox: u8,
+        material: VoxelMaterialId,
+    ) -> VoxelBatchResult {
+        let result = self
+            .voxel_runtime
+            .build_joint_column(anchor, height_vox, radius_vox, material);
+        if !result.changed_coords.is_empty() {
+            self.sync_voxel_proxies_for_coords(&result.changed_coords);
+            self.block_manager.mark_mesh_dirty();
+        }
+        result
+    }
+
+    pub fn queue_support_recheck(&mut self, changed: &[VoxelCoord], reason: SupportReason) {
+        self.voxel_runtime.queue_support_recheck(changed, reason);
+    }
+
+    pub fn poll_support_results(&mut self) -> Option<SupportSolveResult> {
+        self.voxel_runtime.poll_support_results()
     }
 
     pub fn apply_damage_at_hit(
@@ -892,6 +1002,7 @@ impl BuildingSystem {
         block_id
     }
 
+    #[allow(dead_code)]
     fn sync_voxel_proxies(&mut self) {
         let mut remove_ids = Vec::new();
         for (block_id, coord) in &self.voxel_by_block_id {
@@ -914,6 +1025,27 @@ impl BuildingSystem {
 
         for (coord, cell) in self.voxel_runtime.world.occupied_cells_snapshot() {
             self.ensure_voxel_proxy(coord, cell.material);
+        }
+    }
+
+    fn sync_voxel_proxies_for_coords(&mut self, changed_coords: &[VoxelCoord]) {
+        if changed_coords.is_empty() {
+            return;
+        }
+
+        for &coord in changed_coords {
+            if let Some(cell) = self.voxel_runtime.world.get(coord) {
+                self.ensure_voxel_proxy(coord, cell.material);
+            } else if let Some(block_id) = self.block_id_by_voxel.remove(&coord) {
+                self.voxel_by_block_id.remove(&block_id);
+                self.block_manager.remove_block(block_id);
+                self.block_physics.unregister_block(block_id);
+                self.damage_accumulated.remove(&block_id);
+                self.crack_stage.remove(&block_id);
+                self.joint_overstress.remove(&block_id);
+                self.joint_blocks.remove(&block_id);
+                self.block_manager.mark_mesh_dirty();
+            }
         }
     }
 

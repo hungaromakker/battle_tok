@@ -1,10 +1,13 @@
+use std::collections::HashSet;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
+use super::connectivity::unsupported_from_region;
 use super::damage::{apply_damage_at_hit, default_voxel_cell};
 use super::shell_bake::ShellBakeScheduler;
 use super::types::{
-    BuildAudioEvent, RenderDeltaBatch, ShellBakeResult, VoxelCoord, VoxelDamageResult, VoxelHit,
+    BuildAudioEvent, RenderDeltaBatch, ShellBakeResult, SupportSolveJob, SupportSolveResult,
+    VoxelCoord, VoxelDamageResult, VoxelHit, VOXEL_FLAG_TERRAIN_ANCHORED,
 };
 use super::world::VoxelWorld;
 
@@ -17,6 +20,7 @@ pub enum WorkerCommand {
         impulse: glam::Vec3,
         source: super::types::DamageSource,
     },
+    SupportSolve(SupportSolveJob),
     Tick { dt: f32 },
     Shutdown,
 }
@@ -26,6 +30,7 @@ pub enum WorkerEvent {
     Audio(Vec<BuildAudioEvent>),
     DamageResult(VoxelDamageResult),
     BakeResult(ShellBakeResult),
+    SupportSolved(SupportSolveResult),
 }
 
 pub struct VoxelWorker {
@@ -115,7 +120,41 @@ fn worker_loop(rx_cmd: Receiver<WorkerCommand>, tx_evt: Sender<WorkerEvent>) {
                     let _ = tx_evt.send(WorkerEvent::Audio(drained));
                 }
             }
+            WorkerCommand::SupportSolve(job) => {
+                let result = solve_support_job(job);
+                let _ = tx_evt.send(WorkerEvent::SupportSolved(result));
+            }
             WorkerCommand::Shutdown => break,
         }
+    }
+}
+
+fn solve_support_job(job: SupportSolveJob) -> SupportSolveResult {
+    let (occupied_cells, used_full_world) = if let Some(full) = job.full_world_fallback.clone() {
+        (full, true)
+    } else {
+        (job.occupied_region.clone(), false)
+    };
+
+    let occupied_region: HashSet<VoxelCoord> = occupied_cells.iter().map(|(coord, _)| *coord).collect();
+    let anchored_region: HashSet<VoxelCoord> = occupied_cells
+        .iter()
+        .filter_map(|(coord, flags)| {
+            if (*flags & VOXEL_FLAG_TERRAIN_ANCHORED) != 0 || coord.y <= 0 {
+                Some(*coord)
+            } else {
+                None
+            }
+        })
+        .collect();
+    let boundary_supported: HashSet<VoxelCoord> = job.boundary_supported.iter().copied().collect();
+
+    let unsupported = unsupported_from_region(&occupied_region, &anchored_region, &boundary_supported);
+
+    SupportSolveResult {
+        revision: job.revision,
+        reason: Some(job.reason),
+        unsupported,
+        used_full_world,
     }
 }

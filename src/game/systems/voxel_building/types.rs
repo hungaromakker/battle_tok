@@ -1,6 +1,6 @@
 use glam::{IVec3, Vec3};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct VoxelCoord {
     pub x: i32,
     pub y: i32,
@@ -26,6 +26,10 @@ impl From<IVec3> for VoxelCoord {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VoxelMaterialId(pub u8);
 
+pub const VOXEL_FLAG_TERRAIN_ANCHORED: u8 = 1 << 0;
+pub const VOXEL_FLAG_RIGID_JOINT: u8 = 1 << 1;
+pub const VOXEL_FLAG_RIB_MEMBER: u8 = 1 << 2;
+
 #[derive(Debug, Clone, Copy)]
 pub struct VoxelCell {
     pub material: u8,
@@ -33,6 +37,7 @@ pub struct VoxelCell {
     pub max_hp: u16,
     pub color_rgb: [u8; 3],
     pub normal_oct: [u8; 2],
+    pub flags: u8,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -53,6 +58,111 @@ pub enum DamageSource {
 pub struct VoxelDamageResult {
     pub destroyed: bool,
     pub remaining_hp: u16,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CastleToolParams {
+    pub wall_height_vox: u8,
+    pub wall_thickness_vox: u8,
+    pub plate_thickness_vox: u8,
+    pub joint_spacing_vox: u8,
+    pub joint_radius_vox: u8,
+    pub rib_spacing_vox: u8,
+    pub rib_levels: [f32; 2],
+}
+
+impl Default for CastleToolParams {
+    fn default() -> Self {
+        Self {
+            wall_height_vox: 24,
+            wall_thickness_vox: 4,
+            plate_thickness_vox: 3,
+            joint_spacing_vox: 4,
+            joint_radius_vox: 2,
+            rib_spacing_vox: 4,
+            rib_levels: [0.33, 0.66],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VoxelEditOp {
+    Place,
+    Remove,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct VoxelEdit {
+    pub op: VoxelEditOp,
+    pub coord: VoxelCoord,
+    pub material: VoxelMaterialId,
+    pub normal_oct: [u8; 2],
+    pub flags: u8,
+}
+
+impl VoxelEdit {
+    pub fn place(coord: VoxelCoord, material: VoxelMaterialId, normal_oct: [u8; 2], flags: u8) -> Self {
+        Self {
+            op: VoxelEditOp::Place,
+            coord,
+            material,
+            normal_oct,
+            flags,
+        }
+    }
+
+    pub fn remove(coord: VoxelCoord) -> Self {
+        Self {
+            op: VoxelEditOp::Remove,
+            coord,
+            material: VoxelMaterialId(0),
+            normal_oct: [128, 128],
+            flags: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct VoxelEditBatch {
+    pub edits: Vec<VoxelEdit>,
+    pub request_support_check: bool,
+    pub support_reason: Option<SupportReason>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct VoxelBatchResult {
+    pub applied: usize,
+    pub placed: usize,
+    pub removed: usize,
+    pub changed_coords: Vec<VoxelCoord>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SupportReason {
+    Damage,
+    Remove,
+    BatchDestructive,
+    ExplicitValidation,
+}
+
+#[derive(Debug, Clone)]
+pub struct SupportSolveJob {
+    pub revision: u64,
+    pub reason: SupportReason,
+    pub changed_coords: Vec<VoxelCoord>,
+    pub region_min: IVec3,
+    pub region_max: IVec3,
+    pub occupied_region: Vec<(VoxelCoord, u8)>,
+    pub boundary_supported: Vec<VoxelCoord>,
+    pub full_world_fallback: Option<Vec<(VoxelCoord, u8)>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SupportSolveResult {
+    pub revision: u64,
+    pub reason: Option<SupportReason>,
+    pub unsupported: Vec<VoxelCoord>,
+    pub used_full_world: bool,
 }
 
 #[derive(Debug, Clone, Copy)]

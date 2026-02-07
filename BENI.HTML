@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎮 KABOOM KEYS!</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Lilita+One&family=Bubblegum+Sans&family=Fredoka:wght@400;600;700&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg1: #1a0533;
+            --bg2: #0d0a2e;
+            --pink: #ff47ab;
+            --cyan: #00f5d4;
+            --yellow: #ffe66d;
+            --orange: #ff6b35;
+            --purple: #b388ff;
+            --green: #69f0ae;
+            --red: #ff5252;
+            --blue: #40c4ff;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: var(--bg1);
+            font-family: 'Fredoka', sans-serif;
+            cursor: none;
+            user-select: none;
+        }
+
+        #game-canvas {
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100vh;
+            background: radial-gradient(ellipse at 50% 120%, #2a1055 0%, var(--bg1) 50%, var(--bg2) 100%);
+            overflow: hidden;
+        }
+
+        /* Stars background */
+        .star {
+            position: absolute;
+            width: 3px;
+            height: 3px;
+            background: white;
+            border-radius: 50%;
+            animation: twinkle var(--dur) ease-in-out infinite alternate;
+            opacity: 0.3;
+        }
+
+        @keyframes twinkle {
+            to {
+                opacity: 1;
+                transform: scale(1.5);
+            }
+        }
+
+        /* Custom cursor */
+        #cursor {
+            position: fixed;
+            width: 40px;
+            height: 40px;
+            pointer-events: none;
+            z-index: 9999;
+            transform: translate(-50%, -50%);
+            transition: transform 0.08s ease-out;
+        }
+
+        #cursor::before {
+            content: '👆';
+            font-size: 28px;
+            display: block;
+        }
+
+        /* Title */
+        #title {
+            position: absolute;
+            top: 5%;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: 'Lilita One', sans-serif;
+            font-size: clamp(2.5rem, 6vw, 5rem);
+            background: linear-gradient(135deg, var(--pink), var(--yellow), var(--cyan), var(--pink));
+            background-size: 300% 300%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: rainbow 4s ease infinite;
+            text-shadow: none;
+            filter: drop-shadow(0 0 20px rgba(255, 71, 171, 0.4));
+            white-space: nowrap;
+            letter-spacing: 4px;
+            z-index: 10;
+        }
+
+        @keyframes rainbow {
+
+            0%,
+            100% {
+                background-position: 0% 50%;
+            }
+
+            50% {
+                background-position: 100% 50%;
+            }
+        }
+
+        /* HUD */
+        #hud {
+            position: absolute;
+            top: 16%;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 30px;
+            z-index: 10;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .hud-box {
+            background: rgba(255, 255, 255, 0.06);
+            border: 2px solid rgba(255, 255, 255, 0.12);
+            border-radius: 20px;
+            padding: 12px 28px;
+            text-align: center;
+            backdrop-filter: blur(10px);
+            min-width: 140px;
+        }
+
+        .hud-label {
+            font-family: 'Bubblegum Sans', sans-serif;
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.5);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 4px;
+        }
+
+        .hud-value {
+            font-family: 'Lilita One', sans-serif;
+            font-size: 2rem;
+            color: var(--yellow);
+            text-shadow: 0 0 15px rgba(255, 230, 109, 0.5);
+        }
+
+        #kps-value {
+            color: var(--cyan);
+            text-shadow: 0 0 15px rgba(0, 245, 212, 0.5);
+        }
+
+        #combo-value {
+            color: var(--pink);
+            text-shadow: 0 0 15px rgba(255, 71, 171, 0.5);
+        }
+
+        /* Letter stage area */
+        #letter-stage {
+            position: absolute;
+            top: 28%;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            overflow: hidden;
+        }
+
+        /* Floating letter */
+        .letter-bubble {
+            position: absolute;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Lilita One', sans-serif;
+            border-radius: 22px;
+            animation: popIn 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards,
+                floatUp var(--float-dur) ease-out forwards;
+            pointer-events: none;
+            z-index: 5;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 8px 32px var(--glow), inset 0 2px 0 rgba(255, 255, 255, 0.25);
+            transform: scale(0);
+        }
+
+        @keyframes popIn {
+            0% {
+                transform: scale(0) rotate(-15deg);
+            }
+
+            60% {
+                transform: scale(1.2) rotate(5deg);
+            }
+
+            100% {
+                transform: scale(1) rotate(0deg);
+            }
+        }
+
+        @keyframes floatUp {
+            0% {
+                opacity: 1;
+            }
+
+            70% {
+                opacity: 1;
+            }
+
+            100% {
+                opacity: 0;
+                transform: translateY(-400px) scale(0.3) rotate(var(--rot));
+            }
+        }
+
+        /* Particle burst */
+        .particle {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: burst 0.6s ease-out forwards;
+            pointer-events: none;
+            z-index: 4;
+        }
+
+        @keyframes burst {
+            0% {
+                transform: translate(0, 0) scale(1);
+                opacity: 1;
+            }
+
+            100% {
+                transform: translate(var(--tx), var(--ty)) scale(0);
+                opacity: 0;
+            }
+        }
+
+        /* Shockwave ring */
+        .shockwave {
+            position: absolute;
+            border: 3px solid var(--color);
+            border-radius: 50%;
+            animation: shock 0.5s ease-out forwards;
+            pointer-events: none;
+            z-index: 3;
+        }
+
+        @keyframes shock {
+            0% {
+                width: 0;
+                height: 0;
+                opacity: 0.8;
+                transform: translate(-50%, -50%);
+            }
+
+            100% {
+                width: 120px;
+                height: 120px;
+                opacity: 0;
+                transform: translate(-50%, -50%);
+            }
+        }
+
+        /* Combo flash text */
+        .combo-text {
+            position: absolute;
+            font-family: 'Lilita One', sans-serif;
+            font-size: 2.5rem;
+            color: white;
+            text-shadow: 0 0 20px var(--pink), 0 0 40px var(--pink);
+            animation: comboFlash 1s ease-out forwards;
+            pointer-events: none;
+            z-index: 20;
+            white-space: nowrap;
+        }
+
+        @keyframes comboFlash {
+            0% {
+                transform: translate(-50%, -50%) scale(0.5);
+                opacity: 0;
+            }
+
+            20% {
+                transform: translate(-50%, -50%) scale(1.3);
+                opacity: 1;
+            }
+
+            100% {
+                transform: translate(-50%, -50%) scale(1) translateY(-60px);
+                opacity: 0;
+            }
+        }
+
+        /* Keyboard visual at bottom */
+        #keyboard-visual {
+            position: absolute;
+            bottom: 3%;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            z-index: 10;
+            opacity: 0.6;
+            transition: opacity 0.3s;
+        }
+
+        #keyboard-visual:hover {
+            opacity: 1;
+        }
+
+        .kb-row {
+            display: flex;
+            gap: 5px;
+            justify-content: center;
+        }
+
+        .kb-key {
+            width: 42px;
+            height: 42px;
+            background: rgba(255, 255, 255, 0.07);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Fredoka', sans-serif;
+            font-size: 0.8rem;
+            color: rgba(255, 255, 255, 0.4);
+            transition: all 0.1s;
+        }
+
+        .kb-key.active {
+            background: var(--key-color, var(--pink));
+            color: white;
+            transform: scale(1.15);
+            box-shadow: 0 0 20px var(--key-color, var(--pink));
+            border-color: transparent;
+        }
+
+        .kb-key.space {
+            width: 200px;
+        }
+
+        /* Fullscreen prompt overlay */
+        #fs-prompt {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.92);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            cursor: pointer;
+        }
+
+        #fs-prompt h1 {
+            font-family: 'Lilita One', sans-serif;
+            font-size: clamp(2rem, 5vw, 4rem);
+            color: var(--yellow);
+            margin-bottom: 20px;
+            animation: bounce 1s ease infinite;
+        }
+
+        #fs-prompt p {
+            font-family: 'Bubblegum Sans', sans-serif;
+            font-size: 1.3rem;
+            color: rgba(255, 255, 255, 0.7);
+            margin-bottom: 40px;
+        }
+
+        #fs-prompt .start-btn {
+            font-family: 'Lilita One', sans-serif;
+            font-size: 2rem;
+            padding: 20px 60px;
+            background: linear-gradient(135deg, var(--pink), var(--orange));
+            color: white;
+            border: none;
+            border-radius: 30px;
+            cursor: pointer;
+            box-shadow: 0 8px 40px rgba(255, 71, 171, 0.4);
+            transition: transform 0.2s, box-shadow 0.2s;
+            animation: pulse 2s ease infinite;
+        }
+
+        #fs-prompt .start-btn:hover {
+            transform: scale(1.08);
+            box-shadow: 0 12px 50px rgba(255, 71, 171, 0.6);
+        }
+
+        @keyframes bounce {
+
+            0%,
+            100% {
+                transform: translateY(0);
+            }
+
+            50% {
+                transform: translateY(-10px);
+            }
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                box-shadow: 0 8px 40px rgba(255, 71, 171, 0.4);
+            }
+
+            50% {
+                box-shadow: 0 8px 60px rgba(255, 71, 171, 0.7);
+            }
+        }
+
+        #fs-prompt .hint {
+            margin-top: 20px;
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.3);
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* Ground glow */
+        #ground-glow {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 180px;
+            background: linear-gradient(to top, rgba(179, 136, 255, 0.08) 0%, transparent 100%);
+            pointer-events: none;
+            z-index: 1;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Fullscreen Start Prompt -->
+    <div id="fs-prompt">
+        <h1>🎮 KABOOM KEYS! 💥</h1>
+        <p>The ultimate cartoon typing experience</p>
+        <button class="start-btn" onclick="startGame()">▶ SMASH TO START</button>
+        <span class="hint">Press F11 to exit fullscreen</span>
+    </div>
+
+    <!-- Game Canvas -->
+    <div id="game-canvas" class="hidden">
+        <div id="title">⚡ KABOOM KEYS ⚡</div>
+
+        <div id="hud">
+            <div class="hud-box">
+                <div class="hud-label">Key Smashes</div>
+                <div class="hud-value" id="count-value">0</div>
+            </div>
+            <div class="hud-box">
+                <div class="hud-label">Keys / Sec</div>
+                <div class="hud-value" id="kps-value">0.0</div>
+            </div>
+            <div class="hud-box">
+                <div class="hud-label">Combo</div>
+                <div class="hud-value" id="combo-value">x0</div>
+            </div>
+        </div>
+
+        <div id="letter-stage"></div>
+        <div id="ground-glow"></div>
+        <div id="keyboard-visual"></div>
+    </div>
+
+    <div id="cursor"></div>
+
+    <script>
+        // ============ AUDIO ENGINE ============
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        let audioCtx;
+
+        function initAudio() {
+            audioCtx = new AudioCtx();
+        }
+
+        // Musical note frequencies (pentatonic scale for always-pleasant sounds)
+        const NOTES = [
+            261.63, 293.66, 329.63, 392.00, 440.00,
+            523.25, 587.33, 659.25, 783.99, 880.00,
+            1046.50, 1174.66
+        ];
+
+        let noteIndex = 0;
+
+        function playKeySound(isSpecial) {
+            if (!audioCtx) return;
+            const now = audioCtx.currentTime;
+
+            // Main tone
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            const filter = audioCtx.createBiquadFilter();
+
+            const freq = NOTES[noteIndex % NOTES.length];
+            noteIndex++;
+
+            osc.type = isSpecial ? 'square' : 'triangle';
+            osc.frequency.setValueAtTime(freq, now);
+            osc.frequency.exponentialRampToValueAtTime(freq * (isSpecial ? 1.5 : 0.8), now + 0.15);
+
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(isSpecial ? 3000 : 2000, now);
+
+            gain.gain.setValueAtTime(isSpecial ? 0.15 : 0.1, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + (isSpecial ? 0.3 : 0.15));
+
+            osc.connect(filter);
+            filter.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            osc.start(now);
+            osc.stop(now + 0.3);
+
+            // Harmonics for richness
+            if (isSpecial) {
+                const osc2 = audioCtx.createOscillator();
+                const gain2 = audioCtx.createGain();
+                osc2.type = 'sine';
+                osc2.frequency.setValueAtTime(freq * 2, now);
+                gain2.gain.setValueAtTime(0.06, now);
+                gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+                osc2.connect(gain2);
+                gain2.connect(audioCtx.destination);
+                osc2.start(now);
+                osc2.stop(now + 0.25);
+            }
+        }
+
+        function playComboSound(combo) {
+            if (!audioCtx) return;
+            const now = audioCtx.currentTime;
+            const baseFreq = 440 + combo * 30;
+
+            for (let i = 0; i < 3; i++) {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(baseFreq * (1 + i * 0.25), now + i * 0.06);
+                gain.gain.setValueAtTime(0.08, now + i * 0.06);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4 + i * 0.06);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(now + i * 0.06);
+                osc.stop(now + 0.5 + i * 0.06);
+            }
+        }
+
+        // ============ GAME STATE ============
+        let pressCount = 0;
+        let combo = 0;
+        let lastKeyTime = 0;
+        const keyTimes = [];
+        const COMBO_TIMEOUT = 800;
+
+        const COLORS = [
+            { bg: '#ff47ab', glow: 'rgba(255,71,171,0.4)' },
+            { bg: '#00f5d4', glow: 'rgba(0,245,212,0.4)' },
+            { bg: '#ffe66d', glow: 'rgba(255,230,109,0.4)' },
+            { bg: '#ff6b35', glow: 'rgba(255,107,53,0.4)' },
+            { bg: '#b388ff', glow: 'rgba(179,136,255,0.4)' },
+            { bg: '#69f0ae', glow: 'rgba(105,240,174,0.4)' },
+            { bg: '#ff5252', glow: 'rgba(255,82,82,0.4)' },
+            { bg: '#40c4ff', glow: 'rgba(64,196,255,0.4)' },
+        ];
+
+        // ============ KEYBOARD LAYOUT ============
+        const KB_ROWS = [
+            ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
+            ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
+            ['Z', 'X', 'C', 'V', 'B', 'N', 'M'],
+            ['SPACE']
+        ];
+
+        function buildKeyboard() {
+            const kb = document.getElementById('keyboard-visual');
+            KB_ROWS.forEach(row => {
+                const rowEl = document.createElement('div');
+                rowEl.className = 'kb-row';
+                row.forEach(key => {
+                    const keyEl = document.createElement('div');
+                    keyEl.className = 'kb-key' + (key === 'SPACE' ? ' space' : '');
+                    keyEl.textContent = key === 'SPACE' ? '⎵' : key;
+                    keyEl.id = 'kb-' + key;
+                    rowEl.appendChild(keyEl);
+                });
+                kb.appendChild(rowEl);
+            });
+        }
+
+        // ============ STARS ============
+        function createStars() {
+            const canvas = document.getElementById('game-canvas');
+            for (let i = 0; i < 80; i++) {
+                const star = document.createElement('div');
+                star.className = 'star';
+                star.style.left = Math.random() * 100 + '%';
+                star.style.top = Math.random() * 60 + '%';
+                star.style.setProperty('--dur', (1 + Math.random() * 3) + 's');
+                star.style.animationDelay = Math.random() * 3 + 's';
+                star.style.width = star.style.height = (1 + Math.random() * 3) + 'px';
+                canvas.appendChild(star);
+            }
+        }
+
+        // ============ SPAWN LETTER BUBBLE ============
+        function spawnLetter(key) {
+            const stage = document.getElementById('letter-stage');
+            const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+            const stageW = stage.offsetWidth;
+            const stageH = stage.offsetHeight;
+
+            const size = 50 + Math.random() * 40;
+            const x = 10 + Math.random() * (stageW - size - 20);
+            const y = stageH * 0.3 + Math.random() * (stageH * 0.5);
+
+            const bubble = document.createElement('div');
+            bubble.className = 'letter-bubble';
+            bubble.textContent = key;
+            bubble.style.cssText = `
+    left: ${x}px;
+    top: ${y}px;
+    width: ${size}px;
+    height: ${size}px;
+    font-size: ${size * 0.55}px;
+    color: white;
+    background: ${color.bg};
+    --glow: ${color.glow};
+    --float-dur: ${2.5 + Math.random() * 2}s;
+    --rot: ${-30 + Math.random() * 60}deg;
+  `;
+            stage.appendChild(bubble);
+
+            // Particles
+            for (let i = 0; i < 8; i++) {
+                const p = document.createElement('div');
+                p.className = 'particle';
+                const angle = (Math.PI * 2 * i) / 8;
+                const dist = 40 + Math.random() * 60;
+                p.style.cssText = `
+      left: ${x + size / 2}px;
+      top: ${y + size / 2}px;
+      background: ${color.bg};
+      --tx: ${Math.cos(angle) * dist}px;
+      --ty: ${Math.sin(angle) * dist}px;
+      width: ${4 + Math.random() * 6}px;
+      height: ${4 + Math.random() * 6}px;
+    `;
+                stage.appendChild(p);
+                setTimeout(() => p.remove(), 600);
+            }
+
+            // Shockwave
+            const sw = document.createElement('div');
+            sw.className = 'shockwave';
+            sw.style.cssText = `
+    left: ${x + size / 2}px;
+    top: ${y + size / 2}px;
+    --color: ${color.bg};
+  `;
+            stage.appendChild(sw);
+            setTimeout(() => sw.remove(), 500);
+
+            // Remove bubble after animation
+            const dur = parseFloat(bubble.style.getPropertyValue('--float-dur')) * 1000;
+            setTimeout(() => bubble.remove(), dur);
+        }
+
+        // ============ COMBO FLASH ============
+        function showComboText(c) {
+            const stage = document.getElementById('letter-stage');
+            const txt = document.createElement('div');
+            txt.className = 'combo-text';
+            const msgs = ['NICE!', 'GREAT!', 'AWESOME!', 'AMAZING!', 'INCREDIBLE!', 'LEGENDARY!', '🔥 ON FIRE 🔥', '⚡ UNSTOPPABLE ⚡', '💥 KABOOM! 💥'];
+            const idx = Math.min(Math.floor(c / 5) - 1, msgs.length - 1);
+            txt.textContent = msgs[Math.max(0, idx)] + ` x${c}`;
+            txt.style.left = 20 + Math.random() * 60 + '%';
+            txt.style.top = 20 + Math.random() * 30 + '%';
+            stage.appendChild(txt);
+            setTimeout(() => txt.remove(), 1000);
+        }
+
+        // ============ HIGHLIGHT KEYBOARD KEY ============
+        function flashKey(key) {
+            const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+            const kbKey = key === ' ' ? 'SPACE' : key.toUpperCase();
+            const el = document.getElementById('kb-' + kbKey);
+            if (!el) return;
+            el.style.setProperty('--key-color', color.bg);
+            el.classList.add('active');
+            setTimeout(() => el.classList.remove('active'), 200);
+        }
+
+        // ============ UPDATE HUD ============
+        function updateHUD() {
+            document.getElementById('count-value').textContent = pressCount;
+            document.getElementById('combo-value').textContent = 'x' + combo;
+
+            // KPS (keys per second over last 3 seconds)
+            const now = Date.now();
+            const recent = keyTimes.filter(t => now - t < 3000);
+            const kps = recent.length > 1 ? (recent.length / 3).toFixed(1) : '0.0';
+            document.getElementById('kps-value').textContent = kps;
+        }
+
+        // ============ HANDLE KEY PRESS ============
+        function handleKey(e) {
+            // Block F11 from being consumed (allow browser to handle it)
+            if (e.key === 'F11') return;
+
+            // Prevent default for other keys to keep fullscreen focus
+            e.preventDefault();
+
+            const now = Date.now();
+            let displayKey = e.key;
+
+            // Filter to typeable characters
+            if (e.key.length === 1 || e.key === ' ') {
+                displayKey = e.key === ' ' ? '⎵' : e.key.toUpperCase();
+            } else if (['Enter', 'Backspace', 'Tab', 'Escape', 'Shift', 'Control', 'Alt', 'CapsLock', 'Meta'].includes(e.key)) {
+                displayKey = {
+                    'Enter': '⏎', 'Backspace': '⌫', 'Tab': '⇥', 'Escape': 'ESC',
+                    'Shift': '⇧', 'Control': 'CTRL', 'Alt': 'ALT', 'CapsLock': '⇪', 'Meta': '⌘'
+                }[e.key] || e.key;
+            } else {
+                return;
+            }
+
+            pressCount++;
+            keyTimes.push(now);
+            // Keep only last 5 seconds of times
+            while (keyTimes.length > 0 && now - keyTimes[0] > 5000) keyTimes.shift();
+
+            // Combo logic
+            if (now - lastKeyTime < COMBO_TIMEOUT) {
+                combo++;
+            } else {
+                combo = 1;
+            }
+            lastKeyTime = now;
+
+            const isSpecial = combo > 0 && combo % 5 === 0;
+
+            // Sound
+            playKeySound(isSpecial);
+
+            // Visuals
+            spawnLetter(displayKey);
+            flashKey(e.key);
+            updateHUD();
+
+            // Combo milestones
+            if (combo > 0 && combo % 5 === 0) {
+                showComboText(combo);
+                playComboSound(combo);
+            }
+        }
+
+        // ============ CURSOR ============
+        document.addEventListener('mousemove', e => {
+            const cursor = document.getElementById('cursor');
+            cursor.style.left = e.clientX + 'px';
+            cursor.style.top = e.clientY + 'px';
+        });
+
+        // ============ START GAME ============
+        function startGame() {
+            initAudio();
+
+            // Enter fullscreen
+            const el = document.documentElement;
+            if (el.requestFullscreen) el.requestFullscreen();
+            else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+            else if (el.msRequestFullscreen) el.msRequestFullscreen();
+
+            document.getElementById('fs-prompt').classList.add('hidden');
+            document.getElementById('game-canvas').classList.remove('hidden');
+
+            buildKeyboard();
+            createStars();
+
+            document.addEventListener('keydown', handleKey);
+
+            // Decay combo display if idle
+            setInterval(() => {
+                if (Date.now() - lastKeyTime > COMBO_TIMEOUT && combo > 0) {
+                    combo = 0;
+                    updateHUD();
+                }
+            }, 200);
+        }
+
+        // Re-show prompt if fullscreen exits
+        document.addEventListener('fullscreenchange', () => {
+            if (!document.fullscreenElement) {
+                document.getElementById('fs-prompt').classList.remove('hidden');
+                document.getElementById('game-canvas').classList.add('hidden');
+                document.removeEventListener('keydown', handleKey);
+            }
+        });
+    </script>
+</body>
+
+</html>
