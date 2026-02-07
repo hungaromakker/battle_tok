@@ -8,9 +8,11 @@
 
 use std::collections::HashSet;
 
-use glam::Vec3;
+use glam::{IVec3, Vec3};
 
-use crate::game::arena_player::{ArenaGround, BridgeDef, IslandDef, MovementKeys, Player};
+use crate::game::arena_player::{
+    ArenaGround, BridgeDef, IslandDef, MovementKeys, PLAYER_EYE_HEIGHT, Player,
+};
 use crate::game::config::{ArenaConfig, VisualConfig};
 use crate::game::destruction::{get_material_color, spawn_debris, spawn_meteor_impact};
 use crate::game::input::MovementState;
@@ -24,6 +26,12 @@ use crate::game::trees::{PlacedTree, generate_trees_on_terrain};
 use crate::game::types::{Mesh, Vertex, generate_box, generate_oriented_box, generate_sphere};
 use crate::physics::ballistics::{BallisticsConfig, ProjectileState};
 use crate::render::hex_prism::{DEFAULT_HEX_HEIGHT, DEFAULT_HEX_RADIUS, HexPrismGrid};
+
+const COLLISION_BLOCK_QUERY_PADDING_CELLS: i32 = 2;
+const PLAYER_BLOCK_QUERY_RADIUS_M: f32 = 2.4;
+const PLAYER_BLOCK_QUERY_HEIGHT_M: f32 = 3.4;
+const HEX_PLAYER_QUERY_AXIAL_RADIUS: i32 = 4;
+const HEX_PLAYER_QUERY_LEVEL_RADIUS: i32 = 3;
 
 /// Combat weapon mode selected by the player.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -232,11 +240,18 @@ impl BattleScene {
                     }
                     let ray_dir = ray / ray_length;
                     let wall_hit = self.hex_grid.ray_cast(upd.prev_pos, ray_dir, ray_length);
-                    let block_hit = CollisionSystem::check_projectile_blocks(
+                    let hit_radius = Self::projectile_hit_radius(upd.kind);
+                    let block_candidates = self.collect_block_candidates_for_segment(
                         upd.prev_pos,
                         upd.new_pos,
-                        Self::projectile_hit_radius(upd.kind),
+                        hit_radius,
+                    );
+                    let block_hit = CollisionSystem::check_projectile_blocks_for_ids(
+                        upd.prev_pos,
+                        upd.new_pos,
+                        hit_radius,
                         self.building.blocks(),
+                        &block_candidates,
                     );
 
                     let wall_dist = wall_hit
@@ -332,7 +347,18 @@ impl BattleScene {
         }
 
         // 7. Player-block collision
-        CollisionSystem::check_player_blocks(&mut self.player, self.building.blocks(), delta);
+        let player_center = self.player.position + Vec3::new(0.0, PLAYER_EYE_HEIGHT * 0.5, 0.0);
+        let player_candidates = self.collect_block_candidates_for_sphere(
+            player_center,
+            PLAYER_BLOCK_QUERY_RADIUS_M,
+            PLAYER_BLOCK_QUERY_HEIGHT_M,
+        );
+        CollisionSystem::check_player_blocks_for_ids(
+            &mut self.player,
+            self.building.blocks(),
+            &player_candidates,
+            delta,
+        );
 
         // 8. Player-hex collision
         self.check_player_hex_collision();
@@ -576,12 +602,16 @@ impl BattleScene {
         base_damage: f32,
         base_impulse: f32,
     ) -> Vec<u32> {
-        let candidates: Vec<(u32, Vec3)> = self
-            .building
-            .blocks()
-            .blocks()
-            .iter()
-            .map(|b| (b.id, b.position))
+        let candidate_ids =
+            self.collect_block_candidates_for_sphere(impact_position, radius, radius * 1.1);
+        let candidates: Vec<(u32, Vec3)> = candidate_ids
+            .into_iter()
+            .filter_map(|id| {
+                self.building
+                    .blocks()
+                    .get_block(id)
+                    .map(|block| (block.id, block.position))
+            })
             .collect();
 
         let mut impacted = Vec::new();
@@ -671,18 +701,17 @@ impl BattleScene {
         if destroyed.is_empty() {
             return Vec::new();
         }
-        let centers: Vec<Vec3> = destroyed.iter().map(|b| b.position).collect();
-        self.building
-            .blocks()
-            .blocks()
-            .iter()
-            .filter(|block| {
-                centers
-                    .iter()
-                    .any(|c| block.position.distance(*c) <= radius)
-            })
-            .map(|block| block.id)
-            .collect()
+        let mut neighbors = Vec::new();
+        for block in destroyed {
+            neighbors.extend(self.collect_block_candidates_for_sphere(
+                block.position,
+                radius,
+                radius * 0.8,
+            ));
+        }
+        neighbors.sort_unstable();
+        neighbors.dedup();
+        neighbors
     }
 
     fn handle_destroyed_blocks(&mut self, destroyed: &[DestroyedBlock]) {
@@ -801,6 +830,60 @@ impl BattleScene {
         self.player.is_grounded = false;
     }
 
+    fn collect_block_candidates_for_segment(
+        &self,
+        start: Vec3,
+        end: Vec3,
+        radius: f32,
+    ) -> Vec<u32> {
+        let min = start.min(end) - Vec3::splat(radius);
+        let max = start.max(end) + Vec3::splat(radius);
+        self.collect_block_candidates_in_world_bounds(min, max)
+    }
+
+    fn collect_block_candidates_for_sphere(
+        &self,
+        center: Vec3,
+        radius_xz: f32,
+        radius_y: f32,
+    ) -> Vec<u32> {
+        let min = center - Vec3::new(radius_xz, radius_y, radius_xz);
+        let max = center + Vec3::new(radius_xz, radius_y, radius_xz);
+        self.collect_block_candidates_in_world_bounds(min, max)
+    }
+
+    fn collect_block_candidates_in_world_bounds(&self, min: Vec3, max: Vec3) -> Vec<u32> {
+        let inv_grid = 1.0 / crate::game::builder::BLOCK_GRID_SIZE;
+        let cell_min = IVec3::new(
+            (min.x * inv_grid).floor() as i32,
+            (min.y * inv_grid).floor() as i32,
+            (min.z * inv_grid).floor() as i32,
+        ) - IVec3::splat(COLLISION_BLOCK_QUERY_PADDING_CELLS);
+        let cell_max = IVec3::new(
+            (max.x * inv_grid).ceil() as i32,
+            (max.y * inv_grid).ceil() as i32,
+            (max.z * inv_grid).ceil() as i32,
+        ) + IVec3::splat(COLLISION_BLOCK_QUERY_PADDING_CELLS);
+
+        let mut ids = Vec::new();
+        for y in cell_min.y..=cell_max.y {
+            for z in cell_min.z..=cell_max.z {
+                for x in cell_min.x..=cell_max.x {
+                    if let Some(id) = self
+                        .building
+                        .statics_v2
+                        .block_id_at_cell(IVec3::new(x, y, z))
+                    {
+                        ids.push(id);
+                    }
+                }
+            }
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    }
+
     /// Check player capsule against hex prisms in the render grid.
     fn check_player_hex_collision(&mut self) {
         use crate::game::arena_player::PLAYER_EYE_HEIGHT;
@@ -814,36 +897,56 @@ impl BattleScene {
             self.player.velocity.z,
         );
 
-        for (_, prism) in self.hex_grid.iter() {
-            let hex_bottom = prism.center.y;
-            let hex_top = prism.center.y + prism.height;
-            let hex_collision_radius = prism.radius * 0.866;
+        let (base_q, base_r, base_level) =
+            crate::render::hex_prism::world_to_axial(self.player.position);
 
-            let result = check_capsule_hex_collision(
-                self.player.position,
-                player_top,
-                PLAYER_RADIUS,
-                player_vel,
-                prism.center.x,
-                prism.center.z,
-                hex_bottom,
-                hex_top,
-                hex_collision_radius,
-            );
+        for dq in -HEX_PLAYER_QUERY_AXIAL_RADIUS..=HEX_PLAYER_QUERY_AXIAL_RADIUS {
+            for dr in -HEX_PLAYER_QUERY_AXIAL_RADIUS..=HEX_PLAYER_QUERY_AXIAL_RADIUS {
+                let ds = -dq - dr;
+                let axial_dist = (dq.abs() + dr.abs() + ds.abs()) / 2;
+                if axial_dist > HEX_PLAYER_QUERY_AXIAL_RADIUS {
+                    continue;
+                }
 
-            if result.has_collision() {
-                self.player.position += result.push;
-                self.player.velocity += Vec3::new(
-                    result.velocity_adjustment.x,
-                    0.0,
-                    result.velocity_adjustment.z,
-                );
-                self.player.vertical_velocity += result.velocity_adjustment.y;
+                let q = base_q + dq;
+                let r = base_r + dr;
+                for level in (base_level - HEX_PLAYER_QUERY_LEVEL_RADIUS)
+                    ..=(base_level + HEX_PLAYER_QUERY_LEVEL_RADIUS)
+                {
+                    let Some(prism) = self.hex_grid.get(q, r, level) else {
+                        continue;
+                    };
+                    let hex_bottom = prism.center.y;
+                    let hex_top = prism.center.y + prism.height;
+                    let hex_collision_radius = prism.radius * 0.866;
 
-                if let (true, Some(ground_y)) = (result.grounded, result.ground_y) {
-                    self.player.position.y = ground_y;
-                    self.player.vertical_velocity = 0.0;
-                    self.player.is_grounded = true;
+                    let result = check_capsule_hex_collision(
+                        self.player.position,
+                        player_top,
+                        PLAYER_RADIUS,
+                        player_vel,
+                        prism.center.x,
+                        prism.center.z,
+                        hex_bottom,
+                        hex_top,
+                        hex_collision_radius,
+                    );
+
+                    if result.has_collision() {
+                        self.player.position += result.push;
+                        self.player.velocity += Vec3::new(
+                            result.velocity_adjustment.x,
+                            0.0,
+                            result.velocity_adjustment.z,
+                        );
+                        self.player.vertical_velocity += result.velocity_adjustment.y;
+
+                        if let (true, Some(ground_y)) = (result.grounded, result.ground_y) {
+                            self.player.position.y = ground_y;
+                            self.player.vertical_velocity = 0.0;
+                            self.player.is_grounded = true;
+                        }
+                    }
                 }
             }
         }

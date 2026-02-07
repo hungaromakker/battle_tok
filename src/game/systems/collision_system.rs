@@ -8,7 +8,7 @@ use glam::Vec3;
 
 use crate::game::arena_player::{PLAYER_EYE_HEIGHT, Player};
 use crate::game::physics::collision::{
-    AABB, check_capsule_aabb_collision, check_capsule_hex_collision,
+    AABB as CollisionAabb, check_capsule_aabb_collision, check_capsule_hex_collision,
 };
 use crate::physics::collision::HexPrismGrid;
 use crate::render::building_blocks::BuildingBlockManager;
@@ -40,80 +40,28 @@ impl CollisionSystem {
         let mut any_collision = false;
 
         for block in blocks.blocks() {
-            let aabb = block.aabb();
-            let player_top = player.position.y + PLAYER_TOP_OFFSET;
-            let player_vel = Vec3::new(
-                player.velocity.x,
-                player.vertical_velocity,
-                player.velocity.z,
-            );
-
-            let result = check_capsule_aabb_collision(
-                player.position,
-                player_top,
-                PLAYER_RADIUS,
-                player_vel,
-                &AABB::new(aabb.min, aabb.max),
-            );
-
-            if result.has_collision() {
-                // Step assist for stairs / low ledges: when side-colliding with a low top,
-                // lift player up instead of hard stopping.
-                let mostly_horizontal_hit = (result.push.x.abs() + result.push.z.abs()) > 1e-4
-                    && result.push.y.abs() < 0.05;
-                if mostly_horizontal_hit && player.vertical_velocity <= 0.2 {
-                    let step_delta = aabb.max.y - player.position.y;
-                    if step_delta > 0.05 && step_delta <= MAX_STEP_HEIGHT {
-                        let stepped_x = player.position.x + result.push.x;
-                        let stepped_z = player.position.z + result.push.z;
-                        let on_top_xz = stepped_x >= aabb.min.x - PLAYER_RADIUS
-                            && stepped_x <= aabb.max.x + PLAYER_RADIUS
-                            && stepped_z >= aabb.min.z - PLAYER_RADIUS
-                            && stepped_z <= aabb.max.z + PLAYER_RADIUS;
-                        if on_top_xz {
-                            player.position.x = stepped_x;
-                            player.position.z = stepped_z;
-                            player.position.y = aabb.max.y;
-                            player.vertical_velocity = 0.0;
-                            player.is_grounded = true;
-                            any_collision = true;
-                            continue;
-                        }
-                    }
-                }
-
-                player.position += result.push;
-                player.velocity += Vec3::new(
-                    result.velocity_adjustment.x,
-                    0.0,
-                    result.velocity_adjustment.z,
-                );
-                player.vertical_velocity += result.velocity_adjustment.y;
-
-                if let (true, Some(ground_y)) = (result.grounded, result.ground_y) {
-                    player.position.y = ground_y;
-                    player.vertical_velocity = 0.0;
-                    player.is_grounded = true;
-                }
-
-                any_collision = true;
-            }
-
-            // Landing assist: makes non-cube/top landings reliable with AABB tops.
-            let on_top_xz = player.position.x >= aabb.min.x - PLAYER_RADIUS
-                && player.position.x <= aabb.max.x + PLAYER_RADIUS
-                && player.position.z >= aabb.min.z - PLAYER_RADIUS
-                && player.position.z <= aabb.max.z + PLAYER_RADIUS;
-            let near_top = player.position.y >= aabb.max.y - LANDING_WINDOW_BELOW_TOP
-                && player.position.y <= aabb.max.y + LANDING_WINDOW_ABOVE_TOP;
-            if on_top_xz && near_top && player.vertical_velocity <= 0.0 {
-                player.position.y = aabb.max.y;
-                player.vertical_velocity = 0.0;
-                player.is_grounded = true;
-                any_collision = true;
-            }
+            any_collision |= Self::resolve_player_vs_aabb(player, &block.aabb());
         }
 
+        any_collision
+    }
+
+    /// Check a player capsule against a pre-filtered block ID list.
+    ///
+    /// This is a broad-phase optimized variant of [`check_player_blocks`] that avoids
+    /// scanning every block in the scene.
+    pub fn check_player_blocks_for_ids(
+        player: &mut Player,
+        blocks: &BuildingBlockManager,
+        block_ids: &[u32],
+        _delta: f32,
+    ) -> bool {
+        let mut any_collision = false;
+        for &id in block_ids {
+            if let Some(block) = blocks.get_block(id) {
+                any_collision |= Self::resolve_player_vs_aabb(player, &block.aabb());
+            }
+        }
         any_collision
     }
 
@@ -210,7 +158,7 @@ impl CollisionSystem {
         for block in blocks.blocks() {
             let aabb = block.aabb();
             // Expand by projectile radius to emulate swept-sphere collision.
-            let expanded = AABB::new(
+            let expanded = CollisionAabb::new(
                 aabb.min - Vec3::splat(radius),
                 aabb.max + Vec3::splat(radius),
             );
@@ -225,9 +173,129 @@ impl CollisionSystem {
 
         nearest
     }
+
+    /// Cast a projectile segment against a pre-filtered block ID set.
+    ///
+    /// Returns the nearest hit among the provided candidates.
+    pub fn check_projectile_blocks_for_ids(
+        prev_pos: Vec3,
+        new_pos: Vec3,
+        radius: f32,
+        blocks: &BuildingBlockManager,
+        block_ids: &[u32],
+    ) -> Option<(Vec3, u32)> {
+        let ray = new_pos - prev_pos;
+        let ray_length = ray.length();
+        if ray_length < 1e-6 {
+            return None;
+        }
+        let ray_dir = ray / ray_length;
+
+        let mut nearest_t = f32::MAX;
+        let mut nearest: Option<(Vec3, u32)> = None;
+
+        for &id in block_ids {
+            let Some(block) = blocks.get_block(id) else {
+                continue;
+            };
+            let aabb = block.aabb();
+            let expanded = CollisionAabb::new(
+                aabb.min - Vec3::splat(radius),
+                aabb.max + Vec3::splat(radius),
+            );
+
+            if let Some(t_hit) = ray_aabb_hit_t(prev_pos, ray_dir, ray_length, &expanded)
+                && t_hit < nearest_t
+            {
+                nearest_t = t_hit;
+                nearest = Some((prev_pos + ray_dir * t_hit, block.id));
+            }
+        }
+
+        nearest
+    }
+
+    fn resolve_player_vs_aabb(
+        player: &mut Player,
+        aabb: &crate::render::building_blocks::AABB,
+    ) -> bool {
+        let mut collided = false;
+        let player_top = player.position.y + PLAYER_TOP_OFFSET;
+        let player_vel = Vec3::new(
+            player.velocity.x,
+            player.vertical_velocity,
+            player.velocity.z,
+        );
+
+        let result = check_capsule_aabb_collision(
+            player.position,
+            player_top,
+            PLAYER_RADIUS,
+            player_vel,
+            &CollisionAabb::new(aabb.min, aabb.max),
+        );
+
+        if result.has_collision() {
+            // Step assist for stairs / low ledges: when side-colliding with a low top,
+            // lift player up instead of hard stopping.
+            let mostly_horizontal_hit =
+                (result.push.x.abs() + result.push.z.abs()) > 1e-4 && result.push.y.abs() < 0.05;
+            if mostly_horizontal_hit && player.vertical_velocity <= 0.2 {
+                let step_delta = aabb.max.y - player.position.y;
+                if step_delta > 0.05 && step_delta <= MAX_STEP_HEIGHT {
+                    let stepped_x = player.position.x + result.push.x;
+                    let stepped_z = player.position.z + result.push.z;
+                    let on_top_xz = stepped_x >= aabb.min.x - PLAYER_RADIUS
+                        && stepped_x <= aabb.max.x + PLAYER_RADIUS
+                        && stepped_z >= aabb.min.z - PLAYER_RADIUS
+                        && stepped_z <= aabb.max.z + PLAYER_RADIUS;
+                    if on_top_xz {
+                        player.position.x = stepped_x;
+                        player.position.z = stepped_z;
+                        player.position.y = aabb.max.y;
+                        player.vertical_velocity = 0.0;
+                        player.is_grounded = true;
+                        return true;
+                    }
+                }
+            }
+
+            player.position += result.push;
+            player.velocity += Vec3::new(
+                result.velocity_adjustment.x,
+                0.0,
+                result.velocity_adjustment.z,
+            );
+            player.vertical_velocity += result.velocity_adjustment.y;
+
+            if let (true, Some(ground_y)) = (result.grounded, result.ground_y) {
+                player.position.y = ground_y;
+                player.vertical_velocity = 0.0;
+                player.is_grounded = true;
+            }
+
+            collided = true;
+        }
+
+        // Landing assist: makes non-cube/top landings reliable with AABB tops.
+        let on_top_xz = player.position.x >= aabb.min.x - PLAYER_RADIUS
+            && player.position.x <= aabb.max.x + PLAYER_RADIUS
+            && player.position.z >= aabb.min.z - PLAYER_RADIUS
+            && player.position.z <= aabb.max.z + PLAYER_RADIUS;
+        let near_top = player.position.y >= aabb.max.y - LANDING_WINDOW_BELOW_TOP
+            && player.position.y <= aabb.max.y + LANDING_WINDOW_ABOVE_TOP;
+        if on_top_xz && near_top && player.vertical_velocity <= 0.0 {
+            player.position.y = aabb.max.y;
+            player.vertical_velocity = 0.0;
+            player.is_grounded = true;
+            collided = true;
+        }
+
+        collided
+    }
 }
 
-fn ray_aabb_hit_t(origin: Vec3, dir: Vec3, max_t: f32, aabb: &AABB) -> Option<f32> {
+fn ray_aabb_hit_t(origin: Vec3, dir: Vec3, max_t: f32, aabb: &CollisionAabb) -> Option<f32> {
     let inv_dir = Vec3::new(
         if dir.x.abs() > 1e-7 {
             1.0 / dir.x

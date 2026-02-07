@@ -3162,6 +3162,36 @@ impl BattleArenaApp {
 
     /// Regenerate the building block mesh buffer
     fn regenerate_block_mesh(&mut self) {
+        fn is_voxel_cube_for_chunking(block: &battle_tok_engine::render::BuildingBlock) -> bool {
+            let battle_tok_engine::render::BuildingBlockShape::Cube { half_extents } = block.shape
+            else {
+                return false;
+            };
+            let is_unit = (half_extents.x - 0.5).abs() <= 1e-4
+                && (half_extents.y - 0.5).abs() <= 1e-4
+                && (half_extents.z - 0.5).abs() <= 1e-4;
+            if !is_unit {
+                return false;
+            }
+            block.rotation.dot(glam::Quat::IDENTITY).abs() >= 0.9999
+        }
+
+        fn block_material_color(material: u8) -> [f32; 4] {
+            match material {
+                0 => [0.6, 0.6, 0.6, 1.0],
+                1 => [0.7, 0.5, 0.3, 1.0],
+                2 => [0.4, 0.4, 0.45, 1.0],
+                3 => [0.8, 0.7, 0.5, 1.0],
+                4 => [0.3, 0.3, 0.35, 1.0],
+                5 => [0.6, 0.3, 0.2, 1.0],
+                6 => [0.2, 0.4, 0.2, 1.0],
+                7 => [0.5, 0.5, 0.6, 1.0],
+                8 => [0.9, 0.9, 0.85, 1.0],
+                9 => [0.2, 0.2, 0.3, 1.0],
+                _ => [0.5, 0.5, 0.5, 1.0],
+            }
+        }
+
         let gpu = match &mut self.gpu {
             Some(g) => g,
             None => return,
@@ -3188,7 +3218,138 @@ impl BattleArenaApp {
         let mut chunks: HashMap<(i32, i32, i32), ChunkBuildData> = HashMap::new();
         let chunk_size = BLOCK_RENDER_CHUNK_SIZE as f32;
 
+        let mut voxel_cubes: HashMap<(i32, i32, i32), (Vec3, u8)> = HashMap::new();
+        let mut fallback_blocks: Vec<&battle_tok_engine::render::BuildingBlock> = Vec::new();
+
         for block in blocks {
+            if is_voxel_cube_for_chunking(block) {
+                let cell = (
+                    block.position.x.round() as i32,
+                    block.position.y.round() as i32,
+                    block.position.z.round() as i32,
+                );
+                voxel_cubes
+                    .entry(cell)
+                    .or_insert((block.position, block.material));
+            } else {
+                fallback_blocks.push(block);
+            }
+        }
+
+        if !voxel_cubes.is_empty() {
+            let faces: [([i32; 3], [f32; 3], [[f32; 3]; 4]); 6] = [
+                (
+                    [1, 0, 0],
+                    [1.0, 0.0, 0.0],
+                    [
+                        [1.0, -1.0, -1.0],
+                        [1.0, 1.0, -1.0],
+                        [1.0, 1.0, 1.0],
+                        [1.0, -1.0, 1.0],
+                    ],
+                ),
+                (
+                    [-1, 0, 0],
+                    [-1.0, 0.0, 0.0],
+                    [
+                        [-1.0, -1.0, 1.0],
+                        [-1.0, 1.0, 1.0],
+                        [-1.0, 1.0, -1.0],
+                        [-1.0, -1.0, -1.0],
+                    ],
+                ),
+                (
+                    [0, 1, 0],
+                    [0.0, 1.0, 0.0],
+                    [
+                        [-1.0, 1.0, -1.0],
+                        [-1.0, 1.0, 1.0],
+                        [1.0, 1.0, 1.0],
+                        [1.0, 1.0, -1.0],
+                    ],
+                ),
+                (
+                    [0, -1, 0],
+                    [0.0, -1.0, 0.0],
+                    [
+                        [-1.0, -1.0, 1.0],
+                        [-1.0, -1.0, -1.0],
+                        [1.0, -1.0, -1.0],
+                        [1.0, -1.0, 1.0],
+                    ],
+                ),
+                (
+                    [0, 0, 1],
+                    [0.0, 0.0, 1.0],
+                    [
+                        [-1.0, -1.0, 1.0],
+                        [1.0, -1.0, 1.0],
+                        [1.0, 1.0, 1.0],
+                        [-1.0, 1.0, 1.0],
+                    ],
+                ),
+                (
+                    [0, 0, -1],
+                    [0.0, 0.0, -1.0],
+                    [
+                        [1.0, -1.0, -1.0],
+                        [-1.0, -1.0, -1.0],
+                        [-1.0, 1.0, -1.0],
+                        [1.0, 1.0, -1.0],
+                    ],
+                ),
+            ];
+
+            for (&cell, &(position, material)) in &voxel_cubes {
+                let key = (
+                    (position.x / chunk_size).floor() as i32,
+                    (position.y / chunk_size).floor() as i32,
+                    (position.z / chunk_size).floor() as i32,
+                );
+                let chunk = chunks.entry(key).or_default();
+
+                let cube_min = position - Vec3::splat(0.5);
+                let cube_max = position + Vec3::splat(0.5);
+                if chunk.initialized {
+                    chunk.min = chunk.min.min(cube_min);
+                    chunk.max = chunk.max.max(cube_max);
+                } else {
+                    chunk.min = cube_min;
+                    chunk.max = cube_max;
+                    chunk.initialized = true;
+                }
+
+                let color = block_material_color(material);
+                for (offset, normal_arr, corners) in &faces {
+                    let neighbor = (cell.0 + offset[0], cell.1 + offset[1], cell.2 + offset[2]);
+                    if voxel_cubes.contains_key(&neighbor) {
+                        continue;
+                    }
+
+                    let base = chunk.vertices.len() as u32;
+                    let normal = [normal_arr[0], normal_arr[1], normal_arr[2]];
+                    for corner in corners {
+                        let local = Vec3::new(corner[0], corner[1], corner[2]) * 0.5;
+                        let world = position + local;
+                        chunk.vertices.push(Vertex {
+                            position: [world.x, world.y, world.z],
+                            normal,
+                            color,
+                        });
+                    }
+                    chunk.indices.extend_from_slice(&[
+                        base,
+                        base + 1,
+                        base + 2,
+                        base,
+                        base + 2,
+                        base + 3,
+                    ]);
+                }
+            }
+        }
+
+        for block in fallback_blocks {
             let key = (
                 (block.position.x / chunk_size).floor() as i32,
                 (block.position.y / chunk_size).floor() as i32,

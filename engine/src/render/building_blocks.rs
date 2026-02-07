@@ -903,14 +903,26 @@ fn mesh_wedge(
 // ============================================================================
 
 /// Manages a collection of building blocks
-#[derive(Default)]
 pub struct BuildingBlockManager {
     /// All blocks in the scene
     blocks: Vec<BuildingBlock>,
+    /// Fast block lookup by stable block ID.
+    id_to_index: HashMap<u32, usize>,
     /// Next group ID for merging
     next_group_id: u32,
     /// Whether the mesh needs regeneration
     mesh_dirty: bool,
+}
+
+impl Default for BuildingBlockManager {
+    fn default() -> Self {
+        Self {
+            blocks: Vec::new(),
+            id_to_index: HashMap::new(),
+            next_group_id: 0,
+            mesh_dirty: false,
+        }
+    }
 }
 
 impl BuildingBlockManager {
@@ -922,6 +934,7 @@ impl BuildingBlockManager {
     /// Add a new block
     pub fn add_block(&mut self, block: BuildingBlock) -> u32 {
         let id = block.id;
+        self.id_to_index.insert(id, self.blocks.len());
         self.blocks.push(block);
         self.mesh_dirty = true;
         id
@@ -929,9 +942,14 @@ impl BuildingBlockManager {
 
     /// Remove a block by ID
     pub fn remove_block(&mut self, id: u32) -> Option<BuildingBlock> {
-        if let Some(pos) = self.blocks.iter().position(|b| b.id == id) {
+        if let Some(pos) = self.id_to_index.remove(&id) {
             self.mesh_dirty = true;
-            Some(self.blocks.remove(pos))
+            let removed = self.blocks.swap_remove(pos);
+            if pos < self.blocks.len() {
+                let swapped_id = self.blocks[pos].id;
+                self.id_to_index.insert(swapped_id, pos);
+            }
+            Some(removed)
         } else {
             None
         }
@@ -939,12 +957,14 @@ impl BuildingBlockManager {
 
     /// Get a block by ID
     pub fn get_block(&self, id: u32) -> Option<&BuildingBlock> {
-        self.blocks.iter().find(|b| b.id == id)
+        let idx = *self.id_to_index.get(&id)?;
+        self.blocks.get(idx)
     }
 
     /// Get a mutable block by ID
     pub fn get_block_mut(&mut self, id: u32) -> Option<&mut BuildingBlock> {
-        self.blocks.iter_mut().find(|b| b.id == id)
+        let idx = *self.id_to_index.get(&id)?;
+        self.blocks.get_mut(idx)
     }
 
     /// Get all blocks
@@ -1279,5 +1299,29 @@ mod tests {
         let (verts, indices) = block.generate_mesh();
         assert_eq!(verts.len(), 24); // 6 faces * 4 vertices
         assert_eq!(indices.len(), 36); // 6 faces * 2 triangles * 3 indices
+    }
+
+    #[test]
+    fn test_manager_id_lookup_after_swap_remove() {
+        let mut manager = BuildingBlockManager::new();
+        let a = BuildingBlock::new(BuildingBlockShape::Sphere { radius: 0.5 }, Vec3::ZERO, 0);
+        let b = BuildingBlock::new(
+            BuildingBlockShape::Cube {
+                half_extents: Vec3::splat(0.5),
+            },
+            Vec3::new(1.0, 0.0, 0.0),
+            1,
+        );
+        let c = BuildingBlock::new(BuildingBlockShape::Dome { radius: 0.4 }, Vec3::X * 2.0, 2);
+        let a_id = manager.add_block(a);
+        let b_id = manager.add_block(b);
+        let c_id = manager.add_block(c);
+
+        let removed = manager.remove_block(b_id);
+        assert!(removed.is_some());
+        assert!(manager.get_block(b_id).is_none());
+        assert!(manager.get_block(a_id).is_some());
+        assert!(manager.get_block(c_id).is_some());
+        assert_eq!(manager.len(), 2);
     }
 }
