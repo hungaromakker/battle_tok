@@ -982,6 +982,11 @@ impl BuildingBlockManager {
         self.mesh_dirty = false;
     }
 
+    /// Mark mesh data as dirty when block transforms/support state change in-place.
+    pub fn mark_mesh_dirty(&mut self) {
+        self.mesh_dirty = true;
+    }
+
     /// Generate combined mesh for all blocks
     pub fn generate_combined_mesh(&self) -> (Vec<BlockVertex>, Vec<u32>) {
         let mut vertices = Vec::new();

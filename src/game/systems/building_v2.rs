@@ -1,22 +1,11 @@
 //! BuildingSystemV2 - deterministic structural graph for Forts-style building.
 //!
-//! This module models structure stability as graph connectivity from terrain
-//! anchors. A block is stable when it belongs to a connected component that
-//! reaches at least one anchored block.
+//! This module models gravity-first static support.
+//! A block is stable when it is terrain-anchored or sits above a stable block.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use glam::{IVec3, Vec3};
-
-/// Orthogonal neighbors in the structural grid.
-const NEIGHBOR_OFFSETS: [IVec3; 6] = [
-    IVec3::new(1, 0, 0),
-    IVec3::new(-1, 0, 0),
-    IVec3::new(0, 1, 0),
-    IVec3::new(0, -1, 0),
-    IVec3::new(0, 0, 1),
-    IVec3::new(0, 0, -1),
-];
 
 #[derive(Debug, Clone)]
 pub struct StructuralNode {
@@ -32,7 +21,7 @@ pub enum PlaceError {
     NeedsSupport,
 }
 
-/// Deterministic structural solver based on connected components.
+/// Deterministic structural solver with below-support propagation.
 #[derive(Debug, Default)]
 pub struct BuildingSystemV2 {
     nodes: HashMap<u32, StructuralNode>,
@@ -71,6 +60,10 @@ impl BuildingSystemV2 {
         self.by_cell.get(&cell).copied()
     }
 
+    pub fn contains_block_id(&self, block_id: u32) -> bool {
+        self.nodes.contains_key(&block_id)
+    }
+
     pub fn is_stable(&self, block_id: u32) -> bool {
         self.stable_nodes.contains(&block_id)
     }
@@ -83,7 +76,7 @@ impl BuildingSystemV2 {
         if self.is_occupied(cell) {
             return Err(PlaceError::Occupied);
         }
-        if terrain_anchor || self.has_stable_neighbor(cell) {
+        if terrain_anchor || self.has_stable_below(cell) {
             Ok(())
         } else {
             Err(PlaceError::NeedsSupport)
@@ -129,6 +122,15 @@ impl BuildingSystemV2 {
         self.unstable_block_ids()
     }
 
+    /// Detach a block from the static support graph without touching render/physics managers.
+    ///
+    /// Used when a block transitions into dynamic falling-rubble simulation.
+    pub fn detach_block(&mut self, block_id: u32) -> Vec<u32> {
+        self.remove_block_internal(block_id);
+        self.recompute_support();
+        self.unstable_block_ids()
+    }
+
     pub fn world_to_cell(position: Vec3, grid_size: f32) -> IVec3 {
         IVec3::new(
             (position.x / grid_size).round() as i32,
@@ -146,21 +148,11 @@ impl BuildingSystemV2 {
         self.unstable_nodes.remove(&block_id);
     }
 
-    fn has_stable_neighbor(&self, cell: IVec3) -> bool {
-        for neighbor in Self::neighbors(cell) {
-            if let Some(neighbor_id) = self.by_cell.get(&neighbor)
-                && self.stable_nodes.contains(neighbor_id)
-            {
-                return true;
-            }
-        }
-        false
-    }
-
-    fn neighbors(cell: IVec3) -> impl Iterator<Item = IVec3> {
-        NEIGHBOR_OFFSETS
-            .into_iter()
-            .map(move |offset| cell + offset)
+    fn has_stable_below(&self, cell: IVec3) -> bool {
+        let below = cell + IVec3::new(0, -1, 0);
+        self.by_cell
+            .get(&below)
+            .is_some_and(|below_id| self.stable_nodes.contains(below_id))
     }
 
     fn recompute_support(&mut self) {
@@ -170,24 +162,22 @@ impl BuildingSystemV2 {
         self.terrain_anchors
             .retain(|id| self.nodes.contains_key(id));
 
-        let mut queue: VecDeque<u32> = VecDeque::new();
-        for &id in &self.terrain_anchors {
-            if self.stable_nodes.insert(id) {
-                queue.push_back(id);
-            }
-        }
+        let mut node_ids: Vec<u32> = self.nodes.keys().copied().collect();
+        node_ids.sort_by_key(|id| self.nodes.get(id).map(|n| n.cell.y).unwrap_or(i32::MAX));
 
-        while let Some(id) = queue.pop_front() {
+        for id in node_ids {
             let Some(node) = self.nodes.get(&id) else {
                 continue;
             };
-
-            for neighbor_cell in Self::neighbors(node.cell) {
-                if let Some(neighbor_id) = self.by_cell.get(&neighbor_cell).copied()
-                    && self.stable_nodes.insert(neighbor_id)
-                {
-                    queue.push_back(neighbor_id);
-                }
+            if node.terrain_anchor || self.terrain_anchors.contains(&id) {
+                self.stable_nodes.insert(id);
+                continue;
+            }
+            let below = node.cell + IVec3::new(0, -1, 0);
+            if let Some(below_id) = self.by_cell.get(&below)
+                && self.stable_nodes.contains(below_id)
+            {
+                self.stable_nodes.insert(id);
             }
         }
 
@@ -226,12 +216,22 @@ mod tests {
         let mut v2 = BuildingSystemV2::new();
         assert!(v2.insert_block(1, IVec3::new(0, 0, 0), 0, true).is_ok());
         assert!(v2.insert_block(2, IVec3::new(0, 1, 0), 0, false).is_ok());
-        assert!(v2.insert_block(3, IVec3::new(1, 1, 0), 0, false).is_ok());
+        assert!(v2.insert_block(3, IVec3::new(0, 2, 0), 0, false).is_ok());
 
         let unstable = v2.remove_block(1);
         assert!(unstable.contains(&2));
         assert!(unstable.contains(&3));
         assert!(!v2.is_stable(2));
         assert!(!v2.is_stable(3));
+    }
+
+    #[test]
+    fn rejects_lateral_only_support() {
+        let mut v2 = BuildingSystemV2::new();
+        assert!(v2.insert_block(1, IVec3::new(0, 0, 0), 0, true).is_ok());
+        assert_eq!(
+            v2.insert_block(2, IVec3::new(1, 0, 0), 0, false),
+            Err(PlaceError::NeedsSupport)
+        );
     }
 }

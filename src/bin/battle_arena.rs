@@ -50,7 +50,7 @@ use battle_tok_engine::render::{
 };
 
 // Import building block types for GPU operations
-use battle_tok_engine::render::{BuildingBlock, MergedMesh};
+use battle_tok_engine::render::{BuildingBlock, BuildingBlockShape, MergedMesh};
 
 // Import game module types
 use battle_tok_engine::game::ProjectileKind;
@@ -84,9 +84,18 @@ struct MergedMeshBuffers {
 struct BlockChunkBuffers {
     center: Vec3,
     radius: f32,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
+    first_index: u32,
     index_count: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct DrawIndexedIndirectCommand {
+    index_count: u32,
+    instance_count: u32,
+    first_index: u32,
+    base_vertex: i32,
+    first_instance: u32,
 }
 
 /// Scene uniforms for the lava shader (matches lava.wgsl Uniforms struct).
@@ -110,6 +119,7 @@ const ENABLE_SDF_DOUBLE_CLICK_MERGE: bool = false;
 const BLOCK_RENDER_CHUNK_SIZE: i32 = 12;
 const BLOCK_RENDER_MAX_DISTANCE: f32 = 260.0;
 const BLOCK_REAR_CULL_DOT: f32 = -0.30;
+const INITIAL_BLOCK_CHUNK_INDIRECT_CAPACITY: u32 = 256;
 const STRUCTURE_ROCK_TEXTURE_BYTES: &[u8] =
     include_bytes!("../../Assets/textures/rock_stone_tile.png");
 
@@ -158,6 +168,69 @@ struct BloomMip {
     view: wgpu::TextureView,
     width: u32,
     height: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum VoxelFaceDir {
+    PosX,
+    NegX,
+    PosY,
+    NegY,
+    PosZ,
+    NegZ,
+}
+
+fn greedy_rects_from_tiles(
+    tiles: &std::collections::BTreeMap<(i32, i32), u16>,
+) -> Vec<(i32, i32, i32, i32, u16)> {
+    let mut remaining = tiles.clone();
+    let mut rects = Vec::new();
+
+    while let Some((&(u0, v0), &material)) = remaining.iter().next() {
+        let mut width = 1i32;
+        while remaining.get(&(u0 + width, v0)) == Some(&material) {
+            width += 1;
+        }
+
+        let mut height = 1i32;
+        'expand_height: loop {
+            let next_v = v0 + height;
+            for du in 0..width {
+                if remaining.get(&(u0 + du, next_v)) != Some(&material) {
+                    break 'expand_height;
+                }
+            }
+            height += 1;
+        }
+
+        for dv in 0..height {
+            for du in 0..width {
+                remaining.remove(&(u0 + du, v0 + dv));
+            }
+        }
+
+        rects.push((u0, v0, width, height, material));
+    }
+
+    rects
+}
+
+fn append_quad(
+    vertices: &mut Vec<Vertex>,
+    indices: &mut Vec<u32>,
+    normal: [f32; 3],
+    color: [f32; 4],
+    corners: [[f32; 3]; 4],
+) {
+    let base = vertices.len() as u32;
+    for p in corners {
+        vertices.push(Vertex {
+            position: p,
+            normal,
+            color,
+        });
+    }
+    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
 }
 
 // ============================================================================
@@ -216,7 +289,11 @@ struct GpuResources {
     _structure_texture_sampler: wgpu::Sampler,
 
     // Building blocks (split into cullable chunks)
+    block_chunk_vertex_buffer: wgpu::Buffer,
+    block_chunk_index_buffer: wgpu::Buffer,
     block_chunk_buffers: Vec<BlockChunkBuffers>,
+    block_chunk_indirect_buffer: wgpu::Buffer,
+    block_chunk_indirect_capacity: u32,
 
     // Merged mesh GPU buffers
     merged_mesh_buffers: Vec<MergedMeshBuffers>,
@@ -520,6 +597,18 @@ struct BattleArenaApp {
     postfx_enabled: bool,
     taa_enabled: bool,
     bloom_enabled: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PickupTarget {
+    LooseBlock {
+        block_id: u32,
+        shape: battle_tok_engine::render::BuildingBlockShape,
+        material: u8,
+    },
+    RubblePile {
+        pile_id: u32,
+    },
 }
 
 impl BattleArenaApp {
@@ -1950,6 +2039,27 @@ impl BattleArenaApp {
             cache: None,
         });
 
+        let block_chunk_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Block Chunk Vertex Buffer"),
+            size: std::mem::size_of::<Vertex>() as u64,
+            usage: wgpu::BufferUsages::VERTEX,
+            mapped_at_creation: false,
+        });
+        let block_chunk_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Block Chunk Index Buffer"),
+            size: std::mem::size_of::<u32>() as u64,
+            usage: wgpu::BufferUsages::INDEX,
+            mapped_at_creation: false,
+        });
+        let block_chunk_indirect_capacity = INITIAL_BLOCK_CHUNK_INDIRECT_CAPACITY.max(1);
+        let block_chunk_indirect_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Block Chunk Indirect Buffer"),
+            size: (block_chunk_indirect_capacity as u64)
+                * (std::mem::size_of::<DrawIndexedIndirectCommand>() as u64),
+            usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         // Store everything
         self.window = Some(window);
         self.scene = Some(scene);
@@ -1995,7 +2105,11 @@ impl BattleArenaApp {
             _structure_texture: structure_texture,
             _structure_texture_view: structure_texture_view,
             _structure_texture_sampler: structure_texture_sampler,
+            block_chunk_vertex_buffer,
+            block_chunk_index_buffer,
             block_chunk_buffers: Vec::new(),
+            block_chunk_indirect_buffer,
+            block_chunk_indirect_capacity,
             merged_mesh_buffers: Vec::new(),
             tree_vertex_buffer,
             tree_index_buffer,
@@ -2180,26 +2294,44 @@ impl BattleArenaApp {
                     .pickup_in_progress = true;
 
                 // Raycast without scene borrow
-                if let Some((block_id, shape, material)) = self.raycast_to_loose_block() {
+                if let Some(target) = self.raycast_to_pickup_target() {
                     let mut did_stash = false;
-                    let mut count = 0;
-                    let mut max = 0;
-                    {
+                    let mut needs_block_mesh_regen = false;
+                    let (count, max) = {
                         let scene = self.scene.as_mut().unwrap();
-                        if scene
-                            .building
-                            .toolbar_mut()
-                            .inventory
-                            .stash(shape, material)
-                        {
-                            scene.building.remove_block(block_id);
-                            count = scene.building.toolbar().inventory.count();
-                            max = scene.building.toolbar().inventory.max_capacity;
-                            did_stash = true;
+                        match target {
+                            PickupTarget::LooseBlock {
+                                block_id,
+                                shape,
+                                material,
+                            } => {
+                                if scene
+                                    .building
+                                    .toolbar_mut()
+                                    .inventory
+                                    .stash(shape, material)
+                                {
+                                    scene.building.remove_block(block_id);
+                                    did_stash = true;
+                                    needs_block_mesh_regen = true;
+                                }
+                            }
+                            PickupTarget::RubblePile { pile_id } => {
+                                let picked = scene.building.try_pickup_rubble_pile(pile_id, 1);
+                                if picked > 0 {
+                                    did_stash = true;
+                                }
+                            }
                         }
-                    }
+                        (
+                            scene.building.toolbar().inventory.count(),
+                            scene.building.toolbar().inventory.max_capacity,
+                        )
+                    };
                     if did_stash {
-                        self.regenerate_block_mesh();
+                        if needs_block_mesh_regen {
+                            self.regenerate_block_mesh();
+                        }
                         println!("[Pickup] Stashed block (inventory: {}/{})", count, max);
                     }
                 }
@@ -2219,36 +2351,7 @@ impl BattleArenaApp {
                 .pickup_in_progress = false;
         }
 
-        // Update building physics mesh if blocks changed
-        let needs_mesh_update = {
-            let scene = self.scene.as_mut().unwrap();
-            let mut needs_update = false;
-            for block in scene.building.block_manager.blocks() {
-                if scene.building.block_physics.is_falling(block.id) {
-                    needs_update = true;
-                    break;
-                }
-            }
-            let removed = scene.building.update_physics(delta_time);
-            if !removed.is_empty() {
-                needs_update = true;
-                for block_id in &removed {
-                    if let Some(block) = scene.building.block_manager.get_block(*block_id) {
-                        let debris = battle_tok_engine::game::spawn_debris(
-                            block.position,
-                            block.material,
-                            8,
-                        );
-                        scene.destruction.add_debris(debris);
-                    }
-                    scene.building.remove_block(*block_id);
-                }
-            }
-            needs_update
-        };
-        if needs_mesh_update {
-            self.regenerate_block_mesh();
-        }
+        // Building physics now updates in BattleScene fixed-step.
     }
 
     fn spawn_explosion_embers(particle_system: &mut ParticleSystem, center: Vec3, count: usize) {
@@ -2468,10 +2571,8 @@ impl BattleArenaApp {
         }
     }
 
-    /// Raycast from camera to find a loose (physics-detached) block
-    fn raycast_to_loose_block(
-        &self,
-    ) -> Option<(u32, battle_tok_engine::render::BuildingBlockShape, u8)> {
+    /// Raycast from camera to find a loose block or rubble pile pickup target.
+    fn raycast_to_pickup_target(&self) -> Option<PickupTarget> {
         let mouse_pos = self.current_mouse_pos?;
         let _gpu = self.gpu.as_ref()?;
         let scene = self.scene.as_ref()?;
@@ -2488,7 +2589,16 @@ impl BattleArenaApp {
                 && scene.building.block_physics.is_loose(block_id)
                 && let Some(block) = scene.building.block_manager.get_block(block_id)
             {
-                return Some((block_id, block.shape, block.material));
+                return Some(PickupTarget::LooseBlock {
+                    block_id,
+                    shape: block.shape,
+                    material: block.material,
+                });
+            }
+            if let Some((pile_id, dist)) = scene.building.find_rubble_pile_near(p, 0.5)
+                && dist < 0.5
+            {
+                return Some(PickupTarget::RubblePile { pile_id });
             }
             t += step_size;
         }
@@ -2642,6 +2752,11 @@ impl BattleArenaApp {
             .scene
             .as_ref()
             .is_some_and(|s| s.building.toolbar().quick_mode);
+        let player_feet = self
+            .scene
+            .as_ref()
+            .map(|s| s.player.position)
+            .unwrap_or(Vec3::ZERO);
 
         let preview_pos = self
             .scene
@@ -2661,6 +2776,16 @@ impl BattleArenaApp {
         let placed = if quick_mode {
             self.place_structure_at_anchor(position)
         } else {
+            let shape = self
+                .scene
+                .as_ref()
+                .unwrap()
+                .building
+                .toolbar()
+                .get_selected_shape();
+            if Self::placement_intersects_player(player_feet, shape, position) {
+                return;
+            }
             let ground_hint = self.sample_build_ground_height(position.x, position.z);
             if self
                 .scene
@@ -2733,8 +2858,25 @@ impl BattleArenaApp {
             }
             placed_count += self.place_structure_instances(all_instances);
         } else {
+            let player_feet = self
+                .scene
+                .as_ref()
+                .map(|s| s.player.position)
+                .unwrap_or(Vec3::ZERO);
+            let shape = self
+                .scene
+                .as_ref()
+                .unwrap()
+                .building
+                .toolbar()
+                .get_selected_shape();
+            let mut blocked_player = 0u32;
             let scene = self.scene.as_mut().unwrap();
             for (position, ground_hint) in placements {
+                if Self::placement_intersects_player(player_feet, shape, position) {
+                    blocked_player += 1;
+                    continue;
+                }
                 if scene
                     .building
                     .place_block_with_ground_hint(position, ground_hint)
@@ -2742,6 +2884,12 @@ impl BattleArenaApp {
                 {
                     placed_count += 1;
                 }
+            }
+            if blocked_player > 0 {
+                println!(
+                    "[Build] Skipped {} placement(s): intersects player capsule",
+                    blocked_player
+                );
             }
         }
 
@@ -2753,7 +2901,7 @@ impl BattleArenaApp {
     fn structure_instances_at_anchor(
         &self,
         anchor: Vec3,
-    ) -> Vec<(Vec3, battle_tok_engine::render::BuildingBlockShape)> {
+    ) -> Vec<(Vec3, BuildingBlockShape)> {
         let Some(scene) = self.scene.as_ref() else {
             return Vec::new();
         };
@@ -2787,7 +2935,7 @@ impl BattleArenaApp {
 
     fn place_structure_instances(
         &mut self,
-        mut instances: Vec<(Vec3, battle_tok_engine::render::BuildingBlockShape)>,
+        mut instances: Vec<(Vec3, BuildingBlockShape)>,
     ) -> u32 {
         if instances.is_empty() {
             return 0;
@@ -2802,12 +2950,7 @@ impl BattleArenaApp {
                 .then_with(|| a.0.x.total_cmp(&b.0.x))
                 .then_with(|| a.0.z.total_cmp(&b.0.z))
         });
-        let placements: Vec<(
-            Vec3,
-            battle_tok_engine::render::BuildingBlockShape,
-            IVec3,
-            Option<f32>,
-        )> = instances
+        let placements: Vec<(Vec3, BuildingBlockShape, IVec3, Option<f32>)> = instances
             .into_iter()
             .map(|(position, shape)| {
                 (
@@ -2828,9 +2971,20 @@ impl BattleArenaApp {
         let mut placed = 0u32;
         let mut skipped_occupied = 0u32;
         let mut blocked_other = 0u32;
+        let mut blocked_player = 0u32;
+        let player_feet = self
+            .scene
+            .as_ref()
+            .map(|s| s.player.position)
+            .unwrap_or(Vec3::ZERO);
 
         if let Some(scene) = self.scene.as_mut() {
             for (position, shape, cell, ground_hint) in placements {
+                if Self::placement_intersects_player(player_feet, shape, position) {
+                    blocked_player += 1;
+                    continue;
+                }
+
                 if scene.building.statics_v2.is_occupied(cell) {
                     skipped_occupied += 1;
                     continue;
@@ -2848,10 +3002,10 @@ impl BattleArenaApp {
             }
         }
 
-        if skipped_occupied > 0 || blocked_other > 0 {
+        if skipped_occupied > 0 || blocked_other > 0 || blocked_player > 0 {
             println!(
-                "[Build] Template placement: +{} | skipped occupied {} | blocked {}",
-                placed, skipped_occupied, blocked_other
+                "[Build] Template placement: +{} | occupied {} | blocked {} | player-overlap {}",
+                placed, skipped_occupied, blocked_other, blocked_player
             );
         }
 
@@ -2890,9 +3044,73 @@ impl BattleArenaApp {
         cells
     }
 
+    fn placement_intersects_player(
+        player_feet: Vec3,
+        shape: BuildingBlockShape,
+        position: Vec3,
+    ) -> bool {
+        const PLAYER_RADIUS: f32 = 0.3;
+        const PLAYER_TOP_OFFSET: f32 = PLAYER_EYE_HEIGHT + 0.2;
+        const EPSILON: f32 = 0.01;
+
+        let (min, max) = Self::shape_aabb(shape, position);
+        let player_top = player_feet.y + PLAYER_TOP_OFFSET;
+
+        let vertical_overlap = player_feet.y < max.y - EPSILON && player_top > min.y + EPSILON;
+        if !vertical_overlap {
+            return false;
+        }
+
+        let closest_x = player_feet.x.clamp(min.x, max.x);
+        let closest_z = player_feet.z.clamp(min.z, max.z);
+        let dx = player_feet.x - closest_x;
+        let dz = player_feet.z - closest_z;
+        let radius = PLAYER_RADIUS + 0.02;
+
+        (dx * dx + dz * dz) < (radius * radius)
+    }
+
+    fn shape_aabb(shape: BuildingBlockShape, position: Vec3) -> (Vec3, Vec3) {
+        match shape {
+            BuildingBlockShape::Cube { half_extents } => {
+                (position - half_extents, position + half_extents)
+            }
+            BuildingBlockShape::Cylinder { radius, height } => {
+                let half_height = height * 0.5;
+                (
+                    position - Vec3::new(radius, half_height, radius),
+                    position + Vec3::new(radius, half_height, radius),
+                )
+            }
+            BuildingBlockShape::Sphere { radius } => {
+                (position - Vec3::splat(radius), position + Vec3::splat(radius))
+            }
+            BuildingBlockShape::Dome { radius } => (
+                position - Vec3::new(radius, 0.0, radius),
+                position + Vec3::new(radius, radius, radius),
+            ),
+            BuildingBlockShape::Arch {
+                width,
+                height,
+                depth,
+            } => {
+                let half_width = width * 0.5;
+                let half_depth = depth * 0.5;
+                (
+                    position - Vec3::new(half_width, 0.0, half_depth),
+                    position + Vec3::new(half_width, height, half_depth),
+                )
+            }
+            BuildingBlockShape::Wedge { size } => {
+                let half = size * 0.5;
+                (position - half, position + half)
+            }
+        }
+    }
+
     fn generate_block_preview_mesh(
         &self,
-        instances: &[(Vec3, battle_tok_engine::render::BuildingBlockShape)],
+        instances: &[(Vec3, BuildingBlockShape)],
         pulse_alpha: f32,
         color: [f32; 3],
     ) -> Option<(Vec<Vertex>, Vec<u32>)> {
@@ -3176,8 +3394,8 @@ impl BattleArenaApp {
             block.rotation.dot(glam::Quat::IDENTITY).abs() >= 0.9999
         }
 
-        fn block_material_color(material: u8) -> [f32; 4] {
-            match material {
+        fn block_material_color(material: u8, crack_stage: u8) -> [f32; 4] {
+            let base = match material {
                 0 => [0.6, 0.6, 0.6, 1.0],
                 1 => [0.7, 0.5, 0.3, 1.0],
                 2 => [0.4, 0.4, 0.45, 1.0],
@@ -3189,7 +3407,29 @@ impl BattleArenaApp {
                 8 => [0.9, 0.9, 0.85, 1.0],
                 9 => [0.2, 0.2, 0.3, 1.0],
                 _ => [0.5, 0.5, 0.5, 1.0],
+            };
+            if crack_stage == 0 {
+                return base;
             }
+            if crack_stage >= 6 {
+                return [1.0, 0.18, 0.05, 1.0];
+            }
+            let severity = (crack_stage as f32 / 5.0).clamp(0.0, 1.0);
+            let darken = 1.0 - severity * 0.42;
+            [
+                (base[0] * darken + severity * 0.28).clamp(0.0, 1.0),
+                (base[1] * darken + severity * 0.05).clamp(0.0, 1.0),
+                (base[2] * darken + severity * 0.05).clamp(0.0, 1.0),
+                base[3],
+            ]
+        }
+
+        fn chunk_key_from_cell(cell: (i32, i32, i32)) -> (i32, i32, i32) {
+            (
+                cell.0.div_euclid(BLOCK_RENDER_CHUNK_SIZE),
+                cell.1.div_euclid(BLOCK_RENDER_CHUNK_SIZE),
+                cell.2.div_euclid(BLOCK_RENDER_CHUNK_SIZE),
+            )
         }
 
         let gpu = match &mut self.gpu {
@@ -3200,6 +3440,18 @@ impl BattleArenaApp {
         let blocks = scene.building.block_manager.blocks();
         if blocks.is_empty() {
             gpu.block_chunk_buffers.clear();
+            gpu.block_chunk_vertex_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Block Chunk Vertex Buffer"),
+                size: std::mem::size_of::<Vertex>() as u64,
+                usage: wgpu::BufferUsages::VERTEX,
+                mapped_at_creation: false,
+            });
+            gpu.block_chunk_index_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Block Chunk Index Buffer"),
+                size: std::mem::size_of::<u32>() as u64,
+                usage: wgpu::BufferUsages::INDEX,
+                mapped_at_creation: false,
+            });
             if let Some(scene_mut) = self.scene.as_mut() {
                 scene_mut.building.block_manager.clear_dirty();
             }
@@ -3217,8 +3469,8 @@ impl BattleArenaApp {
 
         let mut chunks: HashMap<(i32, i32, i32), ChunkBuildData> = HashMap::new();
         let chunk_size = BLOCK_RENDER_CHUNK_SIZE as f32;
-
-        let mut voxel_cubes: HashMap<(i32, i32, i32), (Vec3, u8)> = HashMap::new();
+        let mut voxel_cubes: HashMap<(i32, i32, i32), (u8, u8)> = HashMap::new();
+        let mut chunk_voxel_cells: HashMap<(i32, i32, i32), Vec<(i32, i32, i32)>> = HashMap::new();
         let mut fallback_blocks: Vec<&battle_tok_engine::render::BuildingBlock> = Vec::new();
 
         for block in blocks {
@@ -3228,88 +3480,28 @@ impl BattleArenaApp {
                     block.position.y.round() as i32,
                     block.position.z.round() as i32,
                 );
+                let crack_stage = scene.building.crack_stage_for_block(block.id);
                 voxel_cubes
                     .entry(cell)
-                    .or_insert((block.position, block.material));
+                    .and_modify(|state| {
+                        state.0 = block.material;
+                        state.1 = state.1.max(crack_stage);
+                    })
+                    .or_insert((block.material, crack_stage));
+                chunk_voxel_cells
+                    .entry(chunk_key_from_cell(cell))
+                    .or_default()
+                    .push(cell);
             } else {
                 fallback_blocks.push(block);
             }
         }
 
-        if !voxel_cubes.is_empty() {
-            let faces: [([i32; 3], [f32; 3], [[f32; 3]; 4]); 6] = [
-                (
-                    [1, 0, 0],
-                    [1.0, 0.0, 0.0],
-                    [
-                        [1.0, -1.0, -1.0],
-                        [1.0, 1.0, -1.0],
-                        [1.0, 1.0, 1.0],
-                        [1.0, -1.0, 1.0],
-                    ],
-                ),
-                (
-                    [-1, 0, 0],
-                    [-1.0, 0.0, 0.0],
-                    [
-                        [-1.0, -1.0, 1.0],
-                        [-1.0, 1.0, 1.0],
-                        [-1.0, 1.0, -1.0],
-                        [-1.0, -1.0, -1.0],
-                    ],
-                ),
-                (
-                    [0, 1, 0],
-                    [0.0, 1.0, 0.0],
-                    [
-                        [-1.0, 1.0, -1.0],
-                        [-1.0, 1.0, 1.0],
-                        [1.0, 1.0, 1.0],
-                        [1.0, 1.0, -1.0],
-                    ],
-                ),
-                (
-                    [0, -1, 0],
-                    [0.0, -1.0, 0.0],
-                    [
-                        [-1.0, -1.0, 1.0],
-                        [-1.0, -1.0, -1.0],
-                        [1.0, -1.0, -1.0],
-                        [1.0, -1.0, 1.0],
-                    ],
-                ),
-                (
-                    [0, 0, 1],
-                    [0.0, 0.0, 1.0],
-                    [
-                        [-1.0, -1.0, 1.0],
-                        [1.0, -1.0, 1.0],
-                        [1.0, 1.0, 1.0],
-                        [-1.0, 1.0, 1.0],
-                    ],
-                ),
-                (
-                    [0, 0, -1],
-                    [0.0, 0.0, -1.0],
-                    [
-                        [1.0, -1.0, -1.0],
-                        [-1.0, -1.0, -1.0],
-                        [-1.0, 1.0, -1.0],
-                        [1.0, 1.0, -1.0],
-                    ],
-                ),
-            ];
-
-            for (&cell, &(position, material)) in &voxel_cubes {
-                let key = (
-                    (position.x / chunk_size).floor() as i32,
-                    (position.y / chunk_size).floor() as i32,
-                    (position.z / chunk_size).floor() as i32,
-                );
-                let chunk = chunks.entry(key).or_default();
-
-                let cube_min = position - Vec3::splat(0.5);
-                let cube_max = position + Vec3::splat(0.5);
+        for (chunk_key, cells) in &chunk_voxel_cells {
+            let chunk = chunks.entry(*chunk_key).or_default();
+            for &(x, y, z) in cells {
+                let cube_min = Vec3::new(x as f32 - 0.5, y as f32 - 0.5, z as f32 - 0.5);
+                let cube_max = Vec3::new(x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5);
                 if chunk.initialized {
                     chunk.min = chunk.min.min(cube_min);
                     chunk.max = chunk.max.max(cube_max);
@@ -3318,33 +3510,147 @@ impl BattleArenaApp {
                     chunk.max = cube_max;
                     chunk.initialized = true;
                 }
+            }
 
-                let color = block_material_color(material);
-                for (offset, normal_arr, corners) in &faces {
-                    let neighbor = (cell.0 + offset[0], cell.1 + offset[1], cell.2 + offset[2]);
-                    if voxel_cubes.contains_key(&neighbor) {
-                        continue;
-                    }
+            let mut planes: std::collections::BTreeMap<
+                (VoxelFaceDir, i32),
+                std::collections::BTreeMap<(i32, i32), u16>,
+            > = std::collections::BTreeMap::new();
 
-                    let base = chunk.vertices.len() as u32;
-                    let normal = [normal_arr[0], normal_arr[1], normal_arr[2]];
-                    for corner in corners {
-                        let local = Vec3::new(corner[0], corner[1], corner[2]) * 0.5;
-                        let world = position + local;
-                        chunk.vertices.push(Vertex {
-                            position: [world.x, world.y, world.z],
-                            normal,
-                            color,
-                        });
+            for &(x, y, z) in cells {
+                let Some(&(material, crack_stage)) = voxel_cubes.get(&(x, y, z)) else {
+                    continue;
+                };
+                let encoded = ((material as u16) << 8) | crack_stage as u16;
+                if !voxel_cubes.contains_key(&(x + 1, y, z)) {
+                    planes
+                        .entry((VoxelFaceDir::PosX, x))
+                        .or_default()
+                        .insert((y, z), encoded);
+                }
+                if !voxel_cubes.contains_key(&(x - 1, y, z)) {
+                    planes
+                        .entry((VoxelFaceDir::NegX, x))
+                        .or_default()
+                        .insert((y, z), encoded);
+                }
+                if !voxel_cubes.contains_key(&(x, y + 1, z)) {
+                    planes
+                        .entry((VoxelFaceDir::PosY, y))
+                        .or_default()
+                        .insert((x, z), encoded);
+                }
+                if !voxel_cubes.contains_key(&(x, y - 1, z)) {
+                    planes
+                        .entry((VoxelFaceDir::NegY, y))
+                        .or_default()
+                        .insert((x, z), encoded);
+                }
+                if !voxel_cubes.contains_key(&(x, y, z + 1)) {
+                    planes
+                        .entry((VoxelFaceDir::PosZ, z))
+                        .or_default()
+                        .insert((x, y), encoded);
+                }
+                if !voxel_cubes.contains_key(&(x, y, z - 1)) {
+                    planes
+                        .entry((VoxelFaceDir::NegZ, z))
+                        .or_default()
+                        .insert((x, y), encoded);
+                }
+            }
+
+            for ((dir, plane), tiles) in planes {
+                for (u0, v0, width, height, encoded) in greedy_rects_from_tiles(&tiles) {
+                    let material = ((encoded >> 8) & 0xFF) as u8;
+                    let crack_stage = (encoded & 0xFF) as u8;
+                    let color = block_material_color(material, crack_stage);
+                    match dir {
+                        VoxelFaceDir::PosX => {
+                            let x = plane as f32 + 0.5;
+                            let y0 = u0 as f32 - 0.5;
+                            let y1 = y0 + width as f32;
+                            let z0 = v0 as f32 - 0.5;
+                            let z1 = z0 + height as f32;
+                            append_quad(
+                                &mut chunk.vertices,
+                                &mut chunk.indices,
+                                [1.0, 0.0, 0.0],
+                                color,
+                                [[x, y0, z0], [x, y1, z0], [x, y1, z1], [x, y0, z1]],
+                            );
+                        }
+                        VoxelFaceDir::NegX => {
+                            let x = plane as f32 - 0.5;
+                            let y0 = u0 as f32 - 0.5;
+                            let y1 = y0 + width as f32;
+                            let z0 = v0 as f32 - 0.5;
+                            let z1 = z0 + height as f32;
+                            append_quad(
+                                &mut chunk.vertices,
+                                &mut chunk.indices,
+                                [-1.0, 0.0, 0.0],
+                                color,
+                                [[x, y0, z1], [x, y1, z1], [x, y1, z0], [x, y0, z0]],
+                            );
+                        }
+                        VoxelFaceDir::PosY => {
+                            let y = plane as f32 + 0.5;
+                            let x0 = u0 as f32 - 0.5;
+                            let x1 = x0 + width as f32;
+                            let z0 = v0 as f32 - 0.5;
+                            let z1 = z0 + height as f32;
+                            append_quad(
+                                &mut chunk.vertices,
+                                &mut chunk.indices,
+                                [0.0, 1.0, 0.0],
+                                color,
+                                [[x0, y, z0], [x0, y, z1], [x1, y, z1], [x1, y, z0]],
+                            );
+                        }
+                        VoxelFaceDir::NegY => {
+                            let y = plane as f32 - 0.5;
+                            let x0 = u0 as f32 - 0.5;
+                            let x1 = x0 + width as f32;
+                            let z0 = v0 as f32 - 0.5;
+                            let z1 = z0 + height as f32;
+                            append_quad(
+                                &mut chunk.vertices,
+                                &mut chunk.indices,
+                                [0.0, -1.0, 0.0],
+                                color,
+                                [[x0, y, z1], [x0, y, z0], [x1, y, z0], [x1, y, z1]],
+                            );
+                        }
+                        VoxelFaceDir::PosZ => {
+                            let z = plane as f32 + 0.5;
+                            let x0 = u0 as f32 - 0.5;
+                            let x1 = x0 + width as f32;
+                            let y0 = v0 as f32 - 0.5;
+                            let y1 = y0 + height as f32;
+                            append_quad(
+                                &mut chunk.vertices,
+                                &mut chunk.indices,
+                                [0.0, 0.0, 1.0],
+                                color,
+                                [[x0, y0, z], [x1, y0, z], [x1, y1, z], [x0, y1, z]],
+                            );
+                        }
+                        VoxelFaceDir::NegZ => {
+                            let z = plane as f32 - 0.5;
+                            let x0 = u0 as f32 - 0.5;
+                            let x1 = x0 + width as f32;
+                            let y0 = v0 as f32 - 0.5;
+                            let y1 = y0 + height as f32;
+                            append_quad(
+                                &mut chunk.vertices,
+                                &mut chunk.indices,
+                                [0.0, 0.0, -1.0],
+                                color,
+                                [[x1, y0, z], [x0, y0, z], [x0, y1, z], [x1, y1, z]],
+                            );
+                        }
                     }
-                    chunk.indices.extend_from_slice(&[
-                        base,
-                        base + 1,
-                        base + 2,
-                        base,
-                        base + 2,
-                        base + 3,
-                    ]);
                 }
             }
         }
@@ -3368,11 +3674,18 @@ impl BattleArenaApp {
             }
 
             let (block_vertices, block_indices) = block.generate_mesh();
+            let crack_stage = scene.building.crack_stage_for_block(block.id);
+            let tint = block_material_color(block.material, crack_stage);
             let base = chunk.vertices.len() as u32;
             chunk.vertices.extend(block_vertices.iter().map(|v| Vertex {
                 position: v.position,
                 normal: v.normal,
-                color: v.color,
+                color: [
+                    (v.color[0] * 0.45 + tint[0] * 0.55).clamp(0.0, 1.0),
+                    (v.color[1] * 0.45 + tint[1] * 0.55).clamp(0.0, 1.0),
+                    (v.color[2] * 0.45 + tint[2] * 0.55).clamp(0.0, 1.0),
+                    v.color[3],
+                ],
             }));
             chunk.indices.extend(block_indices.iter().map(|i| i + base));
         }
@@ -3382,35 +3695,56 @@ impl BattleArenaApp {
         sorted_chunks.sort_by_key(|(key, _)| *key);
 
         let mut new_buffers = Vec::with_capacity(sorted_chunks.len());
+        let mut all_vertices: Vec<Vertex> = Vec::new();
+        let mut all_indices: Vec<u32> = Vec::new();
         for (_key, chunk) in sorted_chunks {
             if chunk.indices.is_empty() {
                 continue;
             }
 
-            let vertex_buffer = gpu
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Block Chunk Vertex Buffer"),
-                    contents: bytemuck::cast_slice(&chunk.vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-            let index_buffer = gpu
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Block Chunk Index Buffer"),
-                    contents: bytemuck::cast_slice(&chunk.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
-
             let center = (chunk.min + chunk.max) * 0.5;
             let radius = (chunk.max - center).length().max(1.0);
+            let first_index = all_indices.len() as u32;
+            let index_count = chunk.indices.len() as u32;
+            let base_vertex = all_vertices.len() as u32;
+            all_vertices.extend_from_slice(&chunk.vertices);
+            all_indices.extend(chunk.indices.into_iter().map(|i| i + base_vertex));
             new_buffers.push(BlockChunkBuffers {
                 center,
                 radius,
-                vertex_buffer,
-                index_buffer,
-                index_count: chunk.indices.len() as u32,
+                first_index,
+                index_count,
             });
+        }
+
+        if all_vertices.is_empty() || all_indices.is_empty() {
+            gpu.block_chunk_vertex_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Block Chunk Vertex Buffer"),
+                size: std::mem::size_of::<Vertex>() as u64,
+                usage: wgpu::BufferUsages::VERTEX,
+                mapped_at_creation: false,
+            });
+            gpu.block_chunk_index_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Block Chunk Index Buffer"),
+                size: std::mem::size_of::<u32>() as u64,
+                usage: wgpu::BufferUsages::INDEX,
+                mapped_at_creation: false,
+            });
+        } else {
+            gpu.block_chunk_vertex_buffer =
+                gpu.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Block Chunk Vertex Buffer"),
+                        contents: bytemuck::cast_slice(&all_vertices),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
+            gpu.block_chunk_index_buffer =
+                gpu.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Block Chunk Index Buffer"),
+                        contents: bytemuck::cast_slice(&all_indices),
+                        usage: wgpu::BufferUsages::INDEX,
+                    });
         }
 
         gpu.block_chunk_buffers = new_buffers;
@@ -3564,6 +3898,7 @@ impl BattleArenaApp {
         let delta_time = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
 
         let dynamic_index_count = self.prepare_frame_data(time, delta_time);
+        let block_chunk_draw_count = self.prepare_block_chunk_draw_commands();
 
         let mut encoder = self.gpu.as_ref().unwrap().device.create_command_encoder(
             &wgpu::CommandEncoderDescriptor {
@@ -3578,7 +3913,12 @@ impl BattleArenaApp {
 
         // 1) Base scene -> HDR target
         self.render_sky(&mut encoder, &gpu.scene_hdr_view);
-        self.render_meshes(&mut encoder, &gpu.scene_hdr_view, dynamic_index_count);
+        self.render_meshes(
+            &mut encoder,
+            &gpu.scene_hdr_view,
+            dynamic_index_count,
+            block_chunk_draw_count,
+        );
         self.render_lava(&mut encoder, &gpu.scene_hdr_view);
         self.render_sdf_cannon(&mut encoder, &gpu.scene_hdr_view);
         self.render_particles(&mut encoder, &gpu.scene_hdr_view);
@@ -4362,6 +4702,65 @@ impl BattleArenaApp {
         dynamic_index_count
     }
 
+    fn prepare_block_chunk_draw_commands(&mut self) -> u32 {
+        let Some(gpu) = self.gpu.as_mut() else {
+            return 0;
+        };
+
+        let cam_pos = self.camera.position;
+        let cam_forward = self.camera.get_forward();
+        let mut commands = Vec::with_capacity(gpu.block_chunk_buffers.len());
+
+        for chunk in &gpu.block_chunk_buffers {
+            if chunk.index_count == 0 {
+                continue;
+            }
+
+            let to_chunk = chunk.center - cam_pos;
+            let dist = to_chunk.length();
+            if dist > BLOCK_RENDER_MAX_DISTANCE + chunk.radius {
+                continue;
+            }
+            if dist > 20.0 {
+                let dir = to_chunk / dist.max(1e-6);
+                if cam_forward.dot(dir) < BLOCK_REAR_CULL_DOT {
+                    continue;
+                }
+            }
+
+            commands.push(DrawIndexedIndirectCommand {
+                index_count: chunk.index_count,
+                instance_count: 1,
+                first_index: chunk.first_index,
+                base_vertex: 0,
+                first_instance: 0,
+            });
+        }
+
+        let visible_count = commands.len() as u32;
+        if visible_count == 0 {
+            return 0;
+        }
+
+        if visible_count > gpu.block_chunk_indirect_capacity {
+            gpu.block_chunk_indirect_capacity = visible_count.next_power_of_two();
+            gpu.block_chunk_indirect_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Block Chunk Indirect Buffer"),
+                size: (gpu.block_chunk_indirect_capacity as u64)
+                    * (std::mem::size_of::<DrawIndexedIndirectCommand>() as u64),
+                usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+
+        gpu.queue.write_buffer(
+            &gpu.block_chunk_indirect_buffer,
+            0,
+            bytemuck::cast_slice(&commands),
+        );
+        visible_count
+    }
+
     /// Render the cubemap skybox background (no depth test).
     fn render_sky(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         if let Some(ref cubemap_skybox) = self.cubemap_skybox {
@@ -4376,6 +4775,7 @@ impl BattleArenaApp {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         dynamic_index_count: u32,
+        block_chunk_draw_count: u32,
     ) {
         let gpu = self.gpu.as_ref().unwrap();
         let scene = self.scene.as_ref().unwrap();
@@ -4431,29 +4831,18 @@ impl BattleArenaApp {
             render_pass.draw_indexed(0..gpu.hex_wall_index_count, 0, 0..1);
         }
 
-        // Building blocks (camera-aware chunk culling).
-        let cam_pos = self.camera.position;
-        let cam_forward = self.camera.get_forward();
-        for chunk in &gpu.block_chunk_buffers {
-            if chunk.index_count == 0 {
-                continue;
-            }
+        if block_chunk_draw_count > 0 {
+            render_pass.set_vertex_buffer(0, gpu.block_chunk_vertex_buffer.slice(..));
+            render_pass.set_index_buffer(
+                gpu.block_chunk_index_buffer.slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
 
-            let to_chunk = chunk.center - cam_pos;
-            let dist = to_chunk.length();
-            if dist > BLOCK_RENDER_MAX_DISTANCE + chunk.radius {
-                continue;
+            let stride = std::mem::size_of::<DrawIndexedIndirectCommand>() as u64;
+            for i in 0..block_chunk_draw_count {
+                render_pass
+                    .draw_indexed_indirect(&gpu.block_chunk_indirect_buffer, (i as u64) * stride);
             }
-            if dist > 20.0 {
-                let dir = to_chunk / dist.max(1e-6);
-                if cam_forward.dot(dir) < BLOCK_REAR_CULL_DOT {
-                    continue;
-                }
-            }
-
-            render_pass.set_vertex_buffer(0, chunk.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(chunk.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..chunk.index_count, 0, 0..1);
         }
 
         // Block placement preview / drag hologram

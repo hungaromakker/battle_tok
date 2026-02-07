@@ -11,6 +11,15 @@ use std::collections::{HashMap, HashSet};
 
 use super::building_blocks::{AABB, BuildingBlockManager, BuildingBlockShape};
 
+const CONTACT_SLOP_Y: f32 = 0.06;
+const MIN_LANDING_OVERLAP_RATIO: f32 = 0.35;
+const SIDE_PUSH_EPS: f32 = 0.01;
+const REST_SPEED: f32 = 0.08;
+const REST_TIME_TO_SLEEP: f32 = 0.45;
+const LIFTOFF_VELOCITY_Y: f32 = 0.25;
+const MAX_LOOSE_UPWARD_SPEED: f32 = 6.0;
+const MAX_LOOSE_HORIZONTAL_SPEED: f32 = 26.0;
+
 /// Physics state for a building block
 #[derive(Debug, Clone)]
 pub struct BlockPhysicsState {
@@ -46,6 +55,8 @@ pub struct BlockPhysicsState {
     pub tumble_progress: f32,
     /// Material index for physics properties lookup
     pub material_index: u8,
+    /// Time spent near-rest while grounded.
+    pub rest_timer: f32,
 }
 
 impl Default for BlockPhysicsState {
@@ -67,6 +78,7 @@ impl Default for BlockPhysicsState {
             rolling_axis: None,
             tumble_progress: 0.0,
             material_index: 0,
+            rest_timer: 0.0,
         }
     }
 }
@@ -348,6 +360,42 @@ impl BuildingPhysics {
         self.states.get_mut(&block_id)
     }
 
+    /// True when a loose rubble block has settled enough to compact into piles.
+    pub fn is_loose_resting(&self, block_id: u32) -> bool {
+        self.states.get(&block_id).is_some_and(|s| {
+            s.is_loose
+                && s.grounded
+                && s.velocity.length() <= REST_SPEED
+                && s.rest_timer >= REST_TIME_TO_SLEEP
+        })
+    }
+
+    /// Returns true when physics work is still needed this frame.
+    ///
+    /// Lets higher-level systems skip expensive full updates once all blocks are
+    /// fully settled and no support rechecks are pending.
+    pub fn has_active_simulation(&self) -> bool {
+        if !self.pending_checks.is_empty() || !self.blocks_to_remove.is_empty() {
+            return true;
+        }
+
+        let vel_threshold_sq = self.config.velocity_threshold * self.config.velocity_threshold;
+        self.states.values().any(|state| {
+            if state.is_loose {
+                !state.grounded
+                    || state.velocity.length_squared() > vel_threshold_sq
+                    || state.accumulated_force.length_squared() > 1e-5
+                    || (state.grounded && state.rest_timer < REST_TIME_TO_SLEEP)
+            } else {
+                !state.grounded
+                    || !state.structurally_supported
+                    || state.velocity.length_squared() > vel_threshold_sq
+                    || state.accumulated_force.length_squared() > 1e-5
+                    || state.fall_time > 0.0
+            }
+        })
+    }
+
     /// Mark the support graph as needing recalculation
     pub fn invalidate_support_graph(&mut self) {
         self.graph_dirty = true;
@@ -409,10 +457,14 @@ impl BuildingPhysics {
             return false;
         };
 
-        if let Some(state) = self.states.get(&block_id)
-            && state.terrain_anchored
-        {
-            return true;
+        if let Some(state) = self.states.get(&block_id) {
+            // Loose rubble never contributes to, or receives, structural support.
+            if state.is_loose {
+                return false;
+            }
+            if state.terrain_anchored {
+                return true;
+            }
         }
 
         let aabb = block.aabb();
@@ -428,7 +480,7 @@ impl BuildingPhysics {
                 // Has something below, check if those supports are valid
                 for &supporter_id in supporters {
                     if let Some(state) = self.states.get(&supporter_id) {
-                        if state.grounded || state.structurally_supported {
+                        if (state.grounded || state.structurally_supported) && !state.is_loose {
                             return true;
                         }
                     }
@@ -436,46 +488,8 @@ impl BuildingPhysics {
             }
         }
 
-        // Check horizontal neighbors for structural integrity
-        let blocks = manager.blocks();
-        let mut neighbor_count = 0;
-        let mut supported_neighbors = 0;
-
-        for other in blocks {
-            if other.id == block_id {
-                continue;
-            }
-
-            let other_aabb = other.aabb();
-
-            // Check if horizontally adjacent (not above/below)
-            let h_overlap_x = aabb.max.x > other_aabb.min.x && aabb.min.x < other_aabb.max.x;
-            let h_overlap_z = aabb.max.z > other_aabb.min.z && aabb.min.z < other_aabb.max.z;
-            let v_overlap =
-                aabb.max.y > other_aabb.min.y + 0.01 && aabb.min.y < other_aabb.max.y - 0.01;
-
-            // Check if touching horizontally
-            let touching_x = (aabb.max.x - other_aabb.min.x).abs() < 0.05
-                || (aabb.min.x - other_aabb.max.x).abs() < 0.05;
-            let touching_z = (aabb.max.z - other_aabb.min.z).abs() < 0.05
-                || (aabb.min.z - other_aabb.max.z).abs() < 0.05;
-
-            let is_horizontal_neighbor =
-                v_overlap && ((touching_x && h_overlap_z) || (touching_z && h_overlap_x));
-
-            if is_horizontal_neighbor {
-                neighbor_count += 1;
-
-                if let Some(state) = self.states.get(&other.id) {
-                    if state.grounded || state.structurally_supported {
-                        supported_neighbors += 1;
-                    }
-                }
-            }
-        }
-
-        // Structural integrity: need enough supported neighbors
-        supported_neighbors >= self.config.min_neighbors_for_support as i32
+        // Gravity-first support: no lateral-chain support.
+        false
     }
 
     /// Perform cascade support check - when one block loses support, check dependents
@@ -489,6 +503,10 @@ impl BuildingPhysics {
             }
             checked.insert(block_id);
 
+            if self.states.get(&block_id).is_some_and(|s| s.is_loose) {
+                continue;
+            }
+
             let has_support = self.has_support(block_id, manager);
 
             if let Some(state) = self.states.get_mut(&block_id) {
@@ -497,6 +515,10 @@ impl BuildingPhysics {
 
                 if was_supported && !has_support {
                     state.grounded = false;
+                    state.structurally_supported = false;
+                    state.terrain_anchored = false;
+                    state.is_loose = true;
+                    state.rest_timer = 0.0;
                     // This block lost support - check all blocks that might depend on it
                     for (other_id, supporters) in self.support_graph.iter() {
                         if supporters.contains(&block_id) && !checked.contains(other_id) {
@@ -539,9 +561,13 @@ impl BuildingPhysics {
             // Early sleep path: for static supported blocks, avoid AABB/shape work entirely.
             let can_sleep = match self.states.get(&block_id) {
                 Some(state) => {
-                    (state.grounded || state.structurally_supported)
-                        && state.velocity.length_squared() < velocity_threshold_sq
-                        && state.accumulated_force.length_squared() < 0.000_001
+                    let near_zero = state.velocity.length_squared() < velocity_threshold_sq
+                        && state.accumulated_force.length_squared() < 0.000_001;
+                    if state.is_loose {
+                        state.grounded && near_zero && state.rest_timer >= REST_TIME_TO_SLEEP
+                    } else {
+                        (state.grounded || state.structurally_supported) && near_zero
+                    }
                 }
                 None => continue,
             };
@@ -578,6 +604,16 @@ impl BuildingPhysics {
                 if state.mass > 0.0 && state.accumulated_force.length_squared() > 0.001 {
                     let acceleration = state.accumulated_force / state.mass;
                     state.velocity += acceleration * dt;
+                }
+
+                // Prevent "floating forever": if a grounded block has enough upward
+                // velocity, transition it into loose airborne simulation.
+                if state.grounded && state.velocity.y > LIFTOFF_VELOCITY_Y {
+                    state.grounded = false;
+                    state.structurally_supported = false;
+                    state.terrain_anchored = false;
+                    state.is_loose = true;
+                    state.rest_timer = 0.0;
                 }
 
                 // === FRICTION CALCULATION ===
@@ -632,8 +668,21 @@ impl BuildingPhysics {
                     }
                 }
 
+                if state.is_loose {
+                    state.velocity.y = state.velocity.y.min(MAX_LOOSE_UPWARD_SPEED);
+                    state.velocity.x = state
+                        .velocity
+                        .x
+                        .clamp(-MAX_LOOSE_HORIZONTAL_SPEED, MAX_LOOSE_HORIZONTAL_SPEED);
+                    state.velocity.z = state
+                        .velocity
+                        .z
+                        .clamp(-MAX_LOOSE_HORIZONTAL_SPEED, MAX_LOOSE_HORIZONTAL_SPEED);
+                }
+
                 // Skip further processing if supported and stable.
-                if (state.grounded || state.structurally_supported)
+                if !state.is_loose
+                    && (state.grounded || state.structurally_supported)
                     && state.velocity.length() < self.config.velocity_threshold
                 {
                     state.velocity = Vec3::ZERO;
@@ -659,7 +708,7 @@ impl BuildingPhysics {
                     state.fall_time += dt;
 
                     // Check for disintegration
-                    if state.fall_time > self.config.disintegration_time {
+                    if !state.is_loose && state.fall_time > self.config.disintegration_time {
                         state.should_disintegrate = true;
                         self.blocks_to_remove.push(block_id);
                     }
@@ -688,10 +737,20 @@ impl BuildingPhysics {
 
                     // Hit ground
                     state.grounded = true;
-                    state.structurally_supported = true;
+                    if state.is_loose {
+                        state.structurally_supported = false;
+                        state.terrain_anchored = false;
+                    } else {
+                        state.structurally_supported = true;
+                    }
 
-                    // Bounce
-                    state.velocity.y = -state.velocity.y * self.config.bounce_damping;
+                    // Bounce (loose rubble should settle quickly and not trampoline).
+                    let restitution = if state.is_loose {
+                        self.config.bounce_damping.min(0.08)
+                    } else {
+                        self.config.bounce_damping
+                    };
+                    state.velocity.y = -state.velocity.y * restitution;
 
                     // Apply friction to horizontal velocity
                     state.velocity.x *= 1.0 - friction_dynamic;
@@ -715,6 +774,20 @@ impl BuildingPhysics {
                 } else {
                     new_position
                 };
+
+                if state.is_loose {
+                    if state.grounded && state.velocity.length() <= REST_SPEED {
+                        state.rest_timer += dt;
+                        if state.rest_timer >= REST_TIME_TO_SLEEP {
+                            state.velocity = Vec3::ZERO;
+                            state.angular_velocity = Vec3::ZERO;
+                        }
+                    } else {
+                        state.rest_timer = 0.0;
+                    }
+                } else {
+                    state.rest_timer = 0.0;
+                }
 
                 // Reset frame-specific values
                 state.reset_frame();
@@ -740,7 +813,7 @@ impl BuildingPhysics {
 
         // Perform collision checks and rolling updates
         for (block_id, shape) in blocks_for_collision_check {
-            self.check_block_collisions(block_id, manager);
+            self.check_block_collisions(block_id, manager, dt);
             self.update_rolling_behavior(block_id, &shape, dt);
         }
 
@@ -751,13 +824,14 @@ impl BuildingPhysics {
     }
 
     /// Check and resolve collisions between falling blocks and static ones
-    fn check_block_collisions(&mut self, block_id: u32, manager: &mut BuildingBlockManager) {
+    fn check_block_collisions(&mut self, block_id: u32, manager: &mut BuildingBlockManager, dt: f32) {
         let Some(block) = manager.get_block(block_id) else {
             return;
         };
 
-        let aabb = block.aabb();
-        let position = block.position;
+        let mut moving_aabb = block.aabb();
+        let mut moving_pos = block.position;
+        let original_position = block.position;
 
         let state = match self.states.get(&block_id) {
             Some(s) => s.clone(),
@@ -769,6 +843,8 @@ impl BuildingPhysics {
             return;
         }
 
+        let mut landed = false;
+        let mut velocity_override: Option<Vec3> = None;
         let blocks = manager.blocks();
 
         for other in blocks {
@@ -785,27 +861,98 @@ impl BuildingPhysics {
 
             let other_aabb = other.aabb();
 
-            if aabb.intersects(&other_aabb) {
-                // Collision detected - resolve by moving block up
-                let overlap_y = aabb.min.y - other_aabb.max.y;
+            if !moving_aabb.intersects(&other_aabb) {
+                continue;
+            }
 
-                if overlap_y < 0.0 && overlap_y > -0.5 {
-                    // Landing on top of another block
-                    if let Some(block_mut) = manager.get_block_mut(block_id) {
-                        block_mut.position.y -= overlap_y + 0.01;
-                    }
+            let overlap_x = (moving_aabb.max.x.min(other_aabb.max.x)
+                - moving_aabb.min.x.max(other_aabb.min.x))
+            .max(0.0);
+            let overlap_z = (moving_aabb.max.z.min(other_aabb.max.z)
+                - moving_aabb.min.z.max(other_aabb.min.z))
+            .max(0.0);
+            let overlap_area = overlap_x * overlap_z;
+            let block_area =
+                ((moving_aabb.max.x - moving_aabb.min.x) * (moving_aabb.max.z - moving_aabb.min.z))
+                    .max(0.001);
+            let overlap_ratio = overlap_area / block_area;
 
-                    if let Some(state_mut) = self.states.get_mut(&block_id) {
-                        state_mut.grounded = true;
+            let previous_bottom = moving_aabb.min.y - state.velocity.y * dt;
+            let landing_penetration = other_aabb.max.y - moving_aabb.min.y;
+            let landing_contact = state.velocity.y <= 0.0
+                && previous_bottom >= other_aabb.max.y - CONTACT_SLOP_Y
+                && landing_penetration >= 0.0
+                && landing_penetration <= 0.65
+                && overlap_ratio >= MIN_LANDING_OVERLAP_RATIO;
+
+            if landing_contact {
+                let push = landing_penetration + SIDE_PUSH_EPS;
+                moving_pos.y += push;
+                landed = true;
+                velocity_override = Some(Vec3::new(state.velocity.x * 0.72, 0.0, state.velocity.z * 0.72));
+                break;
+            }
+
+            let pen_x = (moving_aabb.max.x - other_aabb.min.x)
+                .min(other_aabb.max.x - moving_aabb.min.x)
+                .max(0.0);
+            let pen_z = (moving_aabb.max.z - other_aabb.min.z)
+                .min(other_aabb.max.z - moving_aabb.min.z)
+                .max(0.0);
+            if pen_x <= 0.0 && pen_z <= 0.0 {
+                continue;
+            }
+
+            if pen_x <= pen_z {
+                let push = pen_x + SIDE_PUSH_EPS;
+                if moving_pos.x < (other_aabb.min.x + other_aabb.max.x) * 0.5 {
+                    moving_pos.x -= push;
+                    moving_aabb.min.x -= push;
+                    moving_aabb.max.x -= push;
+                } else {
+                    moving_pos.x += push;
+                    moving_aabb.min.x += push;
+                    moving_aabb.max.x += push;
+                }
+                velocity_override = Some(Vec3::new(0.0, state.velocity.y, state.velocity.z));
+            } else {
+                let push = pen_z + SIDE_PUSH_EPS;
+                if moving_pos.z < (other_aabb.min.z + other_aabb.max.z) * 0.5 {
+                    moving_pos.z -= push;
+                    moving_aabb.min.z -= push;
+                    moving_aabb.max.z -= push;
+                } else {
+                    moving_pos.z += push;
+                    moving_aabb.min.z += push;
+                    moving_aabb.max.z += push;
+                }
+                velocity_override = Some(Vec3::new(state.velocity.x, state.velocity.y, 0.0));
+            }
+        }
+
+        if moving_pos != original_position
+            && let Some(block_mut) = manager.get_block_mut(block_id)
+        {
+            block_mut.position = moving_pos;
+        }
+
+        if landed || velocity_override.is_some() {
+            if let Some(state_mut) = self.states.get_mut(&block_id) {
+                if let Some(v) = velocity_override {
+                    state_mut.velocity = v;
+                }
+                if landed {
+                    state_mut.grounded = true;
+                    if state_mut.is_loose {
+                        state_mut.structurally_supported = false;
+                        state_mut.terrain_anchored = false;
+                    } else {
                         state_mut.structurally_supported = true;
-                        state_mut.velocity = Vec3::ZERO;
-                        state_mut.angular_velocity = Vec3::ZERO;
-                        state_mut.fall_time = 0.0;
                     }
-
-                    // Trigger cascade check for blocks that might now have support
+                    state_mut.angular_velocity = Vec3::ZERO;
+                    state_mut.fall_time = 0.0;
+                    state_mut.rest_timer = 0.0;
                     self.graph_dirty = true;
-                    break;
                 }
             }
         }
@@ -816,30 +963,34 @@ impl BuildingPhysics {
     fn check_impact_threshold(&mut self, block_id: u32) -> Option<(bool, usize)> {
         let state = self.states.get_mut(&block_id)?;
 
-        if state.peak_impact <= 0.0 {
+        let peak_impact = state.peak_impact;
+        if peak_impact <= 0.0 {
             return None;
         }
+        // Consume the impact so we process each collision burst once.
+        state.peak_impact = 0.0;
 
         let break_threshold = get_break_threshold(state.material_index);
 
-        if state.peak_impact > break_threshold {
+        if peak_impact > break_threshold {
             // Force exceeds threshold - disintegrate!
             state.should_disintegrate = true;
 
             // Calculate particle count based on how much force exceeded threshold
-            let force_ratio = state.peak_impact / break_threshold;
+            let force_ratio = peak_impact / break_threshold;
             let particle_count = ((force_ratio * 8.0) as usize).clamp(4, 32);
 
             self.blocks_to_remove.push(block_id);
 
             Some((true, particle_count))
-        } else if state.peak_impact > break_threshold * 0.3 {
+        } else if peak_impact > break_threshold * 0.3 {
             // Partial impact - knock loose but don't destroy
             if !state.is_loose {
                 state.is_loose = true;
+                state.grounded = false;
                 state.structurally_supported = false;
-                // Give it a small upward bounce from the impact
-                state.velocity.y += (state.peak_impact / state.mass.max(1.0)) * 0.01;
+                state.terrain_anchored = false;
+                state.rest_timer = 0.0;
             }
 
             Some((false, 0))
@@ -993,6 +1144,9 @@ impl BuildingPhysics {
         if let Some(state) = self.states.get_mut(&block_id) {
             state.grounded = false;
             state.structurally_supported = false;
+            state.terrain_anchored = false;
+            state.is_loose = true;
+            state.rest_timer = 0.0;
         }
         self.graph_dirty = true;
     }

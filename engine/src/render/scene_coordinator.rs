@@ -149,18 +149,6 @@ impl SceneCoordinator {
         self.frame_count
     }
 
-    /// Create render context from current state
-    fn create_render_context(&self) -> RenderContext<'_> {
-        let (width, height) = self.gpu.dimensions();
-        RenderContext {
-            device: &self.gpu.device,
-            queue: &self.gpu.queue,
-            surface_format: self.gpu.format(),
-            width,
-            height,
-        }
-    }
-
     /// Update passes and calculate delta time
     pub fn update(&mut self) -> f32 {
         let now = Instant::now();

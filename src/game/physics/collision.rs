@@ -92,17 +92,31 @@ pub fn check_capsule_aabb_collision(
                     result.velocity_adjustment = -push_dir * vel_dot;
                 }
             } else {
-                // Player is inside block, push toward center of AABB's nearest face
-                let block_center = aabb.center();
-                let to_player = player_pos - block_center;
-                let push_dir =
-                    Vec3::new(to_player.x.signum(), 0.0, to_player.z.signum()).normalize_or_zero();
-                result.push = push_dir * (player_radius + 0.1);
+                // Player center is inside the AABB in XZ; push out through nearest side.
+                let dist_min_x = (player_pos.x - aabb.min.x).abs();
+                let dist_max_x = (aabb.max.x - player_pos.x).abs();
+                let dist_min_z = (player_pos.z - aabb.min.z).abs();
+                let dist_max_z = (aabb.max.z - player_pos.z).abs();
+
+                let (push_dir, dist_to_face) = if dist_min_x <= dist_max_x
+                    && dist_min_x <= dist_min_z
+                    && dist_min_x <= dist_max_z
+                {
+                    (Vec3::NEG_X, dist_min_x)
+                } else if dist_max_x <= dist_min_z && dist_max_x <= dist_max_z {
+                    (Vec3::X, dist_max_x)
+                } else if dist_min_z <= dist_max_z {
+                    (Vec3::NEG_Z, dist_min_z)
+                } else {
+                    (Vec3::Z, dist_max_z)
+                };
+
+                result.push = push_dir * (dist_to_face + player_radius + 0.01);
             }
         }
 
         // Check if player is standing on top of block
-        if player_pos.y >= aabb.max.y - 0.1 && player_pos.y <= aabb.max.y + 0.5 {
+        if player_pos.y >= aabb.max.y - 0.18 && player_pos.y <= aabb.max.y + 0.22 {
             let on_top_xz = player_pos.x >= aabb.min.x - player_radius
                 && player_pos.x <= aabb.max.x + player_radius
                 && player_pos.z >= aabb.min.z - player_radius
@@ -170,7 +184,7 @@ pub fn check_capsule_hex_collision(
         }
 
         // Check if player is standing on top of hex prism
-        if player_pos.y >= hex_top - 0.1 && player_pos.y <= hex_top + 0.5 {
+        if player_pos.y >= hex_top - 0.16 && player_pos.y <= hex_top + 0.22 {
             if horizontal_dist < hex_collision_radius + player_radius {
                 result.grounded = true;
                 result.ground_y = Some(hex_top);

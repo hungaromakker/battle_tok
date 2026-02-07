@@ -73,7 +73,6 @@ pub fn generate_bridge(start: Vec3, end: Vec3, config: &BridgeConfig) -> Mesh {
 
     // Calculate bridge direction and length
     let span = end - start;
-    let length = span.length();
     let direction = span.normalize_or_zero();
     let right = direction.cross(Vec3::Y).normalize_or_zero();
 
@@ -247,17 +246,13 @@ fn generate_chain(start: Vec3, end: Vec3, config: &BridgeConfig) -> Mesh {
 }
 
 /// Generate a single chain link (simplified as a small box for performance)
-fn generate_chain_link(center: Vec3, thickness: f32, direction: Vec3, color: [f32; 4]) -> Mesh {
+fn generate_chain_link(center: Vec3, thickness: f32, _direction: Vec3, color: [f32; 4]) -> Mesh {
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
 
     // Simple box link for performance (could be torus for more detail)
     let half = thickness / 2.0;
     let link_length = thickness * 1.5;
-
-    let up = Vec3::Y;
-    let right = direction.cross(up).normalize_or_zero();
-    let right = if right.length() < 0.1 { Vec3::X } else { right };
 
     let corners = [
         Vec3::new(-half, -link_length, -half),
@@ -296,7 +291,7 @@ fn generate_chain_link(center: Vec3, thickness: f32, direction: Vec3, color: [f3
 }
 
 /// Generate support posts at bridge ends
-fn generate_posts(position: Vec3, forward: Vec3, right: Vec3, config: &BridgeConfig) -> Mesh {
+fn generate_posts(position: Vec3, _forward: Vec3, right: Vec3, config: &BridgeConfig) -> Mesh {
     let mut mesh = Mesh::new();
 
     let post_width = 0.25;
@@ -378,9 +373,7 @@ pub fn generate_bridge_collision(start: Vec3, end: Vec3, config: &BridgeConfig) 
 
     let span = end - start;
     let length = span.length();
-    let direction = span.normalize_or_zero();
-    let right = direction.cross(Vec3::Y).normalize_or_zero();
-    let right = if right.length() < 0.1 { Vec3::X } else { right };
+    let _direction = span.normalize_or_zero();
 
     // Divide bridge into segments for collision
     let num_segments = (length / 2.0).ceil() as u32; // ~2 meter segments
@@ -467,8 +460,6 @@ pub fn get_bridge_height(
     let span = end - start;
     let length = span.length();
     let direction = span.normalize_or_zero();
-    let right = direction.cross(Vec3::Y).normalize_or_zero();
-    let right = if right.length() < 0.1 { Vec3::X } else { right };
 
     // Project point onto bridge line (XZ plane)
     let start_xz = Vec3::new(start.x, 0.0, start.z);

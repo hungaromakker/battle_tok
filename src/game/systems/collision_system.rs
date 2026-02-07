@@ -18,9 +18,13 @@ const PLAYER_RADIUS: f32 = 0.3;
 /// Player capsule top offset above feet (meters).
 const PLAYER_TOP_OFFSET: f32 = PLAYER_EYE_HEIGHT + 0.2;
 /// Landing assist window below a block top (meters).
-const LANDING_WINDOW_BELOW_TOP: f32 = 0.35;
+const LANDING_WINDOW_BELOW_TOP: f32 = 0.22;
 /// Landing assist window above a block top (meters).
-const LANDING_WINDOW_ABOVE_TOP: f32 = 0.55;
+const LANDING_WINDOW_ABOVE_TOP: f32 = 0.18;
+/// Extra XZ margin for top-surface grounding checks.
+const LANDING_XZ_MARGIN: f32 = 0.08;
+/// Maximum downward snap when accepting a grounding candidate.
+const MAX_GROUND_SNAP_DOWN: f32 = 0.10;
 /// Maximum vertical step height the player can auto-climb (meters).
 const MAX_STEP_HEIGHT: f32 = 1.05;
 
@@ -104,7 +108,9 @@ impl CollisionSystem {
                 );
                 player.vertical_velocity += result.velocity_adjustment.y;
 
-                if let (true, Some(ground_y)) = (result.grounded, result.ground_y) {
+                if let (true, Some(ground_y)) = (result.grounded, result.ground_y)
+                    && ground_y >= player.position.y - MAX_GROUND_SNAP_DOWN
+                {
                     player.position.y = ground_y;
                     player.vertical_velocity = 0.0;
                     player.is_grounded = true;
@@ -268,23 +274,29 @@ impl CollisionSystem {
             );
             player.vertical_velocity += result.velocity_adjustment.y;
 
-            if let (true, Some(ground_y)) = (result.grounded, result.ground_y) {
-                player.position.y = ground_y;
-                player.vertical_velocity = 0.0;
-                player.is_grounded = true;
-            }
+                if let (true, Some(ground_y)) = (result.grounded, result.ground_y)
+                    && ground_y >= player.position.y - MAX_GROUND_SNAP_DOWN
+                {
+                    player.position.y = ground_y;
+                    player.vertical_velocity = 0.0;
+                    player.is_grounded = true;
+                }
 
             collided = true;
         }
 
         // Landing assist: makes non-cube/top landings reliable with AABB tops.
-        let on_top_xz = player.position.x >= aabb.min.x - PLAYER_RADIUS
-            && player.position.x <= aabb.max.x + PLAYER_RADIUS
-            && player.position.z >= aabb.min.z - PLAYER_RADIUS
-            && player.position.z <= aabb.max.z + PLAYER_RADIUS;
+        let on_top_xz = player.position.x >= aabb.min.x - LANDING_XZ_MARGIN
+            && player.position.x <= aabb.max.x + LANDING_XZ_MARGIN
+            && player.position.z >= aabb.min.z - LANDING_XZ_MARGIN
+            && player.position.z <= aabb.max.z + LANDING_XZ_MARGIN;
         let near_top = player.position.y >= aabb.max.y - LANDING_WINDOW_BELOW_TOP
             && player.position.y <= aabb.max.y + LANDING_WINDOW_ABOVE_TOP;
-        if on_top_xz && near_top && player.vertical_velocity <= 0.0 {
+        if on_top_xz
+            && near_top
+            && player.vertical_velocity <= 0.5
+            && aabb.max.y >= player.position.y - MAX_GROUND_SNAP_DOWN
+        {
             player.position.y = aabb.max.y;
             player.vertical_velocity = 0.0;
             player.is_grounded = true;

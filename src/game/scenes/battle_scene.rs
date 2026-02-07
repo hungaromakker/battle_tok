@@ -30,8 +30,18 @@ use crate::render::hex_prism::{DEFAULT_HEX_HEIGHT, DEFAULT_HEX_RADIUS, HexPrismG
 const COLLISION_BLOCK_QUERY_PADDING_CELLS: i32 = 2;
 const PLAYER_BLOCK_QUERY_RADIUS_M: f32 = 2.4;
 const PLAYER_BLOCK_QUERY_HEIGHT_M: f32 = 3.4;
+const PLAYER_CAPSULE_RADIUS_M: f32 = 0.3;
+const PLAYER_TOP_OFFSET_M: f32 = PLAYER_EYE_HEIGHT + 0.2;
+const PLAYER_GROUND_SNAP_DOWN_M: f32 = 0.10;
 const HEX_PLAYER_QUERY_AXIAL_RADIUS: i32 = 4;
 const HEX_PLAYER_QUERY_LEVEL_RADIUS: i32 = 3;
+const FIXED_PHYSICS_STEP_S: f32 = 1.0 / 120.0;
+const MAX_FIXED_STEPS_PER_FRAME: usize = 8;
+const INTEGRITY_RECHECK_PASS_INTERVAL_S: f32 = 1.0 / 40.0;
+const INTEGRITY_RECHECK_MIN_PASSES: u8 = 3;
+const INTEGRITY_RECHECK_MAX_PASSES: u8 = 14;
+const INTEGRITY_STABLE_PASSES_TO_SLEEP: u8 = 2;
+const DEBUG_IMPACT_LOGS: bool = true;
 
 /// Combat weapon mode selected by the player.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,7 +59,9 @@ pub struct ExplosionEvent {
 
 #[derive(Debug, Clone)]
 struct IntegrityRecheckJob {
-    time_left: f32,
+    cooldown_s: f32,
+    passes_left: u8,
+    stable_passes: u8,
     block_ids: Vec<u32>,
 }
 
@@ -89,6 +101,7 @@ pub struct BattleScene {
     pub weapon_mode: WeaponMode,
     explosion_events: Vec<ExplosionEvent>,
     integrity_recheck_jobs: Vec<IntegrityRecheckJob>,
+    simulation_accumulator_s: f32,
 
     // -- Ground context for player collision --
     pub arena_ground: ArenaGround,
@@ -181,6 +194,7 @@ impl BattleScene {
             weapon_mode: WeaponMode::Cannonball,
             explosion_events: Vec::new(),
             integrity_recheck_jobs: Vec::new(),
+            simulation_accumulator_s: 0.0,
 
             // Ground context
             arena_ground,
@@ -206,7 +220,21 @@ impl BattleScene {
     /// 9. Economy / day-cycle tick
     pub fn update(&mut self, delta: f32, movement: &MovementState, camera_forward: Vec3) {
         self.explosion_events.clear();
+        let delta = delta.clamp(0.0, 0.1);
+        self.simulation_accumulator_s = (self.simulation_accumulator_s + delta)
+            .min(FIXED_PHYSICS_STEP_S * MAX_FIXED_STEPS_PER_FRAME as f32);
 
+        let mut steps = 0usize;
+        while self.simulation_accumulator_s >= FIXED_PHYSICS_STEP_S
+            && steps < MAX_FIXED_STEPS_PER_FRAME
+        {
+            self.update_fixed_step(FIXED_PHYSICS_STEP_S, movement, camera_forward);
+            self.simulation_accumulator_s -= FIXED_PHYSICS_STEP_S;
+            steps += 1;
+        }
+    }
+
+    fn update_fixed_step(&mut self, delta: f32, movement: &MovementState, camera_forward: Vec3) {
         // 1. Player movement (island-aware ground collision)
         let keys = MovementKeys {
             forward: movement.forward,
@@ -334,8 +362,36 @@ impl BattleScene {
             self.projectiles.remove(idx);
         }
 
-        // Delayed structural re-checks (explosion-triggered only)
+        // Event-triggered local structural re-checks.
         self.process_integrity_rechecks(delta);
+
+        // Continuous structural fatigue pass (budgeted): keeps collapse progressing
+        // under gravity/load even between direct projectile hits.
+        let integrity_destroyed = self.building.run_integrity_pass(delta);
+        if !integrity_destroyed.is_empty() {
+            self.handle_destroyed_blocks(&integrity_destroyed);
+            let followup = self.collect_neighbor_blocks(&integrity_destroyed, 2.0);
+            self.schedule_integrity_recheck(followup, 2.0);
+        }
+
+        // Building physics now runs in the same fixed-step clock as player/projectiles.
+        let removed_by_physics = self.building.update_physics(delta);
+        if !removed_by_physics.is_empty() {
+            for block_id in removed_by_physics {
+                if let Some(block) = self.building.block_manager.get_block(block_id) {
+                    if DEBUG_IMPACT_LOGS {
+                        println!(
+                            "[PhysicsRemove] id={} world=({:.3},{:.3},{:.3}) material={}",
+                            block_id, block.position.x, block.position.y, block.position.z, block.material
+                        );
+                    }
+                    self.destruction
+                        .add_debris(spawn_debris(block.position, block.material, 8));
+                }
+                self.building.remove_block(block_id);
+            }
+        }
+        self.building.update_rubble_piles(delta);
 
         // 5. Destruction physics (falling prisms + debris)
         self.destruction.update(delta, &mut self.hex_grid);
@@ -359,6 +415,7 @@ impl BattleScene {
             &player_candidates,
             delta,
         );
+        self.check_player_rubble_pile_collision();
 
         // 8. Player-hex collision
         self.check_player_hex_collision();
@@ -464,6 +521,21 @@ impl BattleScene {
             mesh.merge(&bx);
         }
 
+        // Persistent top-only rubble piles (minimal geometry).
+        for pile in self.building.rubble_piles() {
+            let top_center = Vec3::new(
+                pile.position.x,
+                pile.position.y + pile.top_height,
+                pile.position.z,
+            );
+            let top = Self::generate_rubble_pile_top_mesh(
+                top_center,
+                pile.top_radius,
+                Self::block_material_color(pile.material),
+            );
+            mesh.merge(&top);
+        }
+
         // Meteors (glowing spheres)
         let meteor_color = [1.0, 0.4, 0.1, 1.0];
         for meteor in self.meteors.iter() {
@@ -472,6 +544,48 @@ impl BattleScene {
         }
 
         mesh.vertices
+    }
+
+    fn generate_rubble_pile_top_mesh(center: Vec3, radius: f32, color: [f32; 4]) -> Mesh {
+        let mut mesh = Mesh::new();
+        let x0 = center.x - radius;
+        let x1 = center.x + radius;
+        let z0 = center.z - radius;
+        let z1 = center.z + radius;
+        let y = center.y;
+
+        for pos in [
+            [x0, y, z0],
+            [x0, y, z1],
+            [x1, y, z1],
+            [x0, y, z0],
+            [x1, y, z1],
+            [x1, y, z0],
+        ] {
+            mesh.vertices.push(Vertex {
+                position: pos,
+                normal: [0.0, 1.0, 0.0],
+                color,
+            });
+        }
+        mesh.indices.extend(0..6);
+        mesh
+    }
+
+    fn block_material_color(material: u8) -> [f32; 4] {
+        match material {
+            0 => [0.6, 0.6, 0.6, 1.0],
+            1 => [0.7, 0.5, 0.3, 1.0],
+            2 => [0.4, 0.4, 0.45, 1.0],
+            3 => [0.8, 0.7, 0.5, 1.0],
+            4 => [0.3, 0.3, 0.35, 1.0],
+            5 => [0.6, 0.3, 0.2, 1.0],
+            6 => [0.2, 0.4, 0.2, 1.0],
+            7 => [0.5, 0.5, 0.6, 1.0],
+            8 => [0.9, 0.9, 0.85, 1.0],
+            9 => [0.2, 0.2, 0.3, 1.0],
+            _ => [0.5, 0.5, 0.5, 1.0],
+        }
     }
 
     fn generate_cannonball_fire_mesh(position: Vec3, radius: f32) -> Mesh {
@@ -565,34 +679,139 @@ impl BattleScene {
     }
 
     fn handle_cannonball_block_impact(&mut self, impact_position: Vec3, block_id: u32) {
-        let to_block = self
-            .building
-            .block_manager
-            .get_block(block_id)
-            .map(|b| b.position - impact_position)
-            .unwrap_or(Vec3::ZERO)
-            .normalize_or_zero();
-        let impulse_dir = if to_block.length_squared() > 1e-6 {
-            to_block
-        } else {
-            Vec3::Y
-        };
-
-        let outcome =
-            self.building
-                .apply_block_damage(block_id, 68.0, impulse_dir * 10.0 + Vec3::Y * 0.9);
-        if outcome.crack_stage_advanced {
-            self.explosion_events.push(ExplosionEvent {
-                position: impact_position,
-                ember_count: 8 + outcome.crack_stage as usize * 2,
-            });
+        if DEBUG_IMPACT_LOGS {
+            println!(
+                "[Impact] cannonball block_id={} hit_pos=({:.3},{:.3},{:.3})",
+                block_id, impact_position.x, impact_position.y, impact_position.z
+            );
         }
-        if let Some(destroyed) = outcome.destroyed {
-            self.handle_destroyed_blocks(&[destroyed]);
-        }
-
-        let impacted = self.apply_explosion_damage_to_blocks(impact_position, 1.9, 32.0, 4.5);
+        let mut impacted =
+            self.apply_geomod_carve_to_blocks(impact_position, 0.42, 1.35, 22, 20.0, 3.8);
+        impacted.extend(self.apply_hit_ring_damage(impact_position, block_id, 1.15, 11.0, 1.8));
+        impacted.sort_unstable();
+        impacted.dedup();
         self.schedule_integrity_recheck(impacted, 5.0);
+    }
+
+    fn apply_geomod_carve_to_blocks(
+        &mut self,
+        impact_position: Vec3,
+        core_radius: f32,
+        shell_radius: f32,
+        max_targets: usize,
+        shell_damage: f32,
+        shell_impulse: f32,
+    ) -> Vec<u32> {
+        let candidate_ids =
+            self.collect_block_candidates_for_sphere(impact_position, shell_radius, shell_radius);
+        let mut candidates: Vec<(u32, Vec3, f32)> = candidate_ids
+            .into_iter()
+            .filter_map(|id| {
+                self.building
+                    .blocks()
+                    .get_block(id)
+                    .map(|block| (id, block.position, block.position.distance(impact_position)))
+            })
+            .collect();
+        candidates.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.truncate(max_targets.max(1));
+
+        let mut impacted = Vec::new();
+        let mut destroyed = Vec::new();
+        for (block_id, block_pos, dist) in candidates {
+            if dist > shell_radius {
+                continue;
+            }
+            let dir = (block_pos - impact_position).normalize_or_zero();
+            let dir = if dir.length_squared() > 1e-6 {
+                dir
+            } else {
+                Vec3::Y
+            };
+            let (damage, impulse) = if dist <= core_radius {
+                (950.0, dir * 13.0 + Vec3::Y * 1.4)
+            } else {
+                let shell_falloff = (1.0 - (dist - core_radius) / (shell_radius - core_radius))
+                    .clamp(0.0, 1.0)
+                    .powf(2.3);
+                (
+                    (shell_damage * shell_falloff).max(0.4),
+                    dir * (shell_impulse * shell_falloff) + Vec3::Y * (shell_impulse * 0.05),
+                )
+            };
+            let outcome = self
+                .building
+                .apply_block_damage(block_id, damage, impulse, true);
+            impacted.push(block_id);
+            if outcome.crack_stage_advanced && outcome.destroyed.is_none() {
+                self.explosion_events.push(ExplosionEvent {
+                    position: block_pos,
+                    ember_count: 4 + outcome.crack_stage as usize * 2,
+                });
+            }
+            if let Some(block) = outcome.destroyed {
+                destroyed.push(block);
+            }
+        }
+        if !destroyed.is_empty() {
+            self.handle_destroyed_blocks(&destroyed);
+        }
+        impacted
+    }
+
+    fn apply_hit_ring_damage(
+        &mut self,
+        impact_position: Vec3,
+        direct_block_id: u32,
+        radius: f32,
+        base_damage: f32,
+        base_impulse: f32,
+    ) -> Vec<u32> {
+        const MAX_RING_TARGETS: usize = 24;
+        let candidate_ids =
+            self.collect_block_candidates_for_sphere(impact_position, radius, radius * 0.85);
+        let mut candidates: Vec<(u32, Vec3, f32)> = candidate_ids
+            .into_iter()
+            .filter(|id| *id != direct_block_id)
+            .filter_map(|id| {
+                self.building.blocks().get_block(id).map(|block| {
+                    let dist = block.position.distance(impact_position);
+                    (id, block.position, dist)
+                })
+            })
+            .collect();
+        candidates.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.truncate(MAX_RING_TARGETS);
+
+        let mut impacted = Vec::new();
+        let mut destroyed = Vec::new();
+        for (block_id, block_pos, dist) in candidates {
+            if dist > radius {
+                continue;
+            }
+            let falloff = (1.0 - dist / radius).clamp(0.0, 1.0);
+            let damage = (base_damage * falloff).max(0.35);
+            let dir = (block_pos - impact_position).normalize_or_zero();
+            let dir = if dir.length_squared() > 1e-6 { dir } else { Vec3::Y };
+            let impulse = dir * (base_impulse * falloff) + Vec3::Y * (base_impulse * 0.06 * falloff);
+            let outcome = self
+                .building
+                .apply_block_damage(block_id, damage, impulse, true);
+            impacted.push(block_id);
+            if outcome.crack_stage_advanced && outcome.destroyed.is_none() {
+                self.explosion_events.push(ExplosionEvent {
+                    position: block_pos,
+                    ember_count: 4 + outcome.crack_stage as usize,
+                });
+            }
+            if let Some(block) = outcome.destroyed {
+                destroyed.push(block);
+            }
+        }
+        if !destroyed.is_empty() {
+            self.handle_destroyed_blocks(&destroyed);
+        }
+        impacted
     }
 
     fn apply_explosion_damage_to_blocks(
@@ -602,30 +821,32 @@ impl BattleScene {
         base_damage: f32,
         base_impulse: f32,
     ) -> Vec<u32> {
+        const MAX_EXPLOSION_TARGETS: usize = 64;
         let candidate_ids =
             self.collect_block_candidates_for_sphere(impact_position, radius, radius * 1.1);
-        let candidates: Vec<(u32, Vec3)> = candidate_ids
+        let mut candidates: Vec<(u32, Vec3, f32)> = candidate_ids
             .into_iter()
             .filter_map(|id| {
                 self.building
                     .blocks()
                     .get_block(id)
-                    .map(|block| (block.id, block.position))
+                    .map(|block| (block.id, block.position, block.position.distance(impact_position)))
             })
             .collect();
+        candidates.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+        candidates.truncate(MAX_EXPLOSION_TARGETS);
 
         let mut impacted = Vec::new();
         let mut destroyed = Vec::new();
 
-        for (block_id, block_pos) in candidates {
-            let dist = block_pos.distance(impact_position);
+        for (block_id, block_pos, dist) in candidates {
             if dist > radius {
                 continue;
             }
 
             impacted.push(block_id);
             let falloff = (1.0 - dist / radius).clamp(0.0, 1.0);
-            let damage = (base_damage * falloff * falloff).max(0.8);
+            let damage = (base_damage * falloff.powf(2.6)).max(0.35);
 
             let dir = (block_pos - impact_position).normalize_or_zero();
             let dir = if dir.length_squared() > 1e-6 {
@@ -634,9 +855,11 @@ impl BattleScene {
                 Vec3::Y
             };
             let impulse =
-                dir * (base_impulse * falloff) + Vec3::Y * (base_impulse * 0.08 * falloff);
+                dir * (base_impulse * falloff.powf(1.8)) + Vec3::Y * (base_impulse * 0.05 * falloff);
 
-            let outcome = self.building.apply_block_damage(block_id, damage, impulse);
+            let outcome = self
+                .building
+                .apply_block_damage(block_id, damage, impulse, true);
             if outcome.crack_stage_advanced && outcome.destroyed.is_none() {
                 self.explosion_events.push(ExplosionEvent {
                     position: block_pos,
@@ -663,8 +886,12 @@ impl BattleScene {
         }
         block_ids.sort_unstable();
         block_ids.dedup();
+        let pass_budget = ((delay_seconds.max(0.1) * 2.5).round() as u8)
+            .clamp(INTEGRITY_RECHECK_MIN_PASSES, INTEGRITY_RECHECK_MAX_PASSES);
         self.integrity_recheck_jobs.push(IntegrityRecheckJob {
-            time_left: delay_seconds.max(0.1),
+            cooldown_s: 0.0,
+            passes_left: pass_budget,
+            stable_passes: 0,
             block_ids,
         });
     }
@@ -674,26 +901,40 @@ impl BattleScene {
             return;
         }
 
-        let mut due_jobs: Vec<IntegrityRecheckJob> = Vec::new();
-        let mut idx = 0usize;
-        while idx < self.integrity_recheck_jobs.len() {
-            self.integrity_recheck_jobs[idx].time_left -= delta;
-            if self.integrity_recheck_jobs[idx].time_left <= 0.0 {
-                due_jobs.push(self.integrity_recheck_jobs.swap_remove(idx));
-            } else {
-                idx += 1;
+        let pending = std::mem::take(&mut self.integrity_recheck_jobs);
+        for mut job in pending {
+            job.cooldown_s -= delta;
+            if job.cooldown_s > 0.0 {
+                self.integrity_recheck_jobs.push(job);
+                continue;
             }
-        }
-
-        for job in due_jobs {
             let destroyed = self.building.recheck_integrity_for_blocks(&job.block_ids);
             if destroyed.is_empty() {
+                job.stable_passes = job.stable_passes.saturating_add(1);
+                job.passes_left = job.passes_left.saturating_sub(1);
+                if job.stable_passes >= INTEGRITY_STABLE_PASSES_TO_SLEEP || job.passes_left == 0 {
+                    continue;
+                }
+                job.cooldown_s = INTEGRITY_RECHECK_PASS_INTERVAL_S;
+                self.integrity_recheck_jobs.push(job);
                 continue;
             }
 
             self.handle_destroyed_blocks(&destroyed);
             let followup = self.collect_neighbor_blocks(&destroyed, 1.8);
-            self.schedule_integrity_recheck(followup, 5.0);
+            if !followup.is_empty() {
+                let mut merged = job.block_ids;
+                merged.extend(followup);
+                merged.sort_unstable();
+                merged.dedup();
+                job.block_ids = merged;
+                job.passes_left = job.passes_left.saturating_sub(1);
+                job.stable_passes = 0;
+                if job.passes_left > 0 {
+                    job.cooldown_s = INTEGRITY_RECHECK_PASS_INTERVAL_S;
+                    self.integrity_recheck_jobs.push(job);
+                }
+            }
         }
     }
 
@@ -757,29 +998,30 @@ impl BattleScene {
         }
 
         if let Some(block_id) = direct_block {
-            let to_block = self
+            let direct = self
                 .building
-                .block_manager
-                .get_block(block_id)
-                .map(|b| b.position - impact_position)
-                .unwrap_or(Vec3::ZERO)
-                .normalize_or_zero();
-            let impulse_dir = if to_block.length_squared() > 1e-6 {
-                to_block
-            } else {
-                Vec3::Y
-            };
-            let direct = self.building.apply_block_damage(
-                block_id,
-                130.0,
-                impulse_dir * 14.0 + Vec3::Y * 1.3,
-            );
+                .apply_block_damage(block_id, 180.0, Vec3::Y * 1.6, true);
+            if DEBUG_IMPACT_LOGS {
+                println!(
+                    "[Impact] rocket direct block_id={} blast_pos=({:.3},{:.3},{:.3})",
+                    block_id, impact_position.x, impact_position.y, impact_position.z
+                );
+            }
             if let Some(block) = direct.destroyed {
                 self.handle_destroyed_blocks(&[block]);
             }
         }
 
-        let impacted = self.apply_explosion_damage_to_blocks(impact_position, 4.8, 130.0, 16.0);
+        let mut impacted =
+            self.apply_geomod_carve_to_blocks(impact_position, 0.95, 3.55, 72, 38.0, 8.5);
+        impacted.extend(self.apply_explosion_damage_to_blocks(
+            impact_position,
+            3.9,
+            54.0,
+            8.8,
+        ));
+        impacted.sort_unstable();
+        impacted.dedup();
         self.schedule_integrity_recheck(impacted, 5.0);
 
         self.destruction
@@ -941,13 +1183,72 @@ impl BattleScene {
                         );
                         self.player.vertical_velocity += result.velocity_adjustment.y;
 
-                        if let (true, Some(ground_y)) = (result.grounded, result.ground_y) {
+                        if let (true, Some(ground_y)) = (result.grounded, result.ground_y)
+                            && ground_y >= self.player.position.y - 0.10
+                        {
                             self.player.position.y = ground_y;
                             self.player.vertical_velocity = 0.0;
                             self.player.is_grounded = true;
                         }
                     }
                 }
+            }
+        }
+    }
+
+    fn check_player_rubble_pile_collision(&mut self) {
+        use crate::game::physics::collision::{
+            AABB as CollisionAabb, check_capsule_aabb_collision,
+        };
+
+        let piles: Vec<_> = self.building.rubble_piles().copied().collect();
+        if piles.is_empty() {
+            return;
+        }
+
+        let player_top = self.player.position.y + PLAYER_TOP_OFFSET_M;
+        let player_vel = Vec3::new(
+            self.player.velocity.x,
+            self.player.vertical_velocity,
+            self.player.velocity.z,
+        );
+
+        for pile in piles {
+            let aabb = CollisionAabb::new(
+                Vec3::new(
+                    pile.position.x - pile.top_radius,
+                    pile.position.y,
+                    pile.position.z - pile.top_radius,
+                ),
+                Vec3::new(
+                    pile.position.x + pile.top_radius,
+                    pile.position.y + pile.top_height,
+                    pile.position.z + pile.top_radius,
+                ),
+            );
+            let result = check_capsule_aabb_collision(
+                self.player.position,
+                player_top,
+                PLAYER_CAPSULE_RADIUS_M,
+                player_vel,
+                &aabb,
+            );
+            if !result.has_collision() {
+                continue;
+            }
+            self.player.position += result.push;
+            self.player.velocity += Vec3::new(
+                result.velocity_adjustment.x,
+                0.0,
+                result.velocity_adjustment.z,
+            );
+            self.player.vertical_velocity += result.velocity_adjustment.y;
+            if let (true, Some(ground_y)) = (result.grounded, result.ground_y)
+                && ground_y >= self.player.position.y - PLAYER_GROUND_SNAP_DOWN_M
+            {
+                self.player.position.y = ground_y;
+                self.player.vertical_velocity = 0.0;
+                self.player.is_grounded = true;
             }
         }
     }

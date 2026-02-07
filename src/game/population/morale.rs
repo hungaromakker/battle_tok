@@ -143,7 +143,7 @@ impl MoraleModifier {
 #[derive(Debug, Clone)]
 pub struct Morale {
     /// Base morale value (50 = neutral)
-    base: u32,
+    _base: u32,
     /// Active modifiers
     modifiers: Vec<MoraleModifier>,
     /// Current computed morale
@@ -161,7 +161,7 @@ impl Default for Morale {
 impl Morale {
     pub fn new() -> Self {
         Self {
-            base: 75, // Start with decent morale
+            _base: 75, // Start with decent morale
             modifiers: vec![MoraleModifier::FlagSafe],
             current: 75,
             trend: 0,

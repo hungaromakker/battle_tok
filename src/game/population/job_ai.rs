@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn test_auto_assign() {
         let mut ai = JobAI::new();
-        let mut resources = Resources::new();
+        let resources = Resources::new();
         let mut population = Population::new();
 
         // Add some idle villagers

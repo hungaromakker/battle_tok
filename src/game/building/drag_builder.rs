@@ -227,7 +227,6 @@ impl DragBuilder {
     fn get_path_positions(&self, from: IVec3, to: IVec3) -> Vec<IVec3> {
         let mut positions = Vec::new();
 
-        let mut current = from;
         let delta = to - from;
         let steps = delta.abs().max_element();
 
