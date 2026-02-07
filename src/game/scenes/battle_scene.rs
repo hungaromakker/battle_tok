@@ -8,7 +8,7 @@
 
 use std::collections::HashSet;
 
-use glam::{IVec3, Vec3};
+use glam::Vec3;
 
 use crate::game::arena_player::{
     ArenaGround, BridgeDef, IslandDef, MovementKeys, PLAYER_EYE_HEIGHT, Player,
@@ -27,7 +27,6 @@ use crate::game::types::{Mesh, Vertex, generate_box, generate_oriented_box, gene
 use crate::physics::ballistics::{BallisticsConfig, ProjectileState};
 use crate::render::hex_prism::{DEFAULT_HEX_HEIGHT, DEFAULT_HEX_RADIUS, HexPrismGrid};
 
-const COLLISION_BLOCK_QUERY_PADDING_CELLS: i32 = 2;
 const PLAYER_BLOCK_QUERY_RADIUS_M: f32 = 2.4;
 const PLAYER_BLOCK_QUERY_HEIGHT_M: f32 = 3.4;
 const PLAYER_CAPSULE_RADIUS_M: f32 = 0.3;
@@ -37,10 +36,6 @@ const HEX_PLAYER_QUERY_AXIAL_RADIUS: i32 = 4;
 const HEX_PLAYER_QUERY_LEVEL_RADIUS: i32 = 3;
 const FIXED_PHYSICS_STEP_S: f32 = 1.0 / 120.0;
 const MAX_FIXED_STEPS_PER_FRAME: usize = 8;
-const INTEGRITY_RECHECK_PASS_INTERVAL_S: f32 = 1.0 / 40.0;
-const INTEGRITY_RECHECK_MIN_PASSES: u8 = 3;
-const INTEGRITY_RECHECK_MAX_PASSES: u8 = 14;
-const INTEGRITY_STABLE_PASSES_TO_SLEEP: u8 = 2;
 const DEBUG_IMPACT_LOGS: bool = true;
 
 /// Combat weapon mode selected by the player.
@@ -55,14 +50,6 @@ pub enum WeaponMode {
 pub struct ExplosionEvent {
     pub position: Vec3,
     pub ember_count: usize,
-}
-
-#[derive(Debug, Clone)]
-struct IntegrityRecheckJob {
-    cooldown_s: f32,
-    passes_left: u8,
-    stable_passes: u8,
-    block_ids: Vec<u32>,
 }
 
 /// Complete game scene composing all systems, terrain, and player state.
@@ -100,7 +87,6 @@ pub struct BattleScene {
     // -- Combat state --
     pub weapon_mode: WeaponMode,
     explosion_events: Vec<ExplosionEvent>,
-    integrity_recheck_jobs: Vec<IntegrityRecheckJob>,
     simulation_accumulator_s: f32,
 
     // -- Ground context for player collision --
@@ -193,7 +179,6 @@ impl BattleScene {
             // Combat
             weapon_mode: WeaponMode::Cannonball,
             explosion_events: Vec::new(),
-            integrity_recheck_jobs: Vec::new(),
             simulation_accumulator_s: 0.0,
 
             // Ground context
@@ -247,6 +232,9 @@ impl BattleScene {
         };
         self.player
             .update(&keys, self.camera_yaw, delta, &self.arena_ground);
+
+        // Voxel-first building runtime tick (event-driven collapse + shell jobs).
+        self.building.tick(delta);
 
         // 2. Cannon: aim where camera looks + follow player if grabbed
         self.cannon.aim_at_camera(camera_forward);
@@ -319,7 +307,7 @@ impl BattleScene {
                                     42.0,
                                     8.0,
                                 );
-                                self.schedule_integrity_recheck(impacted, 5.0);
+                                let _ = impacted;
                                 self.explosion_events.push(ExplosionEvent {
                                     position: hit.position,
                                     ember_count: 18,
@@ -342,7 +330,7 @@ impl BattleScene {
                     } else {
                         let impacted =
                             self.apply_explosion_damage_to_blocks(position, 1.2, 28.0, 4.0);
-                        self.schedule_integrity_recheck(impacted, 5.0);
+                        let _ = impacted;
                         self.explosion_events.push(ExplosionEvent {
                             position,
                             ember_count: 10,
@@ -360,18 +348,6 @@ impl BattleScene {
         remove_indices.dedup();
         for idx in remove_indices.into_iter().rev() {
             self.projectiles.remove(idx);
-        }
-
-        // Event-triggered local structural re-checks.
-        self.process_integrity_rechecks(delta);
-
-        // Continuous structural fatigue pass (budgeted): keeps collapse progressing
-        // under gravity/load even between direct projectile hits.
-        let integrity_destroyed = self.building.run_integrity_pass(delta);
-        if !integrity_destroyed.is_empty() {
-            self.handle_destroyed_blocks(&integrity_destroyed);
-            let followup = self.collect_neighbor_blocks(&integrity_destroyed, 2.0);
-            self.schedule_integrity_recheck(followup, 2.0);
         }
 
         // Building physics now runs in the same fixed-step clock as player/projectiles.
@@ -690,7 +666,7 @@ impl BattleScene {
         impacted.extend(self.apply_hit_ring_damage(impact_position, block_id, 1.15, 11.0, 1.8));
         impacted.sort_unstable();
         impacted.dedup();
-        self.schedule_integrity_recheck(impacted, 5.0);
+        let _ = impacted;
     }
 
     fn apply_geomod_carve_to_blocks(
@@ -880,81 +856,6 @@ impl BattleScene {
         impacted
     }
 
-    fn schedule_integrity_recheck(&mut self, mut block_ids: Vec<u32>, delay_seconds: f32) {
-        if block_ids.is_empty() {
-            return;
-        }
-        block_ids.sort_unstable();
-        block_ids.dedup();
-        let pass_budget = ((delay_seconds.max(0.1) * 2.5).round() as u8)
-            .clamp(INTEGRITY_RECHECK_MIN_PASSES, INTEGRITY_RECHECK_MAX_PASSES);
-        self.integrity_recheck_jobs.push(IntegrityRecheckJob {
-            cooldown_s: 0.0,
-            passes_left: pass_budget,
-            stable_passes: 0,
-            block_ids,
-        });
-    }
-
-    fn process_integrity_rechecks(&mut self, delta: f32) {
-        if self.integrity_recheck_jobs.is_empty() {
-            return;
-        }
-
-        let pending = std::mem::take(&mut self.integrity_recheck_jobs);
-        for mut job in pending {
-            job.cooldown_s -= delta;
-            if job.cooldown_s > 0.0 {
-                self.integrity_recheck_jobs.push(job);
-                continue;
-            }
-            let destroyed = self.building.recheck_integrity_for_blocks(&job.block_ids);
-            if destroyed.is_empty() {
-                job.stable_passes = job.stable_passes.saturating_add(1);
-                job.passes_left = job.passes_left.saturating_sub(1);
-                if job.stable_passes >= INTEGRITY_STABLE_PASSES_TO_SLEEP || job.passes_left == 0 {
-                    continue;
-                }
-                job.cooldown_s = INTEGRITY_RECHECK_PASS_INTERVAL_S;
-                self.integrity_recheck_jobs.push(job);
-                continue;
-            }
-
-            self.handle_destroyed_blocks(&destroyed);
-            let followup = self.collect_neighbor_blocks(&destroyed, 1.8);
-            if !followup.is_empty() {
-                let mut merged = job.block_ids;
-                merged.extend(followup);
-                merged.sort_unstable();
-                merged.dedup();
-                job.block_ids = merged;
-                job.passes_left = job.passes_left.saturating_sub(1);
-                job.stable_passes = 0;
-                if job.passes_left > 0 {
-                    job.cooldown_s = INTEGRITY_RECHECK_PASS_INTERVAL_S;
-                    self.integrity_recheck_jobs.push(job);
-                }
-            }
-        }
-    }
-
-    fn collect_neighbor_blocks(&self, destroyed: &[DestroyedBlock], radius: f32) -> Vec<u32> {
-        if destroyed.is_empty() {
-            return Vec::new();
-        }
-        let mut neighbors = Vec::new();
-        for block in destroyed {
-            neighbors.extend(self.collect_block_candidates_for_sphere(
-                block.position,
-                radius,
-                radius * 0.8,
-            ));
-        }
-        neighbors.sort_unstable();
-        neighbors.dedup();
-        neighbors
-    }
-
     fn handle_destroyed_blocks(&mut self, destroyed: &[DestroyedBlock]) {
         for block in destroyed {
             self.destruction
@@ -1022,7 +923,7 @@ impl BattleScene {
         ));
         impacted.sort_unstable();
         impacted.dedup();
-        self.schedule_integrity_recheck(impacted, 5.0);
+        let _ = impacted;
 
         self.destruction
             .add_debris(spawn_debris(impact_position, 2, ROCKET_DEBRIS_COUNT));
@@ -1095,32 +996,8 @@ impl BattleScene {
     }
 
     fn collect_block_candidates_in_world_bounds(&self, min: Vec3, max: Vec3) -> Vec<u32> {
-        let inv_grid = 1.0 / crate::game::builder::BLOCK_GRID_SIZE;
-        let cell_min = IVec3::new(
-            (min.x * inv_grid).floor() as i32,
-            (min.y * inv_grid).floor() as i32,
-            (min.z * inv_grid).floor() as i32,
-        ) - IVec3::splat(COLLISION_BLOCK_QUERY_PADDING_CELLS);
-        let cell_max = IVec3::new(
-            (max.x * inv_grid).ceil() as i32,
-            (max.y * inv_grid).ceil() as i32,
-            (max.z * inv_grid).ceil() as i32,
-        ) + IVec3::splat(COLLISION_BLOCK_QUERY_PADDING_CELLS);
-
-        let mut ids = Vec::new();
-        for y in cell_min.y..=cell_max.y {
-            for z in cell_min.z..=cell_max.z {
-                for x in cell_min.x..=cell_max.x {
-                    if let Some(id) = self
-                        .building
-                        .statics_v2
-                        .block_id_at_cell(IVec3::new(x, y, z))
-                    {
-                        ids.push(id);
-                    }
-                }
-            }
-        }
+        let aabb = crate::render::building_blocks::AABB::new(min, max);
+        let mut ids = self.building.blocks().find_intersecting(&aabb);
         ids.sort_unstable();
         ids.dedup();
         ids

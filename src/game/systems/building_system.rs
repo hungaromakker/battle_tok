@@ -9,7 +9,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use glam::{IVec3, Vec3};
 
 use crate::game::builder::{BLOCK_GRID_SIZE, BLOCK_SNAP_DISTANCE, BuildToolbar, SHAPE_NAMES};
-use crate::game::systems::building_v2::{BuildingSystemV2, PlaceError};
+use crate::game::systems::building_v2::BuildingSystemV2;
+use crate::game::systems::voxel_building::{
+    BuildAudioEvent, DamageSource, RenderDeltaBatch, VoxelBuildingRuntime, VoxelCoord,
+    VoxelDamageResult, VoxelHit, VoxelMaterialId, VOXEL_SIZE_METERS,
+};
 use crate::render::{
     BuildingBlock, BuildingBlockManager, BuildingBlockShape, BuildingPhysics, MergeWorkflowManager,
     MergedMesh, SculptingManager,
@@ -21,11 +25,6 @@ const VERBOSE_BUILD_LOGS: bool = false;
 const DEBUG_BLOCK_EVENTS: bool = true;
 /// Crack phase count before full obliteration.
 const CRACK_PHASES_BEFORE_OBLITERATE: u8 = 5;
-/// Experimental Forts-like outline mode (disabled by default).
-///
-/// Strict joint-only gating can block normal stacked templates, so this is
-/// opt-in and only rejects isolated non-joint placements.
-const ENFORCE_JOINT_OUTLINE_BUILD: bool = false;
 /// Maximum number of simulated fracture rubble blocks kept alive at once.
 const MAX_DYNAMIC_RUBBLE_BLOCKS: usize = 192;
 /// Maximum number of persistent rubble pile nodes.
@@ -39,26 +38,6 @@ const FRACTURE_MAX_HALF_EXTENT: f32 = 0.28;
 const RUBBLE_COMPACTION_RADIUS: f32 = 1.25;
 /// One full inventory cube per ~unit cube rubble volume.
 const RUBBLE_PICKUP_UNIT_VOLUME: f32 = 1.0;
-/// Overload ratio where static blocks are detached into dynamic collapse.
-const JOINT_DETACH_THRESHOLD: f32 = 1.08;
-/// Hard overload cap used for damage scaling.
-const MAX_JOINT_OVERLOAD: f32 = 3.5;
-/// Overstress accumulation needed before joint collapse is triggered.
-const JOINT_OVERSTRESS_TO_COLLAPSE: f32 = 1.2;
-const JOINT_OVERSTRESS_GAIN: f32 = 0.58;
-const JOINT_OVERSTRESS_DECAY: f32 = 0.82;
-/// Convert material density into gameplay structural load units.
-///
-/// The runtime physics system still uses full densities for impacts. These
-/// values only tune the static integrity solver so normal supported walls do
-/// not self-crush under gravity every few frames.
-const JOINT_STRUCTURAL_DENSITY_SCALE: f32 = 0.07;
-const JOINT_STRUCTURAL_DENSITY_MIN: f32 = 70.0;
-const JOINT_STRUCTURAL_DENSITY_MAX: f32 = 300.0;
-/// Limit a single collapse event to a local area so one impact cannot erase an
-/// entire castle instantly.
-const JOINT_COLLAPSE_RADIUS_CELLS: i32 = 5;
-const JOINT_COLLAPSE_MAX_BLOCKS: usize = 128;
 
 /// Manages the full lifecycle of building blocks.
 ///
@@ -66,6 +45,7 @@ const JOINT_COLLAPSE_MAX_BLOCKS: usize = 128;
 /// physics, SDF merge workflows, sculpting, and the build toolbar so that
 /// callers interact through a small set of high-level methods.
 pub struct BuildingSystem {
+    pub voxel_runtime: VoxelBuildingRuntime,
     pub block_manager: BuildingBlockManager,
     pub block_physics: BuildingPhysics,
     pub statics_v2: BuildingSystemV2,
@@ -81,9 +61,10 @@ pub struct BuildingSystem {
     rubble_piles: HashMap<u32, RubblePileNode>,
     rubble_pile_order: VecDeque<u32>,
     next_rubble_pile_id: u32,
-    integrity_timer: f32,
-    integrity_scan_cursor: usize,
     joint_support_model: JointSupportModel,
+    voxel_by_block_id: HashMap<u32, VoxelCoord>,
+    block_id_by_voxel: HashMap<VoxelCoord, u32>,
+    pending_voxel_audio: Vec<BuildAudioEvent>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -114,12 +95,6 @@ pub struct DamageOutcome {
     pub destroyed: Option<DestroyedBlock>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InitialSupportKind {
-    Terrain,
-    Structure,
-}
-
 /// Forts-inspired 3D joint support mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JointSupportModel {
@@ -133,22 +108,6 @@ pub enum JointSupportModel {
     Frame,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct JointMaterialProfile {
-    compression_n: f32,
-    tension_n: f32,
-    shear_n: f32,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct JointStressOutcome {
-    block_id: u32,
-    overload_ratio: f32,
-    overload: f32,
-    weight_newtons: f32,
-    unsupported: bool,
-}
-
 impl BuildingSystem {
     /// Create a new building system.
     ///
@@ -156,6 +115,7 @@ impl BuildingSystem {
     /// advances every frame for stable support/fall behaviour.
     pub fn new(_physics_check_interval: f32) -> Self {
         Self {
+            voxel_runtime: VoxelBuildingRuntime::new(),
             block_manager: BuildingBlockManager::new(),
             block_physics: BuildingPhysics::new(),
             statics_v2: BuildingSystemV2::new(),
@@ -171,9 +131,10 @@ impl BuildingSystem {
             rubble_piles: HashMap::new(),
             rubble_pile_order: VecDeque::new(),
             next_rubble_pile_id: 1,
-            integrity_timer: 0.0,
-            integrity_scan_cursor: 0,
             joint_support_model: JointSupportModel::Auto,
+            voxel_by_block_id: HashMap::new(),
+            block_id_by_voxel: HashMap::new(),
+            pending_voxel_audio: Vec::new(),
         }
     }
 
@@ -209,83 +170,46 @@ impl BuildingSystem {
         shape: BuildingBlockShape,
         position: Vec3,
         material: u8,
-        ground_height_hint: Option<f32>,
+        _ground_height_hint: Option<f32>,
     ) -> Option<u32> {
         if !self.toolbar.visible {
             return None;
         }
 
         let block = BuildingBlock::new(shape, position, material);
-        let terrain_anchor = Self::is_terrain_anchor(&block, ground_height_hint);
-        let is_joint = Self::is_joint_shape(shape);
-        let cell = BuildingSystemV2::world_to_cell(position, BLOCK_GRID_SIZE);
-
-        if ENFORCE_JOINT_OUTLINE_BUILD
-            && !terrain_anchor
-            && !is_joint
-            && !self.has_joint_neighbor(cell)
-        {
-            if DEBUG_BLOCK_EVENTS {
-                println!(
-                    "[BuildReject] outline-first requires adjacent support/joint: shape={:?} world=({:.3},{:.3},{:.3}) cell=({}, {}, {})",
-                    shape, position.x, position.y, position.z, cell.x, cell.y, cell.z
-                );
-            }
+        let voxel_coord = Self::world_to_voxel_coord(position);
+        if self.voxel_runtime.world.get(voxel_coord).is_some() {
             return None;
-        }
-
-        match self.statics_v2.can_place(cell, terrain_anchor, is_joint) {
-            Ok(()) => {}
-            Err(PlaceError::Occupied) | Err(PlaceError::NeedsSupport) => return None,
         }
 
         let block_id = self.block_manager.add_block(block);
-        if let Err(reason) = self
-            .statics_v2
-            .insert_block(block_id, cell, material, terrain_anchor, is_joint)
+        if !self
+            .voxel_runtime
+            .place_voxel(voxel_coord, VoxelMaterialId(material))
         {
             self.block_manager.remove_block(block_id);
-            if VERBOSE_BUILD_LOGS {
-                println!("[BuildV2] Placement rollback at {:?}: {:?}", cell, reason);
-            }
             return None;
-        }
-
-        let support = if terrain_anchor {
-            InitialSupportKind::Terrain
-        } else {
-            InitialSupportKind::Structure
-        };
-
-        match support {
-            InitialSupportKind::Terrain => self.block_physics.register_grounded_block(block_id),
-            InitialSupportKind::Structure => {
-                self.block_physics
-                    .register_structurally_supported_block(block_id);
-            }
         }
 
         self.damage_accumulated.insert(block_id, 0.0);
         self.crack_stage.insert(block_id, 0);
         self.joint_overstress.insert(block_id, 0.0);
-        if is_joint {
+        if Self::is_joint_shape(shape) {
             self.joint_blocks.insert(block_id);
-        }
+        }        
 
         if DEBUG_BLOCK_EVENTS {
             println!(
-                "[BlockPlace] id={} material={} shape={:?} world=({:.3},{:.3},{:.3}) cell=({}, {}, {}) anchor={} joint={}",
+                "[BlockPlace] id={} material={} shape={:?} world=({:.3},{:.3},{:.3}) voxel=({}, {}, {})",
                 block_id,
                 material,
                 shape,
                 position.x,
                 position.y,
                 position.z,
-                cell.x,
-                cell.y,
-                cell.z,
-                terrain_anchor,
-                is_joint
+                voxel_coord.x,
+                voxel_coord.y,
+                voxel_coord.z,
             );
         }
 
@@ -299,6 +223,10 @@ impl BuildingSystem {
                 block_id,
             );
         }
+
+        self.voxel_by_block_id.insert(block_id, voxel_coord);
+        self.block_id_by_voxel.insert(voxel_coord, block_id);
+        self.block_manager.mark_mesh_dirty();
 
         Some(block_id)
     }
@@ -451,6 +379,63 @@ impl BuildingSystem {
             };
         };
 
+        if let Some(voxel_coord) = self.voxel_by_block_id.get(&block_id).copied() {
+            let voxel_result = self.voxel_runtime.apply_damage_at_hit(
+                VoxelHit {
+                    coord: voxel_coord,
+                    world_pos: position,
+                    normal: IVec3::ZERO,
+                },
+                damage,
+                impulse,
+                DamageSource::Cannonball,
+            );
+            self.pending_voxel_audio
+                .extend(self.voxel_runtime.drain_audio_events());
+
+            let ratio = if let Some(cell) = self.voxel_runtime.world.get(voxel_coord) {
+                1.0 - (cell.hp as f32 / cell.max_hp.max(1) as f32)
+            } else {
+                1.0
+            };
+            let previous_stage = *self.crack_stage.get(&block_id).unwrap_or(&0);
+            let mut new_stage = Self::crack_stage_from_ratio(ratio);
+            if voxel_result.destroyed {
+                new_stage = CRACK_PHASES_BEFORE_OBLITERATE + 1;
+            }
+            let stage_advanced = new_stage > previous_stage;
+            if stage_advanced {
+                self.crack_stage.insert(block_id, new_stage);
+            }
+            if voxel_result.destroyed {
+                self.remove_block(block_id);
+                let fracture_spawned = if fracture_on_destroy {
+                    self.spawn_fracture_rubble(shape, position, material, impulse)
+                } else {
+                    0
+                };
+                return DamageOutcome {
+                    integrity_ratio: 1.0,
+                    crack_stage: new_stage,
+                    crack_stage_advanced: stage_advanced,
+                    fracture_spawned,
+                    destroyed: Some(DestroyedBlock {
+                        id: block_id,
+                        position,
+                        material,
+                    }),
+                };
+            }
+
+            return DamageOutcome {
+                integrity_ratio: ratio.clamp(0.0, 1.0),
+                crack_stage: new_stage,
+                crack_stage_advanced: stage_advanced,
+                fracture_spawned: 0,
+                destroyed: None,
+            };
+        }
+
         self.block_physics.apply_impulse(block_id, impulse);
         self.block_physics.trigger_support_check(block_id);
 
@@ -535,171 +520,18 @@ impl BuildingSystem {
 
     /// Incremental integrity pass for large structures (budgeted for performance).
     pub fn run_integrity_pass(&mut self, delta: f32) -> Vec<DestroyedBlock> {
-        self.integrity_timer += delta;
-        if self.integrity_timer < 0.24 {
-            return Vec::new();
-        }
-        self.integrity_timer = 0.0;
-
-        let blocks = self.block_manager.blocks();
-        let total = blocks.len();
-        if total == 0 {
-            self.integrity_scan_cursor = 0;
-            return Vec::new();
-        }
-
-        let snapshot: Vec<(u32, Vec3, BuildingBlockShape, u8, IVec3)> = blocks
-            .iter()
-            .map(|b| {
-                (
-                    b.id,
-                    b.position,
-                    b.shape,
-                    b.material,
-                    BuildingSystemV2::world_to_cell(b.position, BLOCK_GRID_SIZE),
-                )
-            })
-            .collect();
-        let by_cell: HashMap<IVec3, u32> = snapshot
-            .iter()
-            .map(|(id, _, _, _, cell)| (*cell, *id))
-            .collect();
-
-        let budget = total.min(24);
-        let start = self.integrity_scan_cursor % total;
-        self.integrity_scan_cursor = (start + budget) % total;
-
-        let mut pending_damage: Vec<(u32, f32, Vec3)> = Vec::new();
-        let mut collapse_roots: HashSet<u32> = HashSet::new();
-        for i in 0..budget {
-            let idx = (start + i) % total;
-            let (block_id, _position, shape, material, cell) = snapshot[idx];
-            let Some(stress) =
-                self.evaluate_joint_stress(block_id, shape, material, cell, &by_cell)
-            else {
-                continue;
-            };
-            let accum = self.update_joint_overstress(stress.block_id, stress.overload);
-            if stress.overload_ratio <= 1.0 {
-                continue;
-            }
-            if stress.unsupported
-                && stress.overload_ratio >= JOINT_DETACH_THRESHOLD
-                && accum >= JOINT_OVERSTRESS_TO_COLLAPSE
-            {
-                collapse_roots.insert(stress.block_id);
-            }
-            let damage = Self::material_health(material) * 0.10 * stress.overload;
-            let impulse = Vec3::new(0.0, -stress.weight_newtons * 0.0016 * stress.overload, 0.0);
-            pending_damage.push((stress.block_id, damage, impulse));
-        }
-
-        for root in collapse_roots {
-            self.trigger_joint_collapse(root);
-        }
-
-        let mut destroyed = Vec::new();
-        for (block_id, damage, impulse) in pending_damage {
-            let outcome = self.apply_block_damage(block_id, damage, impulse, false);
-            if let Some(block) = outcome.destroyed {
-                destroyed.push(block);
-            }
-        }
-        destroyed
+        let _ = delta;
+        // Hard cutover: passive integrity scans are disabled. Structural work is
+        // now event-driven from voxel destruction only.
+        Vec::new()
     }
 
     /// Re-check structural pressure for a focused set of blocks (typically
     /// blocks affected by an explosion) and apply additional delayed damage.
     pub fn recheck_integrity_for_blocks(&mut self, focus_block_ids: &[u32]) -> Vec<DestroyedBlock> {
-        if focus_block_ids.is_empty() {
-            return Vec::new();
-        }
-
-        let blocks = self.block_manager.blocks();
-        if blocks.is_empty() {
-            return Vec::new();
-        }
-
-        let snapshot: Vec<(u32, Vec3, BuildingBlockShape, u8, IVec3)> = blocks
-            .iter()
-            .map(|b| {
-                (
-                    b.id,
-                    b.position,
-                    b.shape,
-                    b.material,
-                    BuildingSystemV2::world_to_cell(b.position, BLOCK_GRID_SIZE),
-                )
-            })
-            .collect();
-
-        let by_cell: HashMap<IVec3, u32> = snapshot
-            .iter()
-            .map(|(id, _, _, _, cell)| (*cell, *id))
-            .collect();
-
-        let focus: HashSet<u32> = focus_block_ids.iter().copied().collect();
-        let mut target_ids: HashSet<u32> = HashSet::new();
-
-        for (block_id, _position, _shape, _material, cell) in &snapshot {
-            if !focus.contains(block_id) {
-                continue;
-            }
-            target_ids.insert(*block_id);
-
-            // Also check direct neighbors so cracks can propagate into weak joints.
-            for neighbor in [
-                IVec3::new(cell.x + 1, cell.y, cell.z),
-                IVec3::new(cell.x - 1, cell.y, cell.z),
-                IVec3::new(cell.x, cell.y + 1, cell.z),
-                IVec3::new(cell.x, cell.y - 1, cell.z),
-                IVec3::new(cell.x, cell.y, cell.z + 1),
-                IVec3::new(cell.x, cell.y, cell.z - 1),
-            ] {
-                if let Some(neighbor_id) = by_cell.get(&neighbor) {
-                    target_ids.insert(*neighbor_id);
-                }
-            }
-        }
-
-        let mut pending_damage: Vec<(u32, f32, Vec3)> = Vec::new();
-        let mut collapse_roots: HashSet<u32> = HashSet::new();
-        for (block_id, _position, shape, material, cell) in snapshot {
-            if !target_ids.contains(&block_id) {
-                continue;
-            }
-            let Some(stress) =
-                self.evaluate_joint_stress(block_id, shape, material, cell, &by_cell)
-            else {
-                continue;
-            };
-            let accum = self.update_joint_overstress(stress.block_id, stress.overload);
-            if stress.overload_ratio <= 1.0 {
-                continue;
-            }
-            if stress.unsupported
-                && stress.overload_ratio >= JOINT_DETACH_THRESHOLD
-                && accum >= JOINT_OVERSTRESS_TO_COLLAPSE
-            {
-                collapse_roots.insert(stress.block_id);
-            }
-            let damage = Self::material_health(material) * 0.16 * stress.overload;
-            let impulse = Vec3::new(0.0, -stress.weight_newtons * 0.0020 * stress.overload, 0.0);
-            pending_damage.push((stress.block_id, damage, impulse));
-        }
-
-        for root in collapse_roots {
-            self.trigger_joint_collapse(root);
-        }
-
-        let mut destroyed = Vec::new();
-        for (block_id, damage, impulse) in pending_damage {
-            let outcome = self.apply_block_damage(block_id, damage, impulse, false);
-            if let Some(block) = outcome.destroyed {
-                destroyed.push(block);
-            }
-        }
-        destroyed
+        let _ = focus_block_ids;
+        // Hard cutover: no passive neighborhood integrity recheck in the voxel path.
+        Vec::new()
     }
 
     /// Remove a block from managers and v2 statics graph.
@@ -709,6 +541,10 @@ impl BuildingSystem {
         let Some(existing) = self.block_manager.get_block(block_id).map(|b| (b.position, b.material)) else {
             return Vec::new();
         };
+        if let Some(coord) = self.voxel_by_block_id.remove(&block_id) {
+            self.block_id_by_voxel.remove(&coord);
+            let _ = self.voxel_runtime.remove_voxel(coord);
+        }
         if DEBUG_BLOCK_EVENTS {
             println!(
                 "[BlockRemove] id={} world=({:.3},{:.3},{:.3}) material={}",
@@ -733,15 +569,8 @@ impl BuildingSystem {
         self.crack_stage.remove(&block_id);
         self.joint_overstress.remove(&block_id);
         self.joint_blocks.remove(&block_id);
-
-        let unstable = self.statics_v2.remove_block(block_id);
-        let detached = self.detach_unstable_static_chain(unstable);
-        for unstable_id in &detached {
-            if *unstable_id != block_id && self.block_manager.get_block(*unstable_id).is_some() {
-                self.block_physics.trigger_fall(*unstable_id);
-            }
-        }
-        detached
+        self.block_manager.mark_mesh_dirty();
+        Vec::new()
     }
 
     /// Register externally-added static geometry blocks (e.g. bridge segments)
@@ -809,6 +638,114 @@ impl BuildingSystem {
     /// Read-only access to the block manager (for collision checks, etc.).
     pub fn blocks(&self) -> &BuildingBlockManager {
         &self.block_manager
+    }
+
+    // ------------------------------------------------------------------
+    // Voxel-first runtime API (hard-cutover path)
+    // ------------------------------------------------------------------
+
+    pub fn tick(&mut self, dt: f32) {
+        self.voxel_runtime.tick(dt);
+        if self.voxel_runtime.take_world_change_flag() {
+            self.sync_voxel_proxies();
+        }
+        self.pending_voxel_audio
+            .extend(self.voxel_runtime.drain_audio_events());
+    }
+
+    pub fn raycast_voxel(&self, origin: Vec3, dir: Vec3, max_dist: f32) -> Option<VoxelHit> {
+        self.voxel_runtime.raycast_voxel(origin, dir, max_dist)
+    }
+
+    pub fn place_voxel(&mut self, coord: VoxelCoord, material: VoxelMaterialId) -> bool {
+        if !self.voxel_runtime.place_voxel(coord, material) {
+            return false;
+        }
+        self.ensure_voxel_proxy(coord, material.0);
+        true
+    }
+
+    pub fn remove_voxel(&mut self, coord: VoxelCoord) -> bool {
+        if !self.voxel_runtime.remove_voxel(coord) {
+            return false;
+        }
+        if let Some(block_id) = self.block_id_by_voxel.remove(&coord) {
+            self.voxel_by_block_id.remove(&block_id);
+            self.block_manager.remove_block(block_id);
+            self.block_physics.unregister_block(block_id);
+            self.damage_accumulated.remove(&block_id);
+            self.crack_stage.remove(&block_id);
+            self.joint_overstress.remove(&block_id);
+            self.joint_blocks.remove(&block_id);
+            self.block_manager.mark_mesh_dirty();
+        }
+        true
+    }
+
+    pub fn place_corner_brush(
+        &mut self,
+        anchor: VoxelCoord,
+        face_normal: IVec3,
+        radius_vox: u8,
+        material: VoxelMaterialId,
+    ) -> usize {
+        let placed =
+            self.voxel_runtime
+                .place_corner_brush(anchor, face_normal, radius_vox, material);
+        if placed == 0 {
+            return 0;
+        }
+
+        let radius = radius_vox.max(1) as i32;
+        for z in -radius..=radius {
+            for y in -radius..=radius {
+                for x in -radius..=radius {
+                    let coord = VoxelCoord::new(anchor.x + x, anchor.y + y, anchor.z + z);
+                    if self.voxel_runtime.world.get(coord).is_some() {
+                        self.ensure_voxel_proxy(coord, material.0);
+                    }
+                }
+            }
+        }
+        self.block_manager.mark_mesh_dirty();
+        placed
+    }
+
+    pub fn apply_damage_at_hit(
+        &mut self,
+        hit: VoxelHit,
+        damage: f32,
+        impulse: Vec3,
+        source: DamageSource,
+    ) -> VoxelDamageResult {
+        let result = self
+            .voxel_runtime
+            .apply_damage_at_hit(hit, damage, impulse, source);
+        self.pending_voxel_audio
+            .extend(self.voxel_runtime.drain_audio_events());
+        if result.destroyed {
+            if let Some(block_id) = self.block_id_by_voxel.remove(&hit.coord) {
+                self.voxel_by_block_id.remove(&block_id);
+                self.block_manager.remove_block(block_id);
+                self.block_physics.unregister_block(block_id);
+                self.damage_accumulated.remove(&block_id);
+                self.crack_stage.remove(&block_id);
+                self.joint_overstress.remove(&block_id);
+                self.joint_blocks.remove(&block_id);
+                self.block_manager.mark_mesh_dirty();
+            }
+        }
+        result
+    }
+
+    pub fn drain_render_deltas(&mut self) -> RenderDeltaBatch {
+        self.voxel_runtime.drain_render_deltas()
+    }
+
+    pub fn drain_audio_events(&mut self) -> Vec<BuildAudioEvent> {
+        let mut events: Vec<BuildAudioEvent> = std::mem::take(&mut self.pending_voxel_audio);
+        events.extend(self.voxel_runtime.drain_audio_events());
+        events
     }
 
     /// Crack stage for rendering/debug (0..=6).
@@ -912,218 +849,71 @@ impl BuildingSystem {
     // Internal helpers
     // ------------------------------------------------------------------
 
-    fn support_model_for_material(&self, material: u8) -> JointSupportModel {
-        match self.joint_support_model {
-            JointSupportModel::Auto => match material {
-                1 | 6 => JointSupportModel::Truss,       // wood/moss
-                7 | 8 | 9 => JointSupportModel::Frame,   // metal/marble/obsidian
-                _ => JointSupportModel::Compression,     // stone-like
-            },
-            explicit => explicit,
-        }
+    fn world_to_voxel_coord(position: Vec3) -> VoxelCoord {
+        VoxelCoord::new(
+            (position.x / VOXEL_SIZE_METERS).floor() as i32,
+            (position.y / VOXEL_SIZE_METERS).floor() as i32,
+            (position.z / VOXEL_SIZE_METERS).floor() as i32,
+        )
     }
 
-    fn joint_profile_for(&self, material: u8) -> JointMaterialProfile {
-        match self.support_model_for_material(material) {
-            JointSupportModel::Compression => JointMaterialProfile {
-                compression_n: 6200.0,
-                tension_n: 2200.0,
-                shear_n: 2600.0,
-            },
-            JointSupportModel::Truss => JointMaterialProfile {
-                compression_n: 2600.0,
-                tension_n: 3600.0,
-                shear_n: 1900.0,
-            },
-            JointSupportModel::Frame => JointMaterialProfile {
-                compression_n: 7600.0,
-                tension_n: 7200.0,
-                shear_n: 5200.0,
-            },
-            JointSupportModel::Auto => JointMaterialProfile {
-                compression_n: 4800.0,
-                tension_n: 3200.0,
-                shear_n: 2800.0,
-            },
-        }
+    fn voxel_coord_to_world_center(coord: VoxelCoord) -> Vec3 {
+        Vec3::new(
+            (coord.x as f32 + 0.5) * VOXEL_SIZE_METERS,
+            (coord.y as f32 + 0.5) * VOXEL_SIZE_METERS,
+            (coord.z as f32 + 0.5) * VOXEL_SIZE_METERS,
+        )
     }
 
-    fn evaluate_joint_stress(
-        &self,
-        block_id: u32,
-        shape: BuildingBlockShape,
-        material: u8,
-        cell: IVec3,
-        by_cell: &HashMap<IVec3, u32>,
-    ) -> Option<JointStressOutcome> {
-        if !self.joint_blocks.contains(&block_id) {
-            return None;
-        }
-        let state = self.block_physics.get_state(block_id)?;
-        if state.terrain_anchored || state.is_loose {
-            return None;
-        }
-
-        let profile = self.joint_profile_for(material);
-        let volume = Self::shape_volume(shape).max(0.05);
-        let raw_density = crate::render::building_physics::get_material_density(material);
-        let structural_density = (raw_density * JOINT_STRUCTURAL_DENSITY_SCALE)
-            .clamp(JOINT_STRUCTURAL_DENSITY_MIN, JOINT_STRUCTURAL_DENSITY_MAX);
-        let weight_newtons = volume * structural_density * self.block_physics.config.gravity.abs();
-
-        let below_count =
-            usize::from(by_cell.get(&IVec3::new(cell.x, cell.y - 1, cell.z)).is_some_and(
-                |id| self.joint_blocks.contains(id),
-            ));
-        let mut side_joint_count = 0usize;
-        let mut side_infill_count = 0usize;
-        for neighbor in [
-            IVec3::new(cell.x + 1, cell.y, cell.z),
-            IVec3::new(cell.x - 1, cell.y, cell.z),
-            IVec3::new(cell.x, cell.y, cell.z + 1),
-            IVec3::new(cell.x, cell.y, cell.z - 1),
-        ] {
-            if let Some(id) = by_cell.get(&neighbor) {
-                if self.joint_blocks.contains(id) {
-                    side_joint_count += 1;
-                } else {
-                    side_infill_count += 1;
-                }
+    fn ensure_voxel_proxy(&mut self, coord: VoxelCoord, material: u8) -> u32 {
+        if let Some(existing_id) = self.block_id_by_voxel.get(&coord).copied() {
+            if let Some(block) = self.block_manager.get_block_mut(existing_id) {
+                block.material = material;
             }
+            return existing_id;
         }
 
-        let above_column = (1..=6)
-            .take_while(|step| by_cell.contains_key(&IVec3::new(cell.x, cell.y + *step, cell.z)))
-            .count() as f32;
-        let column_factor = 1.0 + above_column * 0.42 + side_infill_count as f32 * 0.08;
-        let total_vertical_load = weight_newtons * column_factor;
-
-        let down_support = below_count.max(1) as f32;
-        let lateral_ties = side_joint_count as f32;
-        let unsupported = below_count == 0;
-
-        let compression_capacity = profile.compression_n * down_support * (1.0 + lateral_ties * 0.18);
-        let tie_capacity = profile.tension_n * (0.20 + lateral_ties * 0.34);
-        let shear_capacity = profile.shear_n * (down_support * 0.70 + lateral_ties * 0.45).max(0.35);
-
-        let compression_ratio = total_vertical_load / compression_capacity.max(1.0);
-        let cantilever_ratio = if unsupported {
-            (total_vertical_load * (1.05 + (1.0 - (lateral_ties * 0.25).clamp(0.0, 1.0))))
-                / tie_capacity.max(1.0)
-        } else {
-            0.0
-        };
-        let impact_ratio = state.peak_impact / (shear_capacity * 1.15).max(1.0);
-        let flight_ratio = if state.velocity.y > 0.4 {
-            state.velocity.y / 2.8
-        } else {
-            0.0
-        };
-
-        let overload_ratio = compression_ratio
-            .max(cantilever_ratio)
-            .max(impact_ratio)
-            .max(flight_ratio);
-        let overload = (overload_ratio - 1.0).clamp(0.0, MAX_JOINT_OVERLOAD);
-
-        Some(JointStressOutcome {
-            block_id,
-            overload_ratio,
-            overload,
-            weight_newtons,
-            unsupported,
-        })
+        let pos = Self::voxel_coord_to_world_center(coord);
+        let block = BuildingBlock::new(
+            BuildingBlockShape::Cube {
+                half_extents: Vec3::splat(VOXEL_SIZE_METERS * 0.5),
+            },
+            pos,
+            material,
+        );
+        let block_id = self.block_manager.add_block(block);
+        self.block_physics.register_grounded_block(block_id);
+        self.damage_accumulated.insert(block_id, 0.0);
+        self.crack_stage.insert(block_id, 0);
+        self.joint_overstress.insert(block_id, 0.0);
+        self.voxel_by_block_id.insert(block_id, coord);
+        self.block_id_by_voxel.insert(coord, block_id);
+        self.block_manager.mark_mesh_dirty();
+        block_id
     }
 
-    fn update_joint_overstress(&mut self, block_id: u32, overload: f32) -> f32 {
-        let entry = self.joint_overstress.entry(block_id).or_insert(0.0);
-        if overload > 0.0 {
-            *entry += overload * JOINT_OVERSTRESS_GAIN;
-        } else {
-            *entry = (*entry * JOINT_OVERSTRESS_DECAY).max(0.0);
-            if *entry < 0.02 {
-                *entry = 0.0;
+    fn sync_voxel_proxies(&mut self) {
+        let mut remove_ids = Vec::new();
+        for (block_id, coord) in &self.voxel_by_block_id {
+            if self.voxel_runtime.world.get(*coord).is_none() {
+                remove_ids.push(*block_id);
             }
         }
-        *entry
-    }
-
-    fn trigger_joint_collapse(&mut self, root_id: u32) {
-        if !self.statics_v2.contains_block_id(root_id) {
-            return;
+        for id in remove_ids {
+            if let Some(coord) = self.voxel_by_block_id.remove(&id) {
+                self.block_id_by_voxel.remove(&coord);
+            }
+            self.block_manager.remove_block(id);
+            self.block_physics.unregister_block(id);
+            self.damage_accumulated.remove(&id);
+            self.crack_stage.remove(&id);
+            self.joint_overstress.remove(&id);
+            self.joint_blocks.remove(&id);
+            self.block_manager.mark_mesh_dirty();
         }
 
-        let Some(root_cell) = self
-            .block_manager
-            .get_block(root_id)
-            .map(|b| BuildingSystemV2::world_to_cell(b.position, BLOCK_GRID_SIZE))
-        else {
-            return;
-        };
-
-        let mut queue = VecDeque::from([root_id]);
-        let mut visited: HashSet<u32> = HashSet::new();
-        let mut detached: Vec<u32> = Vec::new();
-
-        while let Some(candidate_id) = queue.pop_front() {
-            if detached.len() >= JOINT_COLLAPSE_MAX_BLOCKS {
-                break;
-            }
-            if !visited.insert(candidate_id) {
-                continue;
-            }
-            if !self.joint_blocks.contains(&candidate_id) {
-                continue;
-            }
-            if !self.statics_v2.contains_block_id(candidate_id) {
-                continue;
-            }
-            let Some(candidate_cell) = self
-                .block_manager
-                .get_block(candidate_id)
-                .map(|b| BuildingSystemV2::world_to_cell(b.position, BLOCK_GRID_SIZE))
-            else {
-                continue;
-            };
-            let dx = (candidate_cell.x - root_cell.x).abs();
-            let dy = (candidate_cell.y - root_cell.y).abs();
-            let dz = (candidate_cell.z - root_cell.z).abs();
-            if dx.max(dy).max(dz) > JOINT_COLLAPSE_RADIUS_CELLS {
-                continue;
-            }
-
-            self.statics_v2.detach_block(candidate_id);
-            detached.push(candidate_id);
-
-            for neighbor in [
-                IVec3::new(candidate_cell.x + 1, candidate_cell.y, candidate_cell.z),
-                IVec3::new(candidate_cell.x - 1, candidate_cell.y, candidate_cell.z),
-                IVec3::new(candidate_cell.x, candidate_cell.y + 1, candidate_cell.z),
-                IVec3::new(candidate_cell.x, candidate_cell.y - 1, candidate_cell.z),
-                IVec3::new(candidate_cell.x, candidate_cell.y, candidate_cell.z + 1),
-                IVec3::new(candidate_cell.x, candidate_cell.y, candidate_cell.z - 1),
-            ] {
-                if let Some(neighbor_id) = self.statics_v2.block_id_at_cell(neighbor) {
-                    if self.joint_blocks.contains(&neighbor_id) {
-                        queue.push_back(neighbor_id);
-                    }
-                }
-            }
-        }
-
-        detached.sort_unstable();
-        detached.dedup();
-
-        for block_id in detached {
-            if self.block_manager.get_block(block_id).is_none() {
-                continue;
-            }
-            self.block_physics.trigger_fall(block_id);
-            self.block_physics.trigger_support_check(block_id);
-            self.joint_overstress.insert(block_id, 0.0);
-            if DEBUG_BLOCK_EVENTS {
-                println!("[JointCollapse] detached block_id={}", block_id);
-            }
+        for (coord, cell) in self.voxel_runtime.world.occupied_cells_snapshot() {
+            self.ensure_voxel_proxy(coord, cell.material);
         }
     }
 
@@ -1184,6 +974,12 @@ impl BuildingSystem {
                         material,
                     );
                     let piece_id = self.block_manager.add_block(piece);
+                    let voxel_coord = Self::world_to_voxel_coord(piece_pos);
+                    let _ = self
+                        .voxel_runtime
+                        .place_voxel(voxel_coord, VoxelMaterialId(material));
+                    self.voxel_by_block_id.insert(piece_id, voxel_coord);
+                    self.block_id_by_voxel.insert(voxel_coord, piece_id);
 
                     let volume =
                         (piece_half.x * 2.0) * (piece_half.y * 2.0) * (piece_half.z * 2.0);
@@ -1299,6 +1095,10 @@ impl BuildingSystem {
             return;
         }
         self.dynamic_rubble_order.retain(|id| *id != block_id);
+        if let Some(coord) = self.voxel_by_block_id.remove(&block_id) {
+            self.block_id_by_voxel.remove(&coord);
+            let _ = self.voxel_runtime.remove_voxel(coord);
+        }
         self.block_physics.unregister_block(block_id);
         self.block_manager.remove_block(block_id);
         self.damage_accumulated.remove(&block_id);
@@ -1383,33 +1183,6 @@ impl BuildingSystem {
         }
     }
 
-    fn detach_unstable_static_chain(&mut self, initial_unstable: Vec<u32>) -> Vec<u32> {
-        if initial_unstable.is_empty() {
-            return Vec::new();
-        }
-
-        let mut detached = HashSet::new();
-        let mut queue = VecDeque::from(initial_unstable);
-
-        while let Some(block_id) = queue.pop_front() {
-            if !detached.insert(block_id) {
-                continue;
-            }
-            if !self.statics_v2.contains_block_id(block_id) {
-                continue;
-            }
-
-            let newly_unstable = self.statics_v2.detach_block(block_id);
-            for next in newly_unstable {
-                if !detached.contains(&next) {
-                    queue.push_back(next);
-                }
-            }
-        }
-
-        detached.into_iter().collect()
-    }
-
     /// Snap `position` to an adjacent grid slot of any nearby block if within
     /// [`BLOCK_SNAP_DISTANCE`].
     fn snap_to_nearby_blocks(&self, position: Vec3) -> Vec3 {
@@ -1450,27 +1223,6 @@ impl BuildingSystem {
         )
     }
 
-    fn has_joint_neighbor(&self, cell: IVec3) -> bool {
-        const OFFSETS: [IVec3; 6] = [
-            IVec3::new(1, 0, 0),
-            IVec3::new(-1, 0, 0),
-            IVec3::new(0, 1, 0),
-            IVec3::new(0, -1, 0),
-            IVec3::new(0, 0, 1),
-            IVec3::new(0, 0, -1),
-        ];
-        for offset in OFFSETS {
-            let neighbor_cell = cell + offset;
-            let Some(neighbor_id) = self.statics_v2.block_id_at_cell(neighbor_cell) else {
-                continue;
-            };
-            if self.joint_blocks.contains(&neighbor_id) {
-                return true;
-            }
-        }
-        false
-    }
-
     fn shape_vertical_extents(shape: BuildingBlockShape) -> (f32, f32) {
         match shape {
             BuildingBlockShape::Cube { half_extents } => (-half_extents.y, half_extents.y),
@@ -1480,18 +1232,6 @@ impl BuildingSystem {
             BuildingBlockShape::Arch { height, .. } => (0.0, height),
             BuildingBlockShape::Wedge { size } => (-size.y * 0.5, size.y * 0.5),
         }
-    }
-
-    fn is_terrain_anchor(block: &BuildingBlock, ground_height_hint: Option<f32>) -> bool {
-        let aabb = block.aabb();
-        let bottom_y = aabb.min.y;
-
-        if let Some(ground_y) = ground_height_hint
-            && (bottom_y - ground_y).abs() <= 0.16
-        {
-            return true;
-        }
-        false
     }
 
     fn material_health(material: u8) -> f32 {
@@ -1577,87 +1317,33 @@ mod tests {
     }
 
     #[test]
-    fn supported_window_wall_cells_do_not_start_overloaded() {
+    fn passive_integrity_pass_is_disabled_after_voxel_cutover() {
         let mut system = BuildingSystem::new(0.1);
         system.toolbar.visible = true;
 
-        for x in -2..=2 {
+        for x in -1..=1 {
             let placed = system.place_block_shape_with_ground_hint(
                 cube_shape(),
                 Vec3::new(x as f32, 0.5, 0.0),
                 0,
                 Some(0.0),
             );
-            let Some(block_id) = placed else {
+            let Some(_block_id) = placed else {
                 panic!("base placement failed at x={x}");
             };
-            system.joint_blocks.insert(block_id);
         }
-
-        for y in 1..=3 {
-            for x in [-2, -1, 1, 2] {
-                let placed = system.place_block_shape_with_ground_hint(
-                    cube_shape(),
-                    Vec3::new(x as f32, 0.5 + y as f32, 0.0),
-                    0,
-                    None,
-                );
-                let Some(block_id) = placed else {
-                    panic!("window-wall placement failed at ({x}, {y})");
-                };
-                system.joint_blocks.insert(block_id);
-            }
-        }
-
-        let snapshot: Vec<(u32, BuildingBlockShape, u8, IVec3)> = system
-            .block_manager
-            .blocks()
-            .iter()
-            .map(|block| {
-                (
-                    block.id,
-                    block.shape,
-                    block.material,
-                    BuildingSystemV2::world_to_cell(block.position, BLOCK_GRID_SIZE),
-                )
-            })
-            .collect();
-        let by_cell: HashMap<IVec3, u32> = snapshot
-            .iter()
-            .map(|(id, _, _, cell)| (*cell, *id))
-            .collect();
-
-        let inspected_cell = IVec3::new(-1, 2, 0);
-        let inspected_id = *by_cell
-            .get(&inspected_cell)
-            .expect("expected window-wall test block at (-1,2,0)");
-        let (shape, material) = snapshot
-            .iter()
-            .find(|(id, _, _, _)| *id == inspected_id)
-            .map(|(_, shape, material, _)| (*shape, *material))
-            .expect("expected matching block snapshot");
-
-        let stress = system
-            .evaluate_joint_stress(inspected_id, shape, material, inspected_cell, &by_cell)
-            .expect("expected stress data for non-anchored block");
-        assert!(!stress.unsupported);
-        assert!(
-            stress.overload_ratio <= 1.0,
-            "supported wall block overloaded at placement (ratio={:.3})",
-            stress.overload_ratio
-        );
 
         let destroyed = system.run_integrity_pass(0.25);
         assert!(
             destroyed.is_empty(),
-            "supported window wall should not lose blocks to passive integrity"
+            "passive integrity pass must be disabled in voxel cutover"
         );
         assert!(
             system
                 .damage_accumulated
                 .values()
                 .all(|damage| damage.abs() <= f32::EPSILON),
-            "supported window wall should not receive passive damage"
+            "disabled passive integrity must not apply damage"
         );
     }
 }

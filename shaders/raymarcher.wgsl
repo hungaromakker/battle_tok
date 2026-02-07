@@ -790,6 +790,26 @@ fn sdf_box(p: vec3<f32>, half_extents: vec3<f32>) -> f32 {
     return length(max(q, vec3<f32>(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
 }
 
+/// Analytical axis-aligned normal for a box SDF (sharp block look).
+/// p: point in local space, half_extents: box half sizes.
+/// Returns normalized outward normal; dominant axis chosen for crisp edges.
+fn sdf_box_normal_local(p: vec3<f32>, half_extents: vec3<f32>) -> vec3<f32> {
+    let closest = clamp(p, -half_extents, half_extents);
+    let d = p - closest;
+    let len = length(d);
+    if (len < 1e-6) {
+        return vec3<f32>(0.0, 1.0, 0.0);
+    }
+    let ad = abs(d);
+    if (ad.x >= ad.y && ad.x >= ad.z) {
+        return vec3<f32>(sign(d.x), 0.0, 0.0);
+    }
+    if (ad.y >= ad.z) {
+        return vec3<f32>(0.0, sign(d.y), 0.0);
+    }
+    return vec3<f32>(0.0, 0.0, sign(d.z));
+}
+
 fn sdf_capsule(p: vec3<f32>, height: f32, radius: f32) -> f32 {
     let half_height = height * 0.5;
     let p_clamped = vec3<f32>(p.x, clamp(p.y, -half_height, half_height), p.z);
@@ -2518,6 +2538,21 @@ fn calculate_normal(p: vec3<f32>) -> vec3<f32> {
     return normalize(n);
 }
 
+/// Analytical world-space normal for box entities (sharp block look).
+/// Returns the normal if entity is SDF_BOX; otherwise returns (0,0,0) so caller uses calculate_normal.
+fn get_entity_normal_world(p: vec3<f32>, entity: GpuEntity) -> vec3<f32> {
+    if (entity.sdf_type != SDF_BOX) {
+        return vec3<f32>(0.0, 0.0, 0.0);
+    }
+    let entity_position = get_entity_position(entity);
+    let entity_scale = get_entity_scale(entity);
+    let local_p = quat_rotate(quat_inverse(entity.rotation), p - entity_position);
+    let scaled_p = local_p / entity_scale;
+    let half_extents = vec3<f32>(1.0, 1.0, 1.0);
+    let local_n = sdf_box_normal_local(scaled_p, half_extents);
+    return quat_rotate(entity.rotation, local_n);
+}
+
 // ============================================================================
 // SOFT SHADOWS (Unreal-like quality)
 // ============================================================================
@@ -3353,8 +3388,15 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 
         // Calculate full lighting
         var normal = calculate_normal(result.position);
+        if (result.entity_index >= 0) {
+            let entity = entity_buffer.entities[u32(result.entity_index)];
+            let entity_n = get_entity_normal_world(result.position, entity);
+            if (length(entity_n) > 0.5) {
+                normal = entity_n;
+            }
+        }
         var full_lit_color: vec3<f32>;
-        
+
         if (result.is_terrain) {
             // Use terrain PBR material even during blend
             let terrain_mat = get_terrain_material(result.position, normal, result.distance);
@@ -3388,8 +3430,15 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     } else {
         // Full detail mode: calculate normal and apply full lighting
         var normal = calculate_normal(result.position);
+        if (result.entity_index >= 0) {
+            let entity = entity_buffer.entities[u32(result.entity_index)];
+            let entity_n = get_entity_normal_world(result.position, entity);
+            if (length(entity_n) > 0.5) {
+                normal = entity_n;
+            }
+        }
         var lit_color: vec3<f32>;
-        
+
         if (result.is_terrain) {
             // UE5-style terrain with full PBR materials
             let terrain_mat = get_terrain_material(result.position, normal, result.distance);

@@ -39,6 +39,7 @@ pollster = "0.4"
 
 # Compile-time assertions
 static_assertions = "1.1"
+core_affinity = "0.8"
 
 # Browser (wasm) support — for agent testing and automated browser tests
 [target.'cfg(target_arch = "wasm32")'.dependencies]

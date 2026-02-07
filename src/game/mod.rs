@@ -123,8 +123,10 @@ pub use state::GameState;
 
 // Systems re-exports
 pub use systems::{
-    BuildingSystem, BuildingSystemV2, CollisionSystem, ProjectileKind, ProjectileSystem,
-    ProjectileUpdate,
+    BuildAudioEvent, BuildAudioEventKind, BuildMode, BuildingSystem, BuildingSystemV2,
+    CollisionSystem, DamageSource, ProjectileKind, ProjectileSystem, ProjectileUpdate,
+    RaymarchQualityState, RenderDeltaBatch, ShellBakeJob, ShellBakeResult, VoxelBuildingRuntime,
+    VoxelCell, VoxelCoord, VoxelDamageResult, VoxelHit, VoxelHudState, VoxelMaterialId,
 };
 
 // Scene re-exports

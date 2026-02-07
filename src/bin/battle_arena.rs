@@ -20,7 +20,7 @@
 //! Browser (wasm): build with `cargo build --bin battle_arena --target wasm32-unknown-unknown`,
 //! then run `wasm-bindgen` and serve. Enables AI agents to test the game in the browser.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -30,7 +30,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 use battle_tok_engine::render::hex_prism::DEFAULT_HEX_RADIUS;
-use glam::{IVec3, Mat4, Vec3};
+use glam::{Mat4, Vec3};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::{
@@ -45,24 +45,24 @@ use battle_tok_engine::render::CubemapSkybox;
 
 // Import Phase 2 visual upgrade systems
 use battle_tok_engine::render::{
-    FogPostConfig, FogPostPass, LavaSteamConfig, MaterialSystem, ParticleSystem, PointLightManager,
-    SceneConfig,
+    BrickTreeGpuBuffers, FogPostConfig, FogPostPass, LavaSteamConfig, MaterialSystem,
+    ParticleSystem, PointLightManager, SceneConfig,
 };
 
 // Import building block types for GPU operations
-use battle_tok_engine::render::{BuildingBlock, BuildingBlockShape, MergedMesh};
+use battle_tok_engine::render::{BuildingBlock, BuildingBlockShape};
 
 // Import game module types
 use battle_tok_engine::game::ProjectileKind;
 use battle_tok_engine::game::config::{ArenaConfig, VisualConfig};
 use battle_tok_engine::game::terrain::terrain_height_at_island;
 use battle_tok_engine::game::{
-    BLOCK_GRID_SIZE, BattleScene, BridgeConfig, BuilderMode, Camera, FloatingIslandConfig,
-    LavaParams, Mesh, MovementKeys, PLAYER_EYE_HEIGHT, SHADER_SOURCE, SdfCannonData,
-    SdfCannonUniforms, SelectedFace, StartOverlay, TerrainEditorUI, TerrainParams, Uniforms,
-    Vertex, WeaponMode, generate_all_trees_mesh, generate_bridge, generate_floating_island,
-    generate_lava_ocean, generate_trees_on_terrain, get_material_color, is_inside_hexagon,
-    set_terrain_params,
+    BattleScene, BridgeConfig, BuildMode, BuilderMode, Camera, FloatingIslandConfig, LavaParams,
+    Mesh, MovementKeys, PLAYER_EYE_HEIGHT, SHADER_SOURCE, SdfCannonData, SdfCannonUniforms,
+    StartOverlay, TerrainEditorUI, TerrainParams, Uniforms, Vertex, VoxelCoord, VoxelHudState,
+    VoxelMaterialId, WeaponMode,
+    generate_all_trees_mesh, generate_bridge, generate_floating_island, generate_lava_ocean,
+    generate_trees_on_terrain, is_inside_hexagon, set_terrain_params,
 };
 use battle_tok_engine::render::hex_prism::DEFAULT_HEX_HEIGHT;
 
@@ -115,11 +115,12 @@ struct LavaSceneUniforms {
 const HDR_SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const BLOOM_MIP_COUNT: usize = 5;
 /// Disabled by default: double-click SDF merge causes large frame-time spikes.
-const ENABLE_SDF_DOUBLE_CLICK_MERGE: bool = false;
 const BLOCK_RENDER_CHUNK_SIZE: i32 = 12;
 const BLOCK_RENDER_MAX_DISTANCE: f32 = 260.0;
 const BLOCK_REAR_CULL_DOT: f32 = -0.30;
 const INITIAL_BLOCK_CHUNK_INDIRECT_CAPACITY: u32 = 256;
+const VOXEL_SIZE_METERS: f32 = 0.25;
+const VOXEL_SHELL_SHADER_SOURCE: &str = include_str!("../../shaders/voxel_shell.wgsl");
 const STRUCTURE_ROCK_TEXTURE_BYTES: &[u8] =
     include_bytes!("../../Assets/textures/rock_stone_tile.png");
 
@@ -161,6 +162,20 @@ struct TonemapCompositeParams {
     saturation: f32,
     contrast: f32,
     bloom_intensity: f32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct VoxelShellUniforms {
+    inv_view_proj: [[f32; 4]; 4],
+    view_proj: [[f32; 4]; 4],
+    camera_pos: [f32; 3],
+    _pad0: f32,
+    resolution: [f32; 2],
+    node_count: u32,
+    leaf_count: u32,
+    sun_dir: [f32; 3],
+    _pad1: f32,
 }
 
 struct BloomMip {
@@ -249,6 +264,7 @@ struct GpuResources {
     // Pipelines
     pipeline: wgpu::RenderPipeline,
     preview_pipeline: wgpu::RenderPipeline,
+    voxel_shell_pipeline: wgpu::RenderPipeline,
     sdf_cannon_pipeline: wgpu::RenderPipeline,
     ui_pipeline: wgpu::RenderPipeline,
 
@@ -294,6 +310,11 @@ struct GpuResources {
     block_chunk_buffers: Vec<BlockChunkBuffers>,
     block_chunk_indirect_buffer: wgpu::Buffer,
     block_chunk_indirect_capacity: u32,
+    brick_tree_buffers: BrickTreeGpuBuffers,
+    voxel_shell_uniform_buffer: wgpu::Buffer,
+    voxel_shell_bind_group_layout: wgpu::BindGroupLayout,
+    voxel_shell_bind_group: wgpu::BindGroup,
+    voxel_shell_enabled: bool,
 
     // Merged mesh GPU buffers
     merged_mesh_buffers: Vec<MergedMeshBuffers>,
@@ -568,10 +589,7 @@ struct BattleArenaApp {
 
     // Builder mode (stays here — mixes with winit cursor control)
     builder_mode: BuilderMode,
-    shift_drag_build_active: bool,
-    shift_drag_start: Option<Vec3>,
-    shift_drag_preview_positions: Vec<Vec3>,
-    preview_update_accumulator: f32,
+    voxel_hud: VoxelHudState,
 
     // Windows focus overlay
     start_overlay: StartOverlay,
@@ -597,18 +615,7 @@ struct BattleArenaApp {
     postfx_enabled: bool,
     taa_enabled: bool,
     bloom_enabled: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum PickupTarget {
-    LooseBlock {
-        block_id: u32,
-        shape: battle_tok_engine::render::BuildingBlockShape,
-        material: u8,
-    },
-    RubblePile {
-        pile_id: u32,
-    },
+    use_voxel_shell: bool,
 }
 
 impl BattleArenaApp {
@@ -629,10 +636,7 @@ impl BattleArenaApp {
             _last_mouse_pos: None,
             current_mouse_pos: None,
             builder_mode: BuilderMode::default(),
-            shift_drag_build_active: false,
-            shift_drag_start: None,
-            shift_drag_preview_positions: Vec::new(),
-            preview_update_accumulator: 0.0,
+            voxel_hud: VoxelHudState::default(),
             start_overlay: StartOverlay::default(),
             terrain_ui: TerrainEditorUI::default(),
             start_time: Instant::now(),
@@ -650,6 +654,7 @@ impl BattleArenaApp {
             postfx_enabled: true,
             taa_enabled: true,
             bloom_enabled: true,
+            use_voxel_shell: false,
         }
     }
 
@@ -943,6 +948,109 @@ impl BattleArenaApp {
                     slope_scale: -1.0,
                     clamp: 0.0,
                 },
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        let voxel_shell_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Voxel Shell Shader"),
+            source: wgpu::ShaderSource::Wgsl(VOXEL_SHELL_SHADER_SOURCE.into()),
+        });
+        let voxel_shell_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Voxel Shell Uniform Buffer"),
+            size: std::mem::size_of::<VoxelShellUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let brick_tree_buffers = BrickTreeGpuBuffers::create_empty(&device);
+        let voxel_shell_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Voxel Shell Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let voxel_shell_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Voxel Shell Bind Group"),
+            layout: &voxel_shell_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: voxel_shell_uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: brick_tree_buffers.node_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: brick_tree_buffers.leaf_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        let voxel_shell_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Voxel Shell Pipeline Layout"),
+                bind_group_layouts: &[&voxel_shell_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+        let voxel_shell_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Voxel Shell Pipeline"),
+            layout: Some(&voxel_shell_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &voxel_shell_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &voxel_shell_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: HDR_SCENE_FORMAT,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
             }),
             multisample: wgpu::MultisampleState::default(),
             multiview: None,
@@ -2070,6 +2178,7 @@ impl BattleArenaApp {
             surface_config,
             pipeline,
             preview_pipeline,
+            voxel_shell_pipeline,
             sdf_cannon_pipeline,
             ui_pipeline,
             uniform_buffer,
@@ -2110,6 +2219,11 @@ impl BattleArenaApp {
             block_chunk_buffers: Vec::new(),
             block_chunk_indirect_buffer,
             block_chunk_indirect_capacity,
+            brick_tree_buffers,
+            voxel_shell_uniform_buffer,
+            voxel_shell_bind_group_layout,
+            voxel_shell_bind_group,
+            voxel_shell_enabled: false,
             merged_mesh_buffers: Vec::new(),
             tree_vertex_buffer,
             tree_index_buffer,
@@ -2150,6 +2264,11 @@ impl BattleArenaApp {
     }
 
     fn update(&mut self, delta_time: f32) {
+        let mut pending_brick_upload: Option<(
+            Vec<battle_tok_engine::game::systems::voxel_building::BrickNode>,
+            Vec<battle_tok_engine::game::systems::voxel_building::BrickLeaf64>,
+        )> = None;
+
         // Build input state structs from raw keys
         let movement = MovementState {
             forward: self.movement.forward,
@@ -2171,7 +2290,52 @@ impl BattleArenaApp {
             if scene.first_person_mode {
                 self.camera.position = scene.player.get_eye_position();
             }
+
+            let render_deltas = scene.building.drain_render_deltas();
+            let needs_shell_rebuild = !render_deltas.dirty_chunks.is_empty()
+                || !render_deltas.bake_jobs.is_empty()
+                || !render_deltas.bake_results.is_empty();
+            if needs_shell_rebuild && self.use_voxel_shell {
+                scene.building.voxel_runtime.rebuild_brick_tree();
+                pending_brick_upload = Some((
+                    scene.building.voxel_runtime.brick_tree.nodes.clone(),
+                    scene.building.voxel_runtime.brick_tree.leaves.clone(),
+                ));
+            }
+
+            let _ = scene.building.drain_audio_events();
         }
+
+        if let Some((nodes, leaves)) = pending_brick_upload
+            && let Some(gpu) = self.gpu.as_mut()
+        {
+            gpu.brick_tree_buffers
+                .upload(&gpu.device, &gpu.queue, &nodes, &leaves);
+            gpu.voxel_shell_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Voxel Shell Bind Group"),
+                layout: &gpu.voxel_shell_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: gpu.voxel_shell_uniform_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: gpu.brick_tree_buffers.node_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: gpu.brick_tree_buffers.leaf_buffer.as_entire_binding(),
+                    },
+                ],
+            });
+            gpu.voxel_shell_enabled = !nodes.is_empty();
+        } else if let Some(gpu) = self.gpu.as_mut()
+            && !self.use_voxel_shell
+        {
+            gpu.voxel_shell_enabled = false;
+        }
+
         let projectile_trails: Vec<(Vec3, Vec3, ProjectileKind)> = self
             .scene
             .as_ref()
@@ -2236,120 +2400,9 @@ impl BattleArenaApp {
             self.regenerate_block_mesh();
         }
 
-        // Update builder cursor and block preview
+        // Legacy hex-builder path stays disabled in battle runtime.
         self.update_builder_cursor();
-        let toolbar_visible = self
-            .scene
-            .as_ref()
-            .is_some_and(|s| s.building.toolbar().visible);
-        if !toolbar_visible {
-            self.preview_update_accumulator = 0.0;
-            self.update_block_preview();
-        } else if self.shift_drag_build_active || self.left_mouse_pressed {
-            // Keep drag placement fully responsive.
-            self.preview_update_accumulator = 0.0;
-            self.update_block_preview();
-        } else {
-            // Throttle expensive placement raycasts while idle in build mode.
-            self.preview_update_accumulator += delta_time;
-            if self.preview_update_accumulator >= (1.0 / 30.0) {
-                self.preview_update_accumulator = 0.0;
-                self.update_block_preview();
-            }
-        }
-        self.update_shift_drag_build_preview();
-
-        // Block pickup system
-        const PICKUP_HOLD_TIME: f32 = 0.5;
-        let toolbar_visible = self.scene.as_ref().unwrap().building.toolbar().visible;
-        if self.left_mouse_pressed && toolbar_visible {
-            self.scene
-                .as_mut()
-                .unwrap()
-                .building
-                .toolbar_mut()
-                .mouse_hold_time += delta_time;
-
-            let hold_time = self
-                .scene
-                .as_ref()
-                .unwrap()
-                .building
-                .toolbar()
-                .mouse_hold_time;
-            let pickup_in_progress = self
-                .scene
-                .as_ref()
-                .unwrap()
-                .building
-                .toolbar()
-                .pickup_in_progress;
-
-            if hold_time >= PICKUP_HOLD_TIME && !pickup_in_progress {
-                self.scene
-                    .as_mut()
-                    .unwrap()
-                    .building
-                    .toolbar_mut()
-                    .pickup_in_progress = true;
-
-                // Raycast without scene borrow
-                if let Some(target) = self.raycast_to_pickup_target() {
-                    let mut did_stash = false;
-                    let mut needs_block_mesh_regen = false;
-                    let (count, max) = {
-                        let scene = self.scene.as_mut().unwrap();
-                        match target {
-                            PickupTarget::LooseBlock {
-                                block_id,
-                                shape,
-                                material,
-                            } => {
-                                if scene
-                                    .building
-                                    .toolbar_mut()
-                                    .inventory
-                                    .stash(shape, material)
-                                {
-                                    scene.building.remove_block(block_id);
-                                    did_stash = true;
-                                    needs_block_mesh_regen = true;
-                                }
-                            }
-                            PickupTarget::RubblePile { pile_id } => {
-                                let picked = scene.building.try_pickup_rubble_pile(pile_id, 1);
-                                if picked > 0 {
-                                    did_stash = true;
-                                }
-                            }
-                        }
-                        (
-                            scene.building.toolbar().inventory.count(),
-                            scene.building.toolbar().inventory.max_capacity,
-                        )
-                    };
-                    if did_stash {
-                        if needs_block_mesh_regen {
-                            self.regenerate_block_mesh();
-                        }
-                        println!("[Pickup] Stashed block (inventory: {}/{})", count, max);
-                    }
-                }
-            }
-        } else {
-            self.scene
-                .as_mut()
-                .unwrap()
-                .building
-                .toolbar_mut()
-                .mouse_hold_time = 0.0;
-            self.scene
-                .as_mut()
-                .unwrap()
-                .building
-                .toolbar_mut()
-                .pickup_in_progress = false;
-        }
+        self.update_voxel_target();
 
         // Building physics now updates in BattleScene fixed-step.
     }
@@ -2571,40 +2624,6 @@ impl BattleArenaApp {
         }
     }
 
-    /// Raycast from camera to find a loose block or rubble pile pickup target.
-    fn raycast_to_pickup_target(&self) -> Option<PickupTarget> {
-        let mouse_pos = self.current_mouse_pos?;
-        let _gpu = self.gpu.as_ref()?;
-        let scene = self.scene.as_ref()?;
-
-        let (ray_origin, ray_dir) = self.screen_to_ray(mouse_pos.0, mouse_pos.1);
-        let max_dist = 20.0;
-        let step_size = 0.25;
-        let mut t = 0.5;
-
-        while t < max_dist {
-            let p = ray_origin + ray_dir * t;
-            if let Some((block_id, dist)) = scene.building.block_manager.find_closest(p, 0.5)
-                && dist < 0.5
-                && scene.building.block_physics.is_loose(block_id)
-                && let Some(block) = scene.building.block_manager.get_block(block_id)
-            {
-                return Some(PickupTarget::LooseBlock {
-                    block_id,
-                    shape: block.shape,
-                    material: block.material,
-                });
-            }
-            if let Some((pile_id, dist)) = scene.building.find_rubble_pile_near(p, 0.5)
-                && dist < 0.5
-            {
-                return Some(PickupTarget::RubblePile { pile_id });
-            }
-            t += step_size;
-        }
-        None
-    }
-
     /// Convert screen coordinates to a world-space ray
     fn screen_to_ray(&self, screen_x: f32, screen_y: f32) -> (Vec3, Vec3) {
         let Some(ref gpu) = self.gpu else {
@@ -2707,405 +2726,135 @@ impl BattleArenaApp {
         None
     }
 
-    /// Update the preview position for block placement
-    fn update_block_preview(&mut self) {
-        let visible = self.scene.as_ref().unwrap().building.toolbar().visible;
-        if visible {
-            let pos = self.calculate_block_placement_position();
-            self.scene
-                .as_mut()
-                .unwrap()
-                .building
-                .toolbar_mut()
-                .preview_position = pos;
-        } else {
-            self.scene
-                .as_mut()
-                .unwrap()
-                .building
-                .toolbar_mut()
-                .preview_position = None;
-        }
-    }
-
-    /// Calculate the snapped position for block placement
-    fn calculate_block_placement_position(&self) -> Option<Vec3> {
-        let gpu = self.gpu.as_ref()?;
-        let scene = self.scene.as_ref()?;
-
-        let mouse_pos = self.current_mouse_pos.unwrap_or((
-            gpu.surface_config.width as f32 / 2.0,
-            gpu.surface_config.height as f32 / 2.0,
-        ));
-
-        let (ray_origin, ray_dir) = self.screen_to_ray(mouse_pos.0, mouse_pos.1);
-        scene
-            .building
-            .calculate_placement(ray_origin, ray_dir, &|x, z| {
-                self.sample_build_ground_height(x, z)
-            })
-    }
-
     /// Place a building block at the preview position
     fn place_building_block(&mut self) {
-        let quick_mode = self
-            .scene
-            .as_ref()
-            .is_some_and(|s| s.building.toolbar().quick_mode);
-        let player_feet = self
-            .scene
-            .as_ref()
-            .map(|s| s.player.position)
-            .unwrap_or(Vec3::ZERO);
-
-        let preview_pos = self
-            .scene
-            .as_ref()
-            .unwrap()
-            .building
-            .toolbar()
-            .preview_position;
-        let position = match preview_pos {
-            Some(pos) => pos,
-            None => match self.calculate_block_placement_position() {
-                Some(pos) => pos,
-                None => return,
-            },
-        };
-
-        let placed = if quick_mode {
-            self.place_structure_at_anchor(position)
-        } else {
-            let shape = self
-                .scene
-                .as_ref()
-                .unwrap()
-                .building
-                .toolbar()
-                .get_selected_shape();
-            if Self::placement_intersects_player(player_feet, shape, position) {
-                return;
-            }
-            let ground_hint = self.sample_build_ground_height(position.x, position.z);
-            if self
-                .scene
-                .as_mut()
-                .unwrap()
-                .building
-                .place_block_with_ground_hint(position, ground_hint)
-                .is_some()
-            {
-                1
-            } else {
-                0
-            }
-        };
-
-        if placed > 0 {
+        if self.apply_voxel_primary_action() {
             self.regenerate_block_mesh();
         }
     }
 
-    fn start_shift_drag_build(&mut self) {
-        let Some(start_pos) = self.calculate_block_placement_position() else {
-            return;
-        };
-        self.shift_drag_build_active = true;
-        self.shift_drag_start = Some(start_pos);
-        self.shift_drag_preview_positions = vec![start_pos];
-    }
-
-    fn update_shift_drag_build_preview(&mut self) {
-        if !self.shift_drag_build_active || !self.left_mouse_pressed {
+    fn update_voxel_target(&mut self) {
+        if !self.voxel_hud.visible {
+            self.voxel_hud.target_hit = None;
             return;
         }
-        let Some(start) = self.shift_drag_start else {
-            return;
-        };
-        let Some(end) = self.calculate_block_placement_position() else {
-            return;
-        };
-        self.shift_drag_preview_positions = Self::line_build_positions(start, end);
-    }
-
-    fn commit_shift_drag_build(&mut self) {
-        if !self.shift_drag_build_active {
-            return;
-        }
-
-        let positions = std::mem::take(&mut self.shift_drag_preview_positions);
-        self.shift_drag_build_active = false;
-        self.shift_drag_start = None;
-
-        if positions.is_empty() {
-            return;
-        }
-
-        let placements: Vec<(Vec3, Option<f32>)> = positions
-            .into_iter()
-            .map(|pos| (pos, self.sample_build_ground_height(pos.x, pos.z)))
-            .collect();
-
-        let mut placed_count = 0u32;
-        let quick_mode = self
-            .scene
-            .as_ref()
-            .is_some_and(|s| s.building.toolbar().quick_mode);
-        if quick_mode {
-            let mut all_instances = Vec::new();
-            for (anchor, _) in placements {
-                all_instances.extend(self.structure_instances_at_anchor(anchor));
-            }
-            placed_count += self.place_structure_instances(all_instances);
-        } else {
-            let player_feet = self
-                .scene
-                .as_ref()
-                .map(|s| s.player.position)
-                .unwrap_or(Vec3::ZERO);
-            let shape = self
-                .scene
-                .as_ref()
-                .unwrap()
-                .building
-                .toolbar()
-                .get_selected_shape();
-            let mut blocked_player = 0u32;
-            let scene = self.scene.as_mut().unwrap();
-            for (position, ground_hint) in placements {
-                if Self::placement_intersects_player(player_feet, shape, position) {
-                    blocked_player += 1;
-                    continue;
-                }
-                if scene
-                    .building
-                    .place_block_with_ground_hint(position, ground_hint)
-                    .is_some()
-                {
-                    placed_count += 1;
-                }
-            }
-            if blocked_player > 0 {
-                println!(
-                    "[Build] Skipped {} placement(s): intersects player capsule",
-                    blocked_player
-                );
-            }
-        }
-
-        if placed_count > 0 {
-            self.regenerate_block_mesh();
-        }
-    }
-
-    fn structure_instances_at_anchor(
-        &self,
-        anchor: Vec3,
-    ) -> Vec<(Vec3, BuildingBlockShape)> {
         let Some(scene) = self.scene.as_ref() else {
-            return Vec::new();
+            self.voxel_hud.target_hit = None;
+            return;
         };
-        let layout = scene.building.toolbar().selected_structure_layout();
-        layout
-            .into_iter()
-            .map(|(offset, shape)| {
-                (
-                    Vec3::new(
-                        anchor.x + offset.x as f32 * BLOCK_GRID_SIZE,
-                        anchor.y + offset.y as f32 * BLOCK_GRID_SIZE,
-                        anchor.z + offset.z as f32 * BLOCK_GRID_SIZE,
-                    ),
-                    shape,
-                )
-            })
-            .collect()
+        let Some(gpu) = self.gpu.as_ref() else {
+            self.voxel_hud.target_hit = None;
+            return;
+        };
+        let mouse_pos = (
+            gpu.surface_config.width as f32 * 0.5,
+            gpu.surface_config.height as f32 * 0.5,
+        );
+        let (ray_origin, ray_dir) = self.screen_to_ray(mouse_pos.0, mouse_pos.1);
+        self.voxel_hud.target_hit = scene.building.raycast_voxel(ray_origin, ray_dir, 96.0);
     }
 
-    fn place_structure_at_anchor(&mut self, anchor: Vec3) -> u32 {
-        self.place_structure_instances(self.structure_instances_at_anchor(anchor))
-    }
-
-    fn world_to_build_cell(position: Vec3) -> IVec3 {
-        IVec3::new(
-            (position.x / BLOCK_GRID_SIZE).round() as i32,
-            (position.y / BLOCK_GRID_SIZE).round() as i32,
-            (position.z / BLOCK_GRID_SIZE).round() as i32,
-        )
-    }
-
-    fn place_structure_instances(
-        &mut self,
-        mut instances: Vec<(Vec3, BuildingBlockShape)>,
-    ) -> u32 {
-        if instances.is_empty() {
-            return 0;
-        }
-
-        // Deduplicate by snapped build cell before placement attempts.
-        let mut seen_cells = HashSet::<IVec3>::new();
-        instances.retain(|(position, _)| seen_cells.insert(Self::world_to_build_cell(*position)));
-        instances.sort_by(|a, b| {
-            a.0.y
-                .total_cmp(&b.0.y)
-                .then_with(|| a.0.x.total_cmp(&b.0.x))
-                .then_with(|| a.0.z.total_cmp(&b.0.z))
-        });
-        let placements: Vec<(Vec3, BuildingBlockShape, IVec3, Option<f32>)> = instances
-            .into_iter()
-            .map(|(position, shape)| {
-                (
-                    position,
-                    shape,
-                    Self::world_to_build_cell(position),
-                    self.sample_build_ground_height(position.x, position.z),
-                )
-            })
-            .collect();
-
-        let material = self
-            .scene
-            .as_ref()
-            .map(|s| s.building.toolbar().selected_material)
-            .unwrap_or(0);
-
-        let mut placed = 0u32;
-        let mut skipped_occupied = 0u32;
-        let mut blocked_other = 0u32;
-        let mut blocked_player = 0u32;
-        let player_feet = self
-            .scene
-            .as_ref()
-            .map(|s| s.player.position)
-            .unwrap_or(Vec3::ZERO);
-
-        if let Some(scene) = self.scene.as_mut() {
-            for (position, shape, cell, ground_hint) in placements {
-                if Self::placement_intersects_player(player_feet, shape, position) {
-                    blocked_player += 1;
-                    continue;
-                }
-
-                if scene.building.statics_v2.is_occupied(cell) {
-                    skipped_occupied += 1;
-                    continue;
-                }
-
-                if scene
-                    .building
-                    .place_block_shape_with_ground_hint(shape, position, material, ground_hint)
-                    .is_some()
-                {
-                    placed += 1;
-                } else {
-                    blocked_other += 1;
-                }
-            }
-        }
-
-        if skipped_occupied > 0 || blocked_other > 0 || blocked_player > 0 {
-            println!(
-                "[Build] Template placement: +{} | occupied {} | blocked {} | player-overlap {}",
-                placed, skipped_occupied, blocked_other, blocked_player
-            );
-        }
-
-        placed
-    }
-
-    fn line_build_positions(start: Vec3, end: Vec3) -> Vec<Vec3> {
-        let sx = (start.x / BLOCK_GRID_SIZE).round() as i32;
-        let sy = (start.y / BLOCK_GRID_SIZE).round() as i32;
-        let sz = (start.z / BLOCK_GRID_SIZE).round() as i32;
-
-        let ex = (end.x / BLOCK_GRID_SIZE).round() as i32;
-        let ey = (end.y / BLOCK_GRID_SIZE).round() as i32;
-        let ez = (end.z / BLOCK_GRID_SIZE).round() as i32;
-
-        let dx = ex - sx;
-        let dy = ey - sy;
-        let dz = ez - sz;
-        let steps = dx.abs().max(dy.abs()).max(dz.abs()).max(1);
-
-        let mut cells = Vec::with_capacity((steps + 1) as usize);
-        let mut seen = HashSet::new();
-        for i in 0..=steps {
-            let t = i as f32 / steps as f32;
-            let gx = (sx as f32 + dx as f32 * t).round() as i32;
-            let gy = (sy as f32 + dy as f32 * t).round() as i32;
-            let gz = (sz as f32 + dz as f32 * t).round() as i32;
-            if seen.insert((gx, gy, gz)) {
-                cells.push(Vec3::new(
-                    gx as f32 * BLOCK_GRID_SIZE,
-                    gy as f32 * BLOCK_GRID_SIZE,
-                    gz as f32 * BLOCK_GRID_SIZE,
-                ));
-            }
-        }
-        cells
-    }
-
-    fn placement_intersects_player(
-        player_feet: Vec3,
-        shape: BuildingBlockShape,
-        position: Vec3,
-    ) -> bool {
-        const PLAYER_RADIUS: f32 = 0.3;
-        const PLAYER_TOP_OFFSET: f32 = PLAYER_EYE_HEIGHT + 0.2;
-        const EPSILON: f32 = 0.01;
-
-        let (min, max) = Self::shape_aabb(shape, position);
-        let player_top = player_feet.y + PLAYER_TOP_OFFSET;
-
-        let vertical_overlap = player_feet.y < max.y - EPSILON && player_top > min.y + EPSILON;
-        if !vertical_overlap {
+    fn apply_voxel_primary_action(&mut self) -> bool {
+        let Some(gpu) = self.gpu.as_ref() else {
             return false;
+        };
+        let mouse_pos = (
+            gpu.surface_config.width as f32 * 0.5,
+            gpu.surface_config.height as f32 * 0.5,
+        );
+        let (ray_origin, ray_dir) = self.screen_to_ray(mouse_pos.0, mouse_pos.1);
+
+        let hit = self
+            .scene
+            .as_ref()
+            .and_then(|s| s.building.raycast_voxel(ray_origin, ray_dir, 96.0));
+        let ground_coord = self.find_ground_voxel_coord(ray_origin, ray_dir, 96.0);
+        let mode = self.voxel_hud.mode;
+        let material = VoxelMaterialId(self.voxel_hud.selected_material());
+        let Some(scene) = self.scene.as_mut() else {
+            return false;
+        };
+
+        match mode {
+            BuildMode::Place => {
+                if let Some(hit) = hit {
+                    let coord = VoxelCoord::new(
+                        hit.coord.x + hit.normal.x,
+                        hit.coord.y + hit.normal.y,
+                        hit.coord.z + hit.normal.z,
+                    );
+                    scene.building.place_voxel(coord, material)
+                } else if let Some(coord) = ground_coord {
+                    scene.building.place_voxel(coord, material)
+                } else {
+                    false
+                }
+            }
+            BuildMode::Remove => {
+                if let Some(hit) = hit {
+                    scene.building.remove_voxel(hit.coord)
+                } else {
+                    false
+                }
+            }
+            BuildMode::CornerBrush => {
+                if let Some(hit) = hit {
+                    let anchor = VoxelCoord::new(
+                        hit.coord.x + hit.normal.x,
+                        hit.coord.y + hit.normal.y,
+                        hit.coord.z + hit.normal.z,
+                    );
+                    scene.building.place_corner_brush(
+                        anchor,
+                        hit.normal,
+                        self.voxel_hud.corner_radius_vox,
+                        material,
+                    ) > 0
+                } else {
+                    false
+                }
+            }
         }
-
-        let closest_x = player_feet.x.clamp(min.x, max.x);
-        let closest_z = player_feet.z.clamp(min.z, max.z);
-        let dx = player_feet.x - closest_x;
-        let dz = player_feet.z - closest_z;
-        let radius = PLAYER_RADIUS + 0.02;
-
-        (dx * dx + dz * dz) < (radius * radius)
     }
 
-    fn shape_aabb(shape: BuildingBlockShape, position: Vec3) -> (Vec3, Vec3) {
-        match shape {
-            BuildingBlockShape::Cube { half_extents } => {
-                (position - half_extents, position + half_extents)
-            }
-            BuildingBlockShape::Cylinder { radius, height } => {
-                let half_height = height * 0.5;
-                (
-                    position - Vec3::new(radius, half_height, radius),
-                    position + Vec3::new(radius, half_height, radius),
-                )
-            }
-            BuildingBlockShape::Sphere { radius } => {
-                (position - Vec3::splat(radius), position + Vec3::splat(radius))
-            }
-            BuildingBlockShape::Dome { radius } => (
-                position - Vec3::new(radius, 0.0, radius),
-                position + Vec3::new(radius, radius, radius),
-            ),
-            BuildingBlockShape::Arch {
-                width,
-                height,
-                depth,
-            } => {
-                let half_width = width * 0.5;
-                let half_depth = depth * 0.5;
-                (
-                    position - Vec3::new(half_width, 0.0, half_depth),
-                    position + Vec3::new(half_width, height, half_depth),
-                )
-            }
-            BuildingBlockShape::Wedge { size } => {
-                let half = size * 0.5;
-                (position - half, position + half)
-            }
+    fn apply_voxel_secondary_action(&mut self) -> bool {
+        let Some(gpu) = self.gpu.as_ref() else {
+            return false;
+        };
+        let mouse_pos = (
+            gpu.surface_config.width as f32 * 0.5,
+            gpu.surface_config.height as f32 * 0.5,
+        );
+        let (ray_origin, ray_dir) = self.screen_to_ray(mouse_pos.0, mouse_pos.1);
+        let hit = self
+            .scene
+            .as_ref()
+            .and_then(|s| s.building.raycast_voxel(ray_origin, ray_dir, 96.0));
+        let Some(scene) = self.scene.as_mut() else {
+            return false;
+        };
+        if let Some(hit) = hit {
+            scene.building.remove_voxel(hit.coord)
+        } else {
+            false
         }
+    }
+
+    fn find_ground_voxel_coord(&self, ray_origin: Vec3, ray_dir: Vec3, max_dist: f32) -> Option<VoxelCoord> {
+        let mut t = 0.25f32;
+        while t <= max_dist {
+            let p = ray_origin + ray_dir * t;
+            if let Some(terrain_y) = self.sample_build_ground_height(p.x, p.z)
+                && p.y <= terrain_y + VOXEL_SIZE_METERS * 0.5
+            {
+                let x = (p.x / VOXEL_SIZE_METERS).floor() as i32;
+                let z = (p.z / VOXEL_SIZE_METERS).floor() as i32;
+                let y = (terrain_y / VOXEL_SIZE_METERS).floor() as i32;
+                return Some(VoxelCoord::new(x, y, z));
+            }
+            t += VOXEL_SIZE_METERS.max(0.05);
+        }
+        None
     }
 
     fn generate_block_preview_mesh(
@@ -3137,247 +2886,6 @@ impl BattleArenaApp {
         }
     }
 
-    /// Handle block click for double-click merging
-    fn handle_block_click(&mut self) -> bool {
-        // Raycast without scene borrow
-        let block_id = match self.raycast_to_block() {
-            Some(id) => id,
-            None => return false,
-        };
-
-        let merge_result = {
-            let scene = self.scene.as_mut().unwrap();
-            if let Some(blocks_to_merge) = scene
-                .building
-                .merge_workflow
-                .on_block_click(block_id, &scene.building.block_manager)
-            {
-                let color = if let Some(block) =
-                    scene.building.block_manager.get_block(blocks_to_merge[0])
-                {
-                    get_material_color(block.material)
-                } else {
-                    [0.5, 0.5, 0.5, 1.0]
-                };
-
-                let merged = scene.building.merge_workflow.merge_blocks(
-                    &blocks_to_merge,
-                    &mut scene.building.block_manager,
-                    color,
-                );
-                Some(merged)
-            } else {
-                None
-            }
-        };
-        if let Some(merged) = merge_result {
-            if let Some(merged) = merged {
-                self.create_merged_mesh_buffers(merged);
-            }
-            self.regenerate_block_mesh();
-            return true;
-        }
-        false
-    }
-
-    /// Raycast from camera to find which building block is hit
-    fn raycast_to_block(&self) -> Option<u32> {
-        let mouse_pos = self.current_mouse_pos?;
-        let scene = self.scene.as_ref()?;
-        let (ray_origin, ray_dir) = self.screen_to_ray(mouse_pos.0, mouse_pos.1);
-        let max_dist = 100.0;
-        let step_size = 0.25;
-        let mut t = 0.5;
-        while t < max_dist {
-            let p = ray_origin + ray_dir * t;
-            if let Some((block_id, dist)) = scene.building.block_manager.find_closest(p, 0.5)
-                && dist < 0.5
-            {
-                return Some(block_id);
-            }
-            t += step_size;
-        }
-        None
-    }
-
-    /// Raycast to find which face of a block is pointed at
-    fn raycast_to_face(&self) -> Option<SelectedFace> {
-        let mouse_pos = self.current_mouse_pos?;
-        let scene = self.scene.as_ref()?;
-        let (ray_origin, ray_dir) = self.screen_to_ray(mouse_pos.0, mouse_pos.1);
-        let max_dist = 50.0;
-        let step_size = 0.1;
-        let mut t = 0.5;
-        while t < max_dist {
-            let p = ray_origin + ray_dir * t;
-            if let Some((block_id, dist)) = scene.building.block_manager.find_closest(p, 1.0)
-                && dist < 0.3
-                && let Some(block) = scene.building.block_manager.get_block(block_id)
-            {
-                let aabb = block.aabb();
-                let center = (aabb.min + aabb.max) * 0.5;
-                let half_size = (aabb.max - aabb.min) * 0.5;
-                let offset = p - center;
-                let abs_offset = Vec3::new(offset.x.abs(), offset.y.abs(), offset.z.abs());
-
-                let (normal, face_pos, size) =
-                    if abs_offset.x > abs_offset.y && abs_offset.x > abs_offset.z {
-                        let n = Vec3::new(offset.x.signum(), 0.0, 0.0);
-                        let pos = center + n * half_size.x;
-                        (n, pos, (half_size.z * 2.0, half_size.y * 2.0))
-                    } else if abs_offset.y > abs_offset.z {
-                        let n = Vec3::new(0.0, offset.y.signum(), 0.0);
-                        let pos = center + n * half_size.y;
-                        (n, pos, (half_size.x * 2.0, half_size.z * 2.0))
-                    } else {
-                        let n = Vec3::new(0.0, 0.0, offset.z.signum());
-                        let pos = center + n * half_size.z;
-                        (n, pos, (half_size.x * 2.0, half_size.y * 2.0))
-                    };
-
-                return Some(SelectedFace {
-                    block_id,
-                    position: face_pos,
-                    _normal: normal,
-                    size,
-                });
-            }
-            t += step_size;
-        }
-        None
-    }
-
-    /// Handle click in bridge mode
-    fn handle_bridge_click(&mut self) -> bool {
-        if !self
-            .scene
-            .as_ref()
-            .unwrap()
-            .building
-            .toolbar()
-            .is_bridge_mode()
-        {
-            return false;
-        }
-        // Raycast without scene borrow
-        if let Some(face) = self.raycast_to_face() {
-            self.scene
-                .as_mut()
-                .unwrap()
-                .building
-                .toolbar_mut()
-                .bridge_tool
-                .select_face(face);
-            let is_ready = self
-                .scene
-                .as_ref()
-                .unwrap()
-                .building
-                .toolbar()
-                .bridge_tool
-                .is_ready();
-            if is_ready {
-                self.create_bridge();
-                self.scene
-                    .as_mut()
-                    .unwrap()
-                    .building
-                    .toolbar_mut()
-                    .bridge_tool
-                    .clear();
-            }
-            return true;
-        }
-        false
-    }
-
-    /// Create a bridge between two selected faces
-    fn create_bridge(&mut self) {
-        let scene = self.scene.as_mut().unwrap();
-        let first = match scene.building.toolbar().bridge_tool.first_face {
-            Some(f) => f,
-            None => return,
-        };
-        let second = match scene.building.toolbar().bridge_tool.second_face {
-            Some(f) => f,
-            None => return,
-        };
-
-        let start = first.position;
-        let end = second.position;
-        let direction = end - start;
-        let length = direction.length();
-        if length < 0.1 {
-            return;
-        }
-
-        let num_segments = (length / battle_tok_engine::game::BLOCK_GRID_SIZE).ceil() as i32;
-        let segment_length = length / num_segments as f32;
-
-        for i in 0..=num_segments {
-            let t = i as f32 / num_segments as f32;
-            let pos = start + direction * t;
-            let w = first.size.0 * (1.0 - t) + second.size.0 * t;
-            let h = first.size.1 * (1.0 - t) + second.size.1 * t;
-            let half_extents = Vec3::new(segment_length * 0.6, h * 0.5, w * 0.5);
-            let shape = battle_tok_engine::render::BuildingBlockShape::Cube { half_extents };
-            let material = scene.building.toolbar().selected_material;
-            let block = BuildingBlock::new(shape, pos, material);
-            let block_id = scene.building.block_manager.add_block(block);
-            scene
-                .building
-                .block_physics
-                .register_grounded_block(block_id);
-            scene
-                .building
-                .register_external_grounded_block(block_id, pos, material);
-        }
-        self.regenerate_block_mesh();
-    }
-
-    /// Create GPU buffers for a merged mesh
-    fn create_merged_mesh_buffers(&mut self, merged: MergedMesh) {
-        let gpu = match &mut self.gpu {
-            Some(g) => g,
-            None => return,
-        };
-        if merged.vertices.is_empty() {
-            return;
-        }
-
-        let mesh_vertices: Vec<Vertex> = merged
-            .vertices
-            .iter()
-            .map(|v| Vertex {
-                position: v.position,
-                normal: v.normal,
-                color: v.color,
-            })
-            .collect();
-
-        let vertex_buffer = gpu
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Merged Mesh Vertex Buffer"),
-                contents: bytemuck::cast_slice(&mesh_vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-        let index_buffer = gpu
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Merged Mesh Index Buffer"),
-                contents: bytemuck::cast_slice(&merged.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
-
-        gpu.merged_mesh_buffers.push(MergedMeshBuffers {
-            _id: merged.id,
-            vertex_buffer,
-            index_buffer,
-            index_count: merged.indices.len() as u32,
-        });
-    }
-
     /// Regenerate the building block mesh buffer
     fn regenerate_block_mesh(&mut self) {
         fn is_voxel_cube_for_chunking(block: &battle_tok_engine::render::BuildingBlock) -> bool {
@@ -3385,9 +2893,10 @@ impl BattleArenaApp {
             else {
                 return false;
             };
-            let is_unit = (half_extents.x - 0.5).abs() <= 1e-4
-                && (half_extents.y - 0.5).abs() <= 1e-4
-                && (half_extents.z - 0.5).abs() <= 1e-4;
+            let h = VOXEL_SIZE_METERS * 0.5;
+            let is_unit = (half_extents.x - h).abs() <= 1e-4
+                && (half_extents.y - h).abs() <= 1e-4
+                && (half_extents.z - h).abs() <= 1e-4;
             if !is_unit {
                 return false;
             }
@@ -3476,9 +2985,9 @@ impl BattleArenaApp {
         for block in blocks {
             if is_voxel_cube_for_chunking(block) {
                 let cell = (
-                    block.position.x.round() as i32,
-                    block.position.y.round() as i32,
-                    block.position.z.round() as i32,
+                    (block.position.x / VOXEL_SIZE_METERS).floor() as i32,
+                    (block.position.y / VOXEL_SIZE_METERS).floor() as i32,
+                    (block.position.z / VOXEL_SIZE_METERS).floor() as i32,
                 );
                 let crack_stage = scene.building.crack_stage_for_block(block.id);
                 voxel_cubes
@@ -3500,8 +3009,12 @@ impl BattleArenaApp {
         for (chunk_key, cells) in &chunk_voxel_cells {
             let chunk = chunks.entry(*chunk_key).or_default();
             for &(x, y, z) in cells {
-                let cube_min = Vec3::new(x as f32 - 0.5, y as f32 - 0.5, z as f32 - 0.5);
-                let cube_max = Vec3::new(x as f32 + 0.5, y as f32 + 0.5, z as f32 + 0.5);
+                let cube_min = Vec3::new(
+                    x as f32 * VOXEL_SIZE_METERS,
+                    y as f32 * VOXEL_SIZE_METERS,
+                    z as f32 * VOXEL_SIZE_METERS,
+                );
+                let cube_max = cube_min + Vec3::splat(VOXEL_SIZE_METERS);
                 if chunk.initialized {
                     chunk.min = chunk.min.min(cube_min);
                     chunk.max = chunk.max.max(cube_max);
@@ -3567,11 +3080,11 @@ impl BattleArenaApp {
                     let color = block_material_color(material, crack_stage);
                     match dir {
                         VoxelFaceDir::PosX => {
-                            let x = plane as f32 + 0.5;
-                            let y0 = u0 as f32 - 0.5;
-                            let y1 = y0 + width as f32;
-                            let z0 = v0 as f32 - 0.5;
-                            let z1 = z0 + height as f32;
+                            let x = (plane as f32 + 1.0) * VOXEL_SIZE_METERS;
+                            let y0 = u0 as f32 * VOXEL_SIZE_METERS;
+                            let y1 = (u0 + width) as f32 * VOXEL_SIZE_METERS;
+                            let z0 = v0 as f32 * VOXEL_SIZE_METERS;
+                            let z1 = (v0 + height) as f32 * VOXEL_SIZE_METERS;
                             append_quad(
                                 &mut chunk.vertices,
                                 &mut chunk.indices,
@@ -3581,11 +3094,11 @@ impl BattleArenaApp {
                             );
                         }
                         VoxelFaceDir::NegX => {
-                            let x = plane as f32 - 0.5;
-                            let y0 = u0 as f32 - 0.5;
-                            let y1 = y0 + width as f32;
-                            let z0 = v0 as f32 - 0.5;
-                            let z1 = z0 + height as f32;
+                            let x = plane as f32 * VOXEL_SIZE_METERS;
+                            let y0 = u0 as f32 * VOXEL_SIZE_METERS;
+                            let y1 = (u0 + width) as f32 * VOXEL_SIZE_METERS;
+                            let z0 = v0 as f32 * VOXEL_SIZE_METERS;
+                            let z1 = (v0 + height) as f32 * VOXEL_SIZE_METERS;
                             append_quad(
                                 &mut chunk.vertices,
                                 &mut chunk.indices,
@@ -3595,11 +3108,11 @@ impl BattleArenaApp {
                             );
                         }
                         VoxelFaceDir::PosY => {
-                            let y = plane as f32 + 0.5;
-                            let x0 = u0 as f32 - 0.5;
-                            let x1 = x0 + width as f32;
-                            let z0 = v0 as f32 - 0.5;
-                            let z1 = z0 + height as f32;
+                            let y = (plane as f32 + 1.0) * VOXEL_SIZE_METERS;
+                            let x0 = u0 as f32 * VOXEL_SIZE_METERS;
+                            let x1 = (u0 + width) as f32 * VOXEL_SIZE_METERS;
+                            let z0 = v0 as f32 * VOXEL_SIZE_METERS;
+                            let z1 = (v0 + height) as f32 * VOXEL_SIZE_METERS;
                             append_quad(
                                 &mut chunk.vertices,
                                 &mut chunk.indices,
@@ -3609,11 +3122,11 @@ impl BattleArenaApp {
                             );
                         }
                         VoxelFaceDir::NegY => {
-                            let y = plane as f32 - 0.5;
-                            let x0 = u0 as f32 - 0.5;
-                            let x1 = x0 + width as f32;
-                            let z0 = v0 as f32 - 0.5;
-                            let z1 = z0 + height as f32;
+                            let y = plane as f32 * VOXEL_SIZE_METERS;
+                            let x0 = u0 as f32 * VOXEL_SIZE_METERS;
+                            let x1 = (u0 + width) as f32 * VOXEL_SIZE_METERS;
+                            let z0 = v0 as f32 * VOXEL_SIZE_METERS;
+                            let z1 = (v0 + height) as f32 * VOXEL_SIZE_METERS;
                             append_quad(
                                 &mut chunk.vertices,
                                 &mut chunk.indices,
@@ -3623,11 +3136,11 @@ impl BattleArenaApp {
                             );
                         }
                         VoxelFaceDir::PosZ => {
-                            let z = plane as f32 + 0.5;
-                            let x0 = u0 as f32 - 0.5;
-                            let x1 = x0 + width as f32;
-                            let y0 = v0 as f32 - 0.5;
-                            let y1 = y0 + height as f32;
+                            let z = (plane as f32 + 1.0) * VOXEL_SIZE_METERS;
+                            let x0 = u0 as f32 * VOXEL_SIZE_METERS;
+                            let x1 = (u0 + width) as f32 * VOXEL_SIZE_METERS;
+                            let y0 = v0 as f32 * VOXEL_SIZE_METERS;
+                            let y1 = (v0 + height) as f32 * VOXEL_SIZE_METERS;
                             append_quad(
                                 &mut chunk.vertices,
                                 &mut chunk.indices,
@@ -3637,11 +3150,11 @@ impl BattleArenaApp {
                             );
                         }
                         VoxelFaceDir::NegZ => {
-                            let z = plane as f32 - 0.5;
-                            let x0 = u0 as f32 - 0.5;
-                            let x1 = x0 + width as f32;
-                            let y0 = v0 as f32 - 0.5;
-                            let y1 = y0 + height as f32;
+                            let z = plane as f32 * VOXEL_SIZE_METERS;
+                            let x0 = u0 as f32 * VOXEL_SIZE_METERS;
+                            let x1 = (u0 + width) as f32 * VOXEL_SIZE_METERS;
+                            let y0 = v0 as f32 * VOXEL_SIZE_METERS;
+                            let y1 = (v0 + height) as f32 * VOXEL_SIZE_METERS;
                             append_quad(
                                 &mut chunk.vertices,
                                 &mut chunk.indices,
@@ -3919,6 +3432,10 @@ impl BattleArenaApp {
             dynamic_index_count,
             block_chunk_draw_count,
         );
+        self.render_voxel_shell(&mut encoder, &gpu.scene_hdr_view);
+        if gpu.voxel_shell_enabled {
+            draw_calls += 1;
+        }
         self.render_lava(&mut encoder, &gpu.scene_hdr_view);
         self.render_sdf_cannon(&mut encoder, &gpu.scene_hdr_view);
         self.render_particles(&mut encoder, &gpu.scene_hdr_view);
@@ -4513,6 +4030,23 @@ impl BattleArenaApp {
 
         queue.write_buffer(&gpu.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
+        let shell_uniforms = VoxelShellUniforms {
+            inv_view_proj: view_proj.inverse().to_cols_array_2d(),
+            view_proj: view_proj.to_cols_array_2d(),
+            camera_pos: self.camera.position.to_array(),
+            _pad0: 0.0,
+            resolution: [config.width as f32, config.height as f32],
+            node_count: gpu.brick_tree_buffers.node_count,
+            leaf_count: gpu.brick_tree_buffers.leaf_count,
+            sun_dir: vis.sun_direction.to_array(),
+            _pad1: 0.0,
+        };
+        queue.write_buffer(
+            &gpu.voxel_shell_uniform_buffer,
+            0,
+            bytemuck::cast_slice(&[shell_uniforms]),
+        );
+
         let taa_cfg = &scene.visuals.postfx.taa;
         let taa_params = TaaParams {
             inv_curr_view_proj: view_proj.inverse().to_cols_array_2d(),
@@ -4778,7 +4312,6 @@ impl BattleArenaApp {
         block_chunk_draw_count: u32,
     ) {
         let gpu = self.gpu.as_ref().unwrap();
-        let scene = self.scene.as_ref().unwrap();
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Mesh Render Pass"),
@@ -4831,7 +4364,7 @@ impl BattleArenaApp {
             render_pass.draw_indexed(0..gpu.hex_wall_index_count, 0, 0..1);
         }
 
-        if block_chunk_draw_count > 0 {
+        if block_chunk_draw_count > 0 && !gpu.voxel_shell_enabled {
             render_pass.set_vertex_buffer(0, gpu.block_chunk_vertex_buffer.slice(..));
             render_pass.set_index_buffer(
                 gpu.block_chunk_index_buffer.slice(..),
@@ -4847,29 +4380,31 @@ impl BattleArenaApp {
 
         // Block placement preview / drag hologram
         let mut preview_positions = Vec::new();
-        if scene.building.toolbar().visible
-            && scene.building.toolbar().show_preview
-            && !scene.building.toolbar().is_bridge_mode()
+        if self.voxel_hud.visible
+            && let Some(hit) = self.voxel_hud.target_hit
         {
-            if self.shift_drag_build_active && !self.shift_drag_preview_positions.is_empty() {
-                preview_positions.extend(self.shift_drag_preview_positions.iter().copied());
-            } else if let Some(preview_pos) = scene.building.toolbar().preview_position {
-                preview_positions.push(preview_pos);
-            }
+            let center = match self.voxel_hud.mode {
+                BuildMode::Place | BuildMode::CornerBrush => Vec3::new(
+                    (hit.coord.x + hit.normal.x) as f32 * VOXEL_SIZE_METERS + VOXEL_SIZE_METERS * 0.5,
+                    (hit.coord.y + hit.normal.y) as f32 * VOXEL_SIZE_METERS + VOXEL_SIZE_METERS * 0.5,
+                    (hit.coord.z + hit.normal.z) as f32 * VOXEL_SIZE_METERS + VOXEL_SIZE_METERS * 0.5,
+                ),
+                BuildMode::Remove => Vec3::new(
+                    hit.coord.x as f32 * VOXEL_SIZE_METERS + VOXEL_SIZE_METERS * 0.5,
+                    hit.coord.y as f32 * VOXEL_SIZE_METERS + VOXEL_SIZE_METERS * 0.5,
+                    hit.coord.z as f32 * VOXEL_SIZE_METERS + VOXEL_SIZE_METERS * 0.5,
+                ),
+            };
+            preview_positions.push(center);
         }
 
         if !preview_positions.is_empty() {
-            let quick_mode = scene.building.toolbar().quick_mode;
             let mut preview_instances: Vec<(Vec3, battle_tok_engine::render::BuildingBlockShape)> =
                 Vec::new();
-            if quick_mode {
-                for anchor in &preview_positions {
-                    preview_instances.extend(self.structure_instances_at_anchor(*anchor));
-                }
-            } else {
-                let shape = scene.building.toolbar().get_selected_shape();
-                preview_instances.extend(preview_positions.iter().copied().map(|p| (p, shape)));
-            }
+            let shape = battle_tok_engine::render::BuildingBlockShape::Cube {
+                half_extents: Vec3::splat(VOXEL_SIZE_METERS * 0.5),
+            };
+            preview_instances.extend(preview_positions.iter().copied().map(|p| (p, shape)));
 
             let pulse = (self.start_time.elapsed().as_secs_f32() * 3.0).sin() * 0.5 + 0.5;
             let alpha = 0.22 + pulse * 0.18;
@@ -4917,6 +4452,39 @@ impl BattleArenaApp {
                 .set_index_buffer(gpu.tree_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..gpu.tree_index_count, 0, 0..1);
         }
+    }
+
+    fn render_voxel_shell(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        let gpu = self.gpu.as_ref().unwrap();
+        if !gpu.voxel_shell_enabled || gpu.brick_tree_buffers.node_count == 0 {
+            return;
+        }
+
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Voxel Shell Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &gpu.depth_texture,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        render_pass.set_pipeline(&gpu.voxel_shell_pipeline);
+        render_pass.set_bind_group(0, &gpu.voxel_shell_bind_group, &[]);
+        render_pass.draw(0..3, 0..1);
     }
 
     /// Render the animated lava ocean with the dedicated lava.wgsl shader.
@@ -5036,15 +4604,9 @@ impl BattleArenaApp {
         }
 
         // Selection crosshair
-        if scene.building.toolbar().visible && !self.start_overlay.visible {
+        if self.voxel_hud.visible && !self.start_overlay.visible {
             let crosshair_mesh = self.generate_crosshair_mesh(w, h);
             self.draw_ui_mesh(encoder, view, "Crosshair Pass", &crosshair_mesh);
-        }
-
-        // Build toolbar
-        if scene.building.toolbar().visible {
-            let toolbar_mesh = scene.building.toolbar().generate_ui_mesh(w, h);
-            self.draw_ui_mesh(encoder, view, "Toolbar Pass", &toolbar_mesh);
         }
 
         // Top bar HUD
@@ -5114,7 +4676,7 @@ impl BattleArenaApp {
 
     /// Generate crosshair mesh for builder mode targeting.
     fn generate_crosshair_mesh(&self, w: f32, h: f32) -> Mesh {
-        let (cx, cy) = self.current_mouse_pos.unwrap_or((w / 2.0, h / 2.0));
+        let (cx, cy) = (w / 2.0, h / 2.0);
         let size = 25.0;
         let thickness = 4.0;
         let gap = 8.0;
@@ -5272,125 +4834,34 @@ impl BattleArenaApp {
             }
 
             KeyCode::KeyB if pressed => {
-                // Keep legacy hex-builder path disabled to avoid overlay/input conflicts.
+                // Battle runtime build UI is voxel-only.
                 self.builder_mode.enabled = false;
                 self.builder_mode.cursor_coord = None;
-                scene.building.toolbar_mut().toggle();
-                if !scene.building.toolbar().visible {
-                    self.shift_drag_build_active = false;
-                    self.shift_drag_start = None;
-                    self.shift_drag_preview_positions.clear();
-                }
+                self.voxel_hud.toggle();
                 if let Some(window) = &self.window {
-                    if scene.building.toolbar().visible {
-                        let _ = window.set_cursor_grab(CursorGrabMode::None);
-                        window.set_cursor_visible(true);
-                    } else {
-                        if window.set_cursor_grab(CursorGrabMode::Locked).is_err() {
-                            let _ = window.set_cursor_grab(CursorGrabMode::Confined);
-                        }
-                        window.set_cursor_visible(false);
+                    if window.set_cursor_grab(CursorGrabMode::Locked).is_err() {
+                        let _ = window.set_cursor_grab(CursorGrabMode::Confined);
                     }
+                    window.set_cursor_visible(false);
                 }
             }
 
-            KeyCode::Tab if pressed => {
-                if scene.building.toolbar().visible {
-                    if scene.building.toolbar().quick_mode {
-                        scene.building.toolbar_mut().next_structure();
-                    } else {
-                        scene.building.toolbar_mut().next_shape();
-                    }
-                }
+            KeyCode::Tab if pressed && self.voxel_hud.visible => self.voxel_hud.cycle_mode(),
+            KeyCode::KeyQ | KeyCode::KeyM if pressed && self.voxel_hud.visible => {
+                self.voxel_hud.cycle_mode()
             }
-
-            KeyCode::KeyQ | KeyCode::KeyM if pressed => {
-                let toolbar_was_visible = scene.building.toolbar().visible;
-                if toolbar_was_visible {
-                    scene.building.toolbar_mut().toggle_quick_mode();
-                } else {
-                    scene.building.toolbar_mut().toggle();
-                    if let Some(window) = &self.window {
-                        let _ = window.set_cursor_grab(CursorGrabMode::None);
-                        window.set_cursor_visible(true);
-                    }
-                    let mode_name = if scene.building.toolbar().quick_mode {
-                        "quick-build"
-                    } else {
-                        "primitive"
-                    };
-                    println!(
-                        "[BuildToolbar] Opened via Q/M in {} mode (press Q/M again to toggle)",
-                        mode_name
-                    );
-                }
-                self.update_block_preview();
-            }
-
-            KeyCode::Digit1 if pressed && scene.building.toolbar().visible => {
-                if scene.building.toolbar().quick_mode {
-                    scene.building.toolbar_mut().select_structure(0)
-                } else {
-                    scene.building.toolbar_mut().select_shape(0)
-                }
-            }
-            KeyCode::Digit2 if pressed && scene.building.toolbar().visible => {
-                if scene.building.toolbar().quick_mode {
-                    scene.building.toolbar_mut().select_structure(1)
-                } else {
-                    scene.building.toolbar_mut().select_shape(1)
-                }
-            }
-            KeyCode::Digit3 if pressed && scene.building.toolbar().visible => {
-                if scene.building.toolbar().quick_mode {
-                    scene.building.toolbar_mut().select_structure(2)
-                } else {
-                    scene.building.toolbar_mut().select_shape(2)
-                }
-            }
-            KeyCode::Digit4 if pressed && scene.building.toolbar().visible => {
-                if scene.building.toolbar().quick_mode {
-                    scene.building.toolbar_mut().select_structure(3)
-                } else {
-                    scene.building.toolbar_mut().select_shape(3)
-                }
-            }
-            KeyCode::Digit5 if pressed && scene.building.toolbar().visible => {
-                if scene.building.toolbar().quick_mode {
-                    scene.building.toolbar_mut().select_structure(4)
-                } else {
-                    scene.building.toolbar_mut().select_shape(4)
-                }
-            }
-            KeyCode::Digit6 if pressed && scene.building.toolbar().visible => {
-                if scene.building.toolbar().quick_mode {
-                    scene.building.toolbar_mut().select_structure(5)
-                } else {
-                    scene.building.toolbar_mut().select_shape(5)
-                }
-            }
-            KeyCode::Digit7 if pressed && scene.building.toolbar().visible => {
-                if scene.building.toolbar().quick_mode {
-                    scene.building.toolbar_mut().select_structure(6)
-                } else {
-                    scene.building.toolbar_mut().select_shape(6)
-                }
-            }
-
-            KeyCode::ArrowUp if pressed && scene.building.toolbar().visible => {
-                if scene.building.toolbar().quick_mode {
-                    scene.building.toolbar_mut().prev_structure()
-                } else {
-                    scene.building.toolbar_mut().prev_shape()
-                }
-            }
-            KeyCode::ArrowDown if pressed && scene.building.toolbar().visible => {
-                if scene.building.toolbar().quick_mode {
-                    scene.building.toolbar_mut().next_structure()
-                } else {
-                    scene.building.toolbar_mut().next_shape()
-                }
-            }
+            KeyCode::Digit1 if pressed && self.voxel_hud.visible => self.voxel_hud.select_slot(0),
+            KeyCode::Digit2 if pressed && self.voxel_hud.visible => self.voxel_hud.select_slot(1),
+            KeyCode::Digit3 if pressed && self.voxel_hud.visible => self.voxel_hud.select_slot(2),
+            KeyCode::Digit4 if pressed && self.voxel_hud.visible => self.voxel_hud.select_slot(3),
+            KeyCode::Digit5 if pressed && self.voxel_hud.visible => self.voxel_hud.select_slot(4),
+            KeyCode::Digit6 if pressed && self.voxel_hud.visible => self.voxel_hud.select_slot(5),
+            KeyCode::Digit7 if pressed && self.voxel_hud.visible => self.voxel_hud.select_slot(6),
+            KeyCode::Digit8 if pressed && self.voxel_hud.visible => self.voxel_hud.select_slot(7),
+            KeyCode::Digit9 if pressed && self.voxel_hud.visible => self.voxel_hud.select_slot(8),
+            KeyCode::Digit0 if pressed && self.voxel_hud.visible => self.voxel_hud.select_slot(9),
+            KeyCode::ArrowUp if pressed && self.voxel_hud.visible => self.voxel_hud.adjust_radius(1),
+            KeyCode::ArrowDown if pressed && self.voxel_hud.visible => self.voxel_hud.adjust_radius(-1),
 
             KeyCode::F11 if pressed => {
                 if let Some(window) = &self.window {
@@ -5432,6 +4903,20 @@ impl BattleArenaApp {
                         "enabled"
                     } else {
                         "disabled"
+                    }
+                );
+            }
+            KeyCode::F6 if pressed => {
+                self.use_voxel_shell = !self.use_voxel_shell;
+                if let Some(gpu) = self.gpu.as_mut() {
+                    gpu.voxel_shell_enabled = false;
+                }
+                println!(
+                    "[VoxelShell] {}",
+                    if self.use_voxel_shell {
+                        "enabled"
+                    } else {
+                        "disabled (proxy voxel mesh)"
                     }
                 );
             }
@@ -5607,38 +5092,24 @@ impl ApplicationHandler for BattleArenaApp {
                             scene.terrain_needs_rebuild = true;
                         }
 
-                        if !pressed && self.shift_drag_build_active {
-                            self.commit_shift_drag_build();
-                        }
-
-                        let toolbar_visible = self
-                            .scene
-                            .as_ref()
-                            .is_some_and(|s| s.building.toolbar().visible);
-                        let bridge_mode = self
-                            .scene
-                            .as_ref()
-                            .is_some_and(|s| s.building.toolbar().is_bridge_mode());
-
-                        if toolbar_visible && pressed {
-                            if self.movement.sprint && !bridge_mode {
-                                self.start_shift_drag_build();
-                            } else if bridge_mode {
-                                self.handle_bridge_click();
-                            } else if !ENABLE_SDF_DOUBLE_CLICK_MERGE || !self.handle_block_click() {
-                                self.place_building_block();
-                            }
+                        if self.voxel_hud.visible && pressed {
+                            self.place_building_block();
                         }
                     }
                     MouseButton::Right => {
-                        self.mouse_pressed = state == ElementState::Pressed;
+                        let pressed = state == ElementState::Pressed;
+                        if self.voxel_hud.visible {
+                            if pressed && self.apply_voxel_secondary_action() {
+                                self.regenerate_block_mesh();
+                            }
+                            self.mouse_pressed = false;
+                        } else {
+                            self.mouse_pressed = pressed;
+                        }
                     }
                     MouseButton::Middle => {
-                        if state == ElementState::Pressed
-                            && let Some(scene) = self.scene.as_mut()
-                            && scene.building.toolbar().visible
-                        {
-                            scene.building.toolbar_mut().next_material();
+                        if state == ElementState::Pressed && self.voxel_hud.visible {
+                            self.voxel_hud.adjust_radius(1);
                         }
                     }
                     _ => {}
@@ -5652,15 +5123,22 @@ impl ApplicationHandler for BattleArenaApp {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                let scene = self.scene.as_mut().unwrap();
                 let scroll = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 100.0,
                 };
 
-                if scene.building.toolbar().visible {
-                    scene.building.toolbar_mut().adjust_height(scroll);
-                    self.update_block_preview();
+                if self.voxel_hud.visible {
+                    let delta = if scroll > 0.0 {
+                        1
+                    } else if scroll < 0.0 {
+                        -1
+                    } else {
+                        0
+                    };
+                    if delta != 0 {
+                        self.voxel_hud.adjust_radius(delta);
+                    }
                 } else {
                     self.camera.position += self.camera.get_forward() * scroll * 5.0;
                 }
@@ -5684,15 +5162,13 @@ impl ApplicationHandler for BattleArenaApp {
                     self.last_fps_update = now;
 
                     if let (Some(window), Some(scene)) = (&self.window, &self.scene) {
-                        let mode_str = if scene.building.toolbar().visible {
-                            if scene.building.toolbar().quick_mode {
-                                format!(
-                                    "Build-Q:{}",
-                                    scene.building.toolbar().quick_structure_name()
-                                )
-                            } else {
-                                "Build-Primitive".to_string()
-                            }
+                        let mode_str = if self.voxel_hud.visible {
+                            format!(
+                                "Build-{:?}-mat{}-r{}",
+                                self.voxel_hud.mode,
+                                self.voxel_hud.selected_material(),
+                                self.voxel_hud.corner_radius_vox
+                            )
                         } else {
                             "Combat".to_string()
                         };
@@ -5736,18 +5212,9 @@ impl ApplicationHandler for BattleArenaApp {
         if self.start_overlay.visible {
             return;
         }
-        let scene = self.scene.as_ref();
         if let DeviceEvent::MouseMotion { delta } = event {
-            let toolbar_visible = scene.is_some_and(|s| s.building.toolbar().visible);
-            if toolbar_visible {
-                if self.mouse_pressed {
-                    self.camera
-                        .handle_mouse_look(delta.0 as f32, delta.1 as f32);
-                }
-            } else {
-                self.camera
-                    .handle_mouse_look(delta.0 as f32, delta.1 as f32);
-            }
+            self.camera
+                .handle_mouse_look(delta.0 as f32, delta.1 as f32);
         }
     }
 }

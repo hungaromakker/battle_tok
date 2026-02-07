@@ -24,6 +24,7 @@ pub mod apocalyptic_sky;
 pub mod bake_queue;
 pub mod binding_validator;
 pub mod bridge_materials;
+pub mod brick_tree_gpu;
 pub mod building_blocks;
 pub mod building_physics;
 pub mod castle_material;
@@ -105,6 +106,7 @@ pub use flag_material::{FlagMaterial, FlagMaterialConfig, FlagTeam, FlagVertex};
 pub use bridge_materials::{
     ChainMetalConfig, ChainMetalMaterial, WoodPlankConfig, WoodPlankMaterial,
 };
+pub use brick_tree_gpu::{BrickTreeGpuBuffers, RaymarchShellQuality};
 
 // Re-export point light types (Phase 2: Torch Lighting System)
 pub use point_lights::{
